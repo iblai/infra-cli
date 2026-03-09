@@ -26,12 +26,22 @@ Run `iblai infra` to see all available commands and a getting-started guide.
 
 ### Authentication
 
-If AWS credentials aren't configured when you run a command, the CLI will detect this and offer to walk you through authentication interactively — no need to set up `~/.aws/` first.
+The CLI always lets you choose how to authenticate — it never silently auto-detects credentials. On first use, it walks you through authentication interactively.
 
 The tool supports:
-- **AWS profiles** from `~/.aws/config` and `~/.aws/credentials`
+- **AWS profiles** from `~/.aws/config` and `~/.aws/credentials` (type to filter)
 - **Environment variables** (`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`)
 - **Manual entry** — access key + secret key (masked input)
+
+Your session is saved after authentication and reused across all subsequent commands until you switch credentials or the session expires.
+
+### Switch credentials
+
+```bash
+iblai infra auth
+```
+
+Clears the saved session and re-prompts for authentication. Use this to switch AWS profiles or accounts.
 
 ### Check IAM permissions
 

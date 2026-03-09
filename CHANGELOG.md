@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.0] — 2026-03-09
+
+### Added
+- `iblai infra auth` command — switch or re-authenticate AWS credentials at any time
+- Session persistence — credentials saved to `~/.iblai-infra/session.json` after authentication; reused across all commands until explicitly cleared or expired
+- Interactive landing screen — running `iblai infra` shows a branded menu with arrow-key navigation to launch any command directly
+- Type-to-filter for long lists — regions, AWS profiles, instance types, and key pairs use `questionary.autocomplete()` for instant filtering
+
+### Changed
+- Credential resolution order: explicit `--profile` flag → saved session → interactive wizard (no silent auto-detection)
+- `prompt_credentials()` accepts `show_step` parameter — step header only shown during the full 5-step wizard
+- `run_provision_wizard()` accepts `show_banner` parameter — avoids double banner when launched from the landing screen menu
+- Simplified saved session display: shows "Authenticated — user (account)" instead of full ARN details
+- Command names in instructional text now highlighted with `[brand]` color
+- Dynamic versioning — `pyproject.toml` uses `[tool.hatch.version]` pointing to `__init__.py`
+
+### Fixed
+- `ctx.invoke()` passing `OptionInfo` objects instead of actual values to Pydantic models — now passes explicit defaults
+- Volume type default mismatch (`"gp3 (recommended)"` vs `"gp3"`) causing validation error
+- Non-ASCII em dashes in Terraform security group descriptions rejected by AWS API
+- Duplicate "Authenticated as" messages during permission checks
+- Double banner when launching provision from the landing screen menu
+- Removed "recommended" labels from instance type and volume type choices
+
 ## [0.3.0] — 2026-03-09
 
 ### Added

@@ -71,7 +71,6 @@ wheels = [
 
 [[package]]
 name = "iblai-infra"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },

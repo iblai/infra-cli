@@ -413,6 +413,29 @@ class TerraformRunner:
             if f.is_file():
                 shutil.copy2(f, self.ws / f.name)
 
+    def _resolve_bucket_suffix(self, config: InfraConfig) -> str:
+        """Check if default S3 bucket names are taken; return date suffix if so."""
+        from datetime import datetime, timezone
+
+        from iblai_infra.providers.aws import check_bucket_exists, get_session
+
+        domain_slug = config.dns.base_domain.replace(".", "-")
+        prefix = f"{config.project_name}-{config.environment.value}-{domain_slug}"
+        test_bucket = f"{prefix}-backups"
+
+        try:
+            session = get_session(config.credentials)
+            if check_bucket_exists(session, test_bucket):
+                suffix = datetime.now(timezone.utc).strftime("%d%m%Y")
+                ui.warning(
+                    f"S3 bucket [highlight]{test_bucket}[/highlight] already exists, "
+                    f"appending [highlight]{suffix}[/highlight] to bucket names"
+                )
+                return suffix
+        except Exception:
+            pass
+        return ""
+
     def _generate_tfvars(self) -> None:
         """Generate terraform.tfvars from InfraConfig."""
         c = self.config
@@ -435,6 +458,11 @@ class TerraformRunner:
         tf("vpc_cidr", c.network.vpc_cidr)
         tf("vpn_ip", c.network.vpn_ip)
         tf("base_domain", c.dns.base_domain)
+
+        # S3 bucket uniqueness — check if default names are taken
+        bucket_suffix = self._resolve_bucket_suffix(c)
+        if bucket_suffix:
+            tf("bucket_suffix", bucket_suffix)
 
         # SSH
         if c.ssh.method == SSHKeyMethod.AWS_KEYPAIR:

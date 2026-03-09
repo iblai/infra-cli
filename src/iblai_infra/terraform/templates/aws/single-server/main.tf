@@ -44,7 +44,7 @@ data "aws_ami" "ubuntu" {
 
 locals {
   resource_prefix = "${var.project_name}-${var.environment}"
-  bucket_prefix   = "${var.project_name}-${var.environment}-${replace(var.base_domain, ".", "-")}"
+  bucket_prefix   = var.bucket_suffix != "" ? "${var.project_name}-${var.environment}-${replace(var.base_domain, ".", "-")}-${var.bucket_suffix}" : "${var.project_name}-${var.environment}-${replace(var.base_domain, ".", "-")}"
 
   use_acm    = var.certificate_method == "acm"
   use_upload = var.certificate_method == "upload"

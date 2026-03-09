@@ -154,6 +154,22 @@ def list_key_pairs(session: boto3.Session) -> list[KeyPairInfo]:
         return []
 
 
+def check_bucket_exists(session: boto3.Session, bucket_name: str) -> bool:
+    """Check if an S3 bucket name is already taken (globally)."""
+    try:
+        s3 = session.client("s3")
+        s3.head_bucket(Bucket=bucket_name)
+        return True
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        # 404 = doesn't exist, 403 = exists but owned by someone else
+        if code == "403":
+            return True
+        return False
+    except (BotoCoreError, NoCredentialsError):
+        return False
+
+
 def detect_current_ip() -> str | None:
     """Detect the user's current public IP address."""
     import urllib.request

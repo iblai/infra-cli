@@ -22,6 +22,12 @@ variable "base_domain" {
   type        = string
 }
 
+variable "bucket_suffix" {
+  description = "Optional suffix for S3 bucket names (e.g. date stamp for uniqueness)"
+  type        = string
+  default     = ""
+}
+
 # --- Network ---
 
 variable "vpc_cidr" {

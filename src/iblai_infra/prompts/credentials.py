@@ -17,10 +17,15 @@ from iblai_infra.providers.aws import (
 TOTAL_STEPS = 5
 
 
-def prompt_credentials() -> AWSCredentials:
+def prompt_credentials(show_step: bool = True) -> AWSCredentials:
     """Run the full AWS credentials wizard and return validated credentials."""
 
-    ui.step_header(1, TOTAL_STEPS, "AWS Authentication")
+    if show_step:
+        ui.step_header(1, TOTAL_STEPS, "AWS Authentication")
+    else:
+        ui.newline()
+        ui.info("[highlight]AWS Authentication[/highlight]")
+        ui.newline()
 
     # ----- auth method -----
     choices = []

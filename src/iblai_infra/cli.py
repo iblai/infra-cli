@@ -297,7 +297,7 @@ def _resolve_credentials(
     # Otherwise, always use the interactive credentials wizard
     from iblai_infra.prompts.credentials import prompt_credentials
 
-    creds = prompt_credentials()
+    creds = prompt_credentials(show_step=False)
 
     identity_obj = type("Id", (), {"account_id": creds.account_id, "arn": creds.arn})()
     return creds, identity_obj
@@ -359,9 +359,6 @@ def permissions(
     )
 
     creds, identity = _resolve_credentials(profile=profile, region=region)
-
-    ui.success(f"Authenticated as [highlight]{identity.arn}[/highlight]")
-    ui.muted(f"Account: {identity.account_id}  Region: {creds.region}")
     ui.newline()
 
     # Run checks

@@ -66,20 +66,21 @@ def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
         ui.abort()
 
     # ----- instance type -----
-    instance_choices = [
-        questionary.Choice(title=f"{itype}  — {desc}", value=itype)
-        for itype, desc in INSTANCE_TYPES.items()
-    ]
-    instance_choices.append(questionary.Choice("Custom (enter manually)", value="_custom"))
+    instance_labels = {
+        f"{itype}  — {desc}": itype for itype, desc in INSTANCE_TYPES.items()
+    }
+    instance_labels["Custom (enter manually)"] = "_custom"
 
-    instance_type = questionary.select(
-        "Instance type:",
-        choices=instance_choices,
-        default="t3.2xlarge",
+    instance_selection = questionary.autocomplete(
+        "Instance type (type to filter):",
+        choices=list(instance_labels.keys()),
+        default=f"t3.2xlarge  — {INSTANCE_TYPES['t3.2xlarge']}",
         style=ui.PROMPT_STYLE,
+        validate=lambda v: v in instance_labels or "Select a valid instance type from the list",
     ).ask()
-    if instance_type is None:
+    if instance_selection is None:
         ui.abort()
+    instance_type = instance_labels[instance_selection]
 
     if instance_type == "_custom":
         instance_type = questionary.text(
@@ -212,17 +213,18 @@ def prompt_network_and_ssh(
         ui.success(f"Using public key: [highlight]{pub_path}[/highlight]")
 
     elif ssh_method == SSHKeyMethod.AWS_KEYPAIR:
-        selected = questionary.select(
-            "Select key pair:",
-            choices=[
-                questionary.Choice(f"{kp.name} ({kp.key_type})", value=kp.name)
-                for kp in aws_keys
-            ],
+        kp_labels = {
+            f"{kp.name} ({kp.key_type})": kp.name for kp in aws_keys
+        }
+        kp_selection = questionary.autocomplete(
+            "Select key pair (type to filter):",
+            choices=list(kp_labels.keys()),
             style=ui.PROMPT_STYLE,
+            validate=lambda v: v in kp_labels or "Select a valid key pair from the list",
         ).ask()
-        if selected is None:
+        if kp_selection is None:
             ui.abort()
-        key_name = selected
+        key_name = kp_labels[kp_selection]
         # For AWS keypairs, no public key needed — reference by name in Terraform
         ui.success(f"Using AWS key pair: [highlight]{key_name}[/highlight]")
 

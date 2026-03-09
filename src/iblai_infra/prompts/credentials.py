@@ -62,10 +62,11 @@ def prompt_credentials() -> AWSCredentials:
     secret_access_key = None
 
     if method == AuthMethod.PROFILE:
-        profile = questionary.select(
-            "Select AWS profile:",
+        profile = questionary.autocomplete(
+            "Select AWS profile (type to filter):",
             choices=profiles,
             style=ui.PROMPT_STYLE,
+            validate=lambda v: v in profiles or "Select a valid profile from the list",
         ).ask()
         if profile is None:
             ui.abort()
@@ -88,18 +89,19 @@ def prompt_credentials() -> AWSCredentials:
             ui.abort()
 
     # ----- region -----
-    region_choices = [
-        questionary.Choice(title=f"{code}  ({name})", value=code)
-        for code, name in AWS_REGIONS.items()
-    ]
-    region = questionary.select(
-        "AWS Region:",
-        choices=region_choices,
-        default="us-east-1",
+    region_labels = {
+        f"{code}  ({name})": code for code, name in AWS_REGIONS.items()
+    }
+    region_selection = questionary.autocomplete(
+        "AWS Region (type to filter):",
+        choices=list(region_labels.keys()),
+        default="us-east-1  (US East (N. Virginia))",
         style=ui.PROMPT_STYLE,
+        validate=lambda v: v in region_labels or "Select a valid region from the list",
     ).ask()
-    if region is None:
+    if region_selection is None:
         ui.abort()
+    region = region_labels[region_selection]
 
     # ----- validate -----
     creds = AWSCredentials(

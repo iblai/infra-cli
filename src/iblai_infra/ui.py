@@ -9,7 +9,6 @@ from __future__ import annotations
 import questionary
 
 from rich.console import Console, Group, RenderableType
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
@@ -86,24 +85,19 @@ PROMPT_STYLE = questionary.Style(
 def banner() -> None:
     """Print the ibl.ai welcome banner."""
     console.print()
-    logo = (
+    console.print(Rule(style=IBL_BLUE))
+    console.print(
         f"[bold {IBL_BLUE}]"
         " _ _     _           _\n"
         "(_) |__ | |    __ _ (_)\n"
         "| | '_ \\| |   / _` || |\n"
         "| | |_) | |_ | (_| || |\n"
-        "|_|_.__/|____(_)__,_|_|\n"
-        "[/]"
-    )
-    console.print(
-        Panel(
-            f"{logo}\n"
-            f"[bold white]Infrastructure Provisioning[/bold white]\n"
-            f"[{IBL_BLUE_PALE}]Interactive setup for AWS[/]",
-            border_style=IBL_BLUE,
-            padding=(1, 4),
-            expand=False,
-        )
+        "|_|_.__/|____(_)__,_|_|"
+        "[/]\n"
+        "\n"
+        "[bold white]Infrastructure Provisioning[/bold white]\n"
+        f"[{IBL_BLUE_PALE}]Interactive setup for AWS[/]",
+        justify="center",
     )
     console.print()
 

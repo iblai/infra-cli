@@ -72,7 +72,7 @@ def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
     ]
     instance_choices.append(questionary.Choice("Custom (enter manually)", value="_custom"))
 
-    instance_type = questionary.fuzzy(
+    instance_type = questionary.select(
         "Instance type:",
         choices=instance_choices,
         default="t3.2xlarge",
@@ -212,7 +212,7 @@ def prompt_network_and_ssh(
         ui.success(f"Using public key: [highlight]{pub_path}[/highlight]")
 
     elif ssh_method == SSHKeyMethod.AWS_KEYPAIR:
-        selected = questionary.fuzzy(
+        selected = questionary.select(
             "Select key pair:",
             choices=[
                 questionary.Choice(f"{kp.name} ({kp.key_type})", value=kp.name)

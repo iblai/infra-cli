@@ -62,7 +62,7 @@ def prompt_credentials() -> AWSCredentials:
     secret_access_key = None
 
     if method == AuthMethod.PROFILE:
-        profile = questionary.fuzzy(
+        profile = questionary.select(
             "Select AWS profile:",
             choices=profiles,
             style=ui.PROMPT_STYLE,
@@ -92,7 +92,7 @@ def prompt_credentials() -> AWSCredentials:
         questionary.Choice(title=f"{code}  ({name})", value=code)
         for code, name in AWS_REGIONS.items()
     ]
-    region = questionary.fuzzy(
+    region = questionary.select(
         "AWS Region:",
         choices=region_choices,
         default="us-east-1",

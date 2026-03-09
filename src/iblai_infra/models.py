@@ -203,6 +203,26 @@ class ProjectState(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     workspace_path: str = ""
+    setup_status: Literal["pending", "running", "completed", "failed"] | None = None
+    setup_completed_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Setup config — contract between setup prompts and AnsibleRunner
+# ---------------------------------------------------------------------------
+
+class SetupConfig(BaseModel):
+    """Variables needed to bootstrap a provisioned VM. Never persisted to disk."""
+    ssh_private_key_path: Path
+    ssh_user: str = "ubuntu"
+    target_host: str
+    base_domain: str
+    edx_version: str = "sumac"
+    env_config: str = "single-server"
+    git_access_token: str
+    aws_access_key_id: str
+    aws_secret_access_key: str
+    aws_default_region: str
 
 
 # ---------------------------------------------------------------------------

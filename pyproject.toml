@@ -12,6 +12,9 @@ dependencies = [
     "typer>=0.12",
 ]
 
+[project.optional-dependencies]
+ansible = ["ansible-core>=2.15"]
+
 [project.scripts]
 iblai = "iblai_infra.cli:app"
 

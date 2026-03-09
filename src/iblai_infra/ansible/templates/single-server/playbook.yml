@@ -1,0 +1,30 @@
+---
+- name: Bootstrap IBL Platform (Single Server)
+  hosts: ibl_servers
+  become: true
+
+  vars:
+    python_version: "3.11.8"
+    venv_name: "ibl-cli-ops"
+    ibl_root: /ibl
+    repo_slug: "iblai/ibl-cli-ops"
+    repo_dir: "/home/{{ ansible_user }}/ibl-cli-ops"
+    pyenv_root: "/home/{{ ansible_user }}/.pyenv"
+    bashrc_path: "/home/{{ ansible_user }}/.bashrc"
+    docker_arch: >-
+      {{ 'amd64' if ansible_architecture == 'x86_64'
+         else 'arm64' if ansible_architecture == 'aarch64'
+         else ansible_architecture }}
+
+  pre_tasks:
+    - name: Wait for cloud-init to finish
+      command: cloud-init status --wait
+      changed_when: false
+      ignore_errors: true
+
+  roles:
+    - docker
+    - awscli
+    - python
+    - ibl_cli_ops
+    - ibl_platform

@@ -1,0 +1,45 @@
+---
+- name: Upgrade pip in virtualenv
+  become: false
+  pip:
+    name: pip
+    state: latest
+    executable: "/home/{{ ansible_user }}/.pyenv/versions/{{ venv_name }}/bin/pip"
+
+- name: Clone ibl-cli-ops repository
+  become: false
+  git:
+    repo: "https://{{ git_access_token }}@github.com/{{ repo_slug }}.git"
+    dest: "{{ repo_dir }}"
+    version: develop
+    force: true
+
+- name: Install requirements
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    cd "{{ repo_dir }}"
+    pip install -r requirements/{{ edx_version }}.in
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Install ibl-cli in editable mode
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    cd "{{ repo_dir }}"
+    pip install -e .
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"

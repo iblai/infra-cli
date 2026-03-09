@@ -1,7 +1,7 @@
 """CLI entry point — `iblai infra <command>` structure.
 
 Root:  iblai --version | --help
-Group: iblai infra provision | destroy | status | list
+Group: iblai infra provision | setup | destroy | status | list
 """
 
 from __future__ import annotations
@@ -78,6 +78,7 @@ def infra_root(ctx: typer.Context) -> None:
 
     commands = [
         ("iblai infra provision", "Launch the interactive provisioning wizard"),
+        ("iblai infra setup <name>", "Bootstrap a provisioned VM with the IBL platform"),
         ("iblai infra destroy <name>", "Destroy existing infrastructure"),
         ("iblai infra status <name>", "Show infrastructure details and outputs"),
         ("iblai infra list", "List all managed environments"),
@@ -105,8 +106,9 @@ def infra_root(ctx: typer.Context) -> None:
     action = questionary.select(
         "What would you like to do?",
         choices=[
-            questionary.Choice("Check AWS permissions", value="permissions"),
             questionary.Choice("Provision infrastructure", value="provision"),
+            questionary.Choice("Set up platform on provisioned VM", value="setup"),
+            questionary.Choice("Check AWS permissions", value="permissions"),
             questionary.Choice("List managed environments", value="list"),
             questionary.Choice("Show required IAM policy", value="policy"),
             questionary.Choice("Switch AWS credentials", value="auth"),
@@ -121,15 +123,17 @@ def infra_root(ctx: typer.Context) -> None:
 
     ui.newline()
 
-    if action == "permissions":
-        ctx.invoke(permissions, check=True, profile=None, region="us-east-1")
-    elif action == "provision":
+    if action == "provision":
         from iblai_infra.app import run_provision_wizard
         try:
             run_provision_wizard(show_banner=False)
         except KeyboardInterrupt:
             ui.newline()
             ui.abort("Interrupted.")
+    elif action == "setup":
+        _interactive_setup()
+    elif action == "permissions":
+        ctx.invoke(permissions, check=True, profile=None, region="us-east-1")
     elif action == "list":
         ctx.invoke(list_cmd)
     elif action == "policy":
@@ -161,6 +165,150 @@ def provision() -> None:
     except KeyboardInterrupt:
         ui.newline()
         ui.abort("Interrupted.")
+
+
+@infra_app.command()
+def setup(
+    name: str = typer.Argument(help="Project name to set up"),
+) -> None:
+    """Bootstrap a provisioned VM with the IBL platform."""
+    _run_setup(name)
+
+
+def _interactive_setup() -> None:
+    """Launch setup from the landing menu — prompts for project name."""
+    import questionary
+
+    states = list_all_states()
+    eligible = [s for s in states if s.status == "created"]
+
+    if not eligible:
+        ui.info("No provisioned environments found to set up.")
+        ui.muted("Run [brand]iblai infra provision[/brand] first.")
+        ui.newline()
+        return
+
+    if len(eligible) == 1:
+        _run_setup(eligible[0].name)
+        return
+
+    choices = [
+        questionary.Choice(
+            f"{s.name} ({s.config.dns.base_domain})",
+            value=s.name,
+        )
+        for s in eligible
+    ]
+    name = questionary.select(
+        "Which environment?",
+        choices=choices,
+        style=ui.PROMPT_STYLE,
+    ).ask()
+    if name is None:
+        return
+
+    _run_setup(name)
+
+
+def _run_setup(name: str) -> None:
+    """Core setup logic shared by the command and the interactive menu."""
+    state = load_state(name)
+    if state is None:
+        ui.error(f"No infrastructure found with name: {name}")
+        raise typer.Exit(1)
+
+    if state.status == "destroyed":
+        ui.error(f"Infrastructure '{name}' has been destroyed. Provision it first.")
+        raise typer.Exit(1)
+
+    if state.status != "created":
+        ui.error(
+            f"Infrastructure '{name}' has status '{state.status}'. "
+            "It must be fully provisioned (status: created) before setup."
+        )
+        raise typer.Exit(1)
+
+    if not state.outputs or not state.outputs.get("instance_public_ip"):
+        ui.error("No instance IP found in Terraform outputs. Re-run provisioning.")
+        raise typer.Exit(1)
+
+    # Check if already set up
+    if state.setup_status == "completed":
+        import questionary
+
+        ui.warning(f"Platform setup already completed for '{name}'.")
+        rerun = questionary.confirm(
+            "Re-run setup?",
+            default=False,
+            style=ui.PROMPT_STYLE,
+        ).ask()
+        if not rerun:
+            raise typer.Exit(0)
+
+    from iblai_infra.ansible.runner import AnsibleRunner
+    from iblai_infra.prompts.setup import prompt_setup
+
+    # Pre-flight: check ansible is installed
+    runner_check = AnsibleRunner.__new__(AnsibleRunner)
+    runner_check.state = state
+    if not runner_check._check_ansible_installed():
+        raise typer.Exit(1)
+
+    # Collect setup variables
+    try:
+        setup_config = prompt_setup(state)
+    except KeyboardInterrupt:
+        ui.newline()
+        ui.abort("Interrupted.")
+
+    # Review summary
+    rows = [
+        ("Target", setup_config.target_host),
+        ("SSH key", str(setup_config.ssh_private_key_path)),
+        ("Domain", setup_config.base_domain),
+        ("edX version", setup_config.edx_version),
+        ("Env config", setup_config.env_config),
+        ("AWS region", setup_config.aws_default_region),
+    ]
+    ui.summary_panel("Setup Summary", rows)
+
+    import questionary
+
+    confirm = questionary.confirm(
+        "Proceed with setup?",
+        default=True,
+        style=ui.PROMPT_STYLE,
+    ).ask()
+    if not confirm:
+        ui.abort("Cancelled.")
+
+    # Run ansible
+    runner = AnsibleRunner(state, setup_config)
+
+    if not runner.preflight():
+        raise typer.Exit(1)
+
+    runner.setup()
+
+    try:
+        success = runner.run()
+    except KeyboardInterrupt:
+        from datetime import datetime, timezone
+
+        ui.newline()
+        state.setup_status = "failed"
+        state.updated_at = datetime.now(timezone.utc)
+        from iblai_infra.terraform.state import save_state
+        save_state(state)
+        ui.abort("Interrupted. Re-run with: iblai infra setup " + name)
+
+    if success:
+        ui.newline()
+        ip = setup_config.target_host
+        key_flag = f"-i {setup_config.ssh_private_key_path} " if setup_config.ssh_private_key_path else ""
+        ui.success(f"Platform bootstrapped on [highlight]{ip}[/highlight]")
+        ui.info(f"SSH: [highlight]ssh {key_flag}ubuntu@{ip}[/highlight]")
+        ui.newline()
 
 
 @infra_app.command()
@@ -268,6 +416,21 @@ def status(
     # SSH key
     if state.config.ssh.private_key_path:
         rows.append(("SSH key", str(state.config.ssh.private_key_path)))
+
+    # Setup status
+    if state.setup_status:
+        setup_colors = {
+            "completed": "#3ECF6E",
+            "running": "#F0A830",
+            "failed": "#E85454",
+            "pending": "dim",
+        }
+        ssc = setup_colors.get(state.setup_status, "white")
+        rows.append(("", ""))
+        rows.append(("", "[bold]Platform Setup[/bold]"))
+        rows.append(("Setup status", f"[{ssc}]{state.setup_status.upper()}[/{ssc}]"))
+        if state.setup_completed_at:
+            rows.append(("Completed", state.setup_completed_at.strftime("%Y-%m-%d %H:%M UTC")))
 
     # Outputs
     if state.outputs:
@@ -460,8 +623,8 @@ def list_cmd() -> None:
     table.add_column("Environment", min_width=12)
     table.add_column("Region", min_width=14)
     table.add_column("Domain", min_width=16)
-    table.add_column("Status", min_width=12, justify="center")
-    table.add_column("Workspace", style="dim", min_width=20)
+    table.add_column("Infra", min_width=12, justify="center")
+    table.add_column("Setup", min_width=12, justify="center")
     table.add_column("Created", min_width=10)
 
     status_colors = {
@@ -471,13 +634,21 @@ def list_cmd() -> None:
         "destroyed": "dim",
     }
 
+    setup_colors = {
+        "completed": "#3ECF6E",
+        "running": "#F0A830",
+        "failed": "#E85454",
+        "pending": "dim",
+    }
+
     for s in states:
         sc = status_colors.get(s.status, "white")
-
-        ws_path = s.workspace_path
-        home = str(Path.home())
-        if ws_path.startswith(home):
-            ws_path = "~" + ws_path[len(home):]
+        setup_status = s.setup_status or "—"
+        if s.setup_status:
+            ssc = setup_colors.get(s.setup_status, "white")
+            setup_display = f"[{ssc}]{s.setup_status}[/{ssc}]"
+        else:
+            setup_display = "[dim]\u2014[/dim]"
 
         table.add_row(
             s.name,
@@ -485,7 +656,7 @@ def list_cmd() -> None:
             s.config.credentials.region,
             s.config.dns.base_domain,
             f"[{sc}]{s.status}[/{sc}]",
-            ws_path,
+            setup_display,
             s.created_at.strftime("%Y-%m-%d"),
         )
 

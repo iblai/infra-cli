@@ -77,6 +77,9 @@ def run_provision_wizard(show_banner: bool = True) -> None:
     # ----- Show results -----
     _show_results(config, outputs, runner.ws)
 
+    # ----- Offer setup -----
+    _offer_setup(config, runner.state)
+
 
 def _show_workspace(ws: Path) -> None:
     """Show the user where Terraform files live."""
@@ -139,3 +142,86 @@ def _show_results(config: InfraConfig, outputs: dict, ws: Path) -> None:
     if config.ssh.private_key_path:
         ui.info(f"SSH key:   [highlight]{config.ssh.private_key_path}[/highlight]")
     ui.newline()
+
+
+def _offer_setup(config: InfraConfig, state) -> None:
+    """After successful provision, offer to run platform setup."""
+    import shutil
+
+    import questionary
+
+    from iblai_infra.models import ProjectState
+
+    if not isinstance(state, ProjectState):
+        return
+
+    if not shutil.which("ansible-playbook"):
+        ui.muted(
+            "To bootstrap the VM with the IBL platform, install ansible-core and run "
+            f"[brand]iblai infra setup {config.project_name}[/brand]"
+        )
+        ui.newline()
+        return
+
+    run_setup = questionary.confirm(
+        "Run platform setup now? (Ansible will bootstrap the VM)",
+        default=False,
+        style=ui.PROMPT_STYLE,
+    ).ask()
+
+    if not run_setup:
+        ui.newline()
+        ui.muted(
+            f"Run [brand]iblai infra setup {config.project_name}[/brand] later to bootstrap the VM."
+        )
+        ui.newline()
+        return
+
+    from iblai_infra.ansible.runner import AnsibleRunner
+    from iblai_infra.prompts.setup import prompt_setup
+
+    try:
+        setup_config = prompt_setup(state)
+    except KeyboardInterrupt:
+        ui.newline()
+        ui.muted(
+            f"Setup interrupted. Run [brand]iblai infra setup {config.project_name}[/brand] to continue."
+        )
+        ui.newline()
+        return
+
+    runner = AnsibleRunner(state, setup_config)
+
+    if not runner.preflight():
+        ui.newline()
+        ui.muted(
+            f"Fix the issue above, then run [brand]iblai infra setup {config.project_name}[/brand]"
+        )
+        ui.newline()
+        return
+
+    runner.setup()
+
+    try:
+        success = runner.run()
+    except KeyboardInterrupt:
+        from datetime import datetime, timezone
+        from iblai_infra.terraform.state import save_state
+
+        ui.newline()
+        state.setup_status = "failed"
+        state.updated_at = datetime.now(timezone.utc)
+        save_state(state)
+        ui.muted(
+            f"Setup interrupted. Re-run [brand]iblai infra setup {config.project_name}[/brand]"
+        )
+        ui.newline()
+        return
+
+    if success:
+        ui.newline()
+        ip = setup_config.target_host
+        key_flag = f"-i {setup_config.ssh_private_key_path} " if setup_config.ssh_private_key_path else ""
+        ui.success(f"Platform bootstrapped on [highlight]{ip}[/highlight]")
+        ui.info(f"SSH: [highlight]ssh {key_flag}ubuntu@{ip}[/highlight]")
+        ui.newline()

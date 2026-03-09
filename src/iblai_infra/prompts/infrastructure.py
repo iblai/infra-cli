@@ -108,7 +108,7 @@ def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
             questionary.Choice("gp2", value="gp2"),
             questionary.Choice("io1 (provisioned IOPS)", value="io1"),
         ],
-        default="gp3 (recommended)",
+        default="gp3",
         style=ui.PROMPT_STYLE,
     ).ask()
     if volume_type is None:

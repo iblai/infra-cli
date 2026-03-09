@@ -1,4 +1,4 @@
-# ibl.ai Infrastructure — AWS Single Server
+# ibl.ai Infrastructure - AWS Single Server
 # Provisions: VPC, EC2, ALB, S3, and optionally ACM/IAM certificates + Route53 DNS
 
 terraform {
@@ -126,7 +126,7 @@ resource "aws_route_table_association" "public" {
 
 resource "aws_security_group" "alb" {
   name        = "${local.resource_prefix}-alb-sg"
-  description = "ALB — HTTP/HTTPS from anywhere"
+  description = "ALB - HTTP/HTTPS from anywhere"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -157,7 +157,7 @@ resource "aws_security_group" "alb" {
 
 resource "aws_security_group" "ec2" {
   name        = "${local.resource_prefix}-ec2-sg"
-  description = "EC2 — SSH from VPN IP, HTTP from ALB"
+  description = "EC2 - SSH from VPN IP, HTTP from ALB"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -309,7 +309,7 @@ resource "aws_lb_target_group_attachment" "main" {
   port             = 80
 }
 
-# HTTP Listener — redirect to HTTPS when certs exist, otherwise forward
+# HTTP Listener - redirect to HTTPS when certs exist, otherwise forward
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = 80

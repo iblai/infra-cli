@@ -602,7 +602,7 @@ def permissions(
 @infra_app.command(name="list")
 def list_cmd() -> None:
     """List all provisioned environments."""
-    states = list_all_states()
+    states = [s for s in list_all_states() if s.status != "destroyed"]
 
     if not states:
         ui.newline()

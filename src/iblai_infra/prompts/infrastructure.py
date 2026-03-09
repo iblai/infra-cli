@@ -104,7 +104,7 @@ def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
     volume_type = questionary.select(
         "Volume type:",
         choices=[
-            questionary.Choice("gp3 (recommended)", value="gp3"),
+            questionary.Choice("gp3", value="gp3"),
             questionary.Choice("gp2", value="gp2"),
             questionary.Choice("io1 (provisioned IOPS)", value="io1"),
         ],
@@ -171,7 +171,7 @@ def prompt_network_and_ssh(
     # ----- SSH key -----
     ui.newline()
     ssh_choices = [
-        questionary.Choice("Generate a new key pair (recommended)", value=SSHKeyMethod.GENERATE),
+        questionary.Choice("Generate a new key pair", value=SSHKeyMethod.GENERATE),
         questionary.Choice("Provide an existing public key file", value=SSHKeyMethod.EXISTING_FILE),
     ]
 

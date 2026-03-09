@@ -68,7 +68,7 @@ AWS_REGIONS: dict[str, str] = {
 # Common instance types with human-readable descriptions
 INSTANCE_TYPES: dict[str, str] = {
     "t3.xlarge": "4 vCPU,  16 GB RAM — Small workloads",
-    "t3.2xlarge": "8 vCPU,  32 GB RAM — Recommended",
+    "t3.2xlarge": "8 vCPU,  32 GB RAM",
     "m5.2xlarge": "8 vCPU,  32 GB RAM — Compute optimized",
     "m5.4xlarge": "16 vCPU, 64 GB RAM — Large workloads",
     "r5.2xlarge": "8 vCPU,  64 GB RAM — Memory optimized",

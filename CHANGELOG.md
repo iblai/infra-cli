@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0] — 2026-03-09
+
+### Added
+- `iblai infra permissions` command — displays minimum IAM policy JSON required for provisioning
+- `--check` flag for dry-run permission verification against active AWS credentials (EC2, ELB, S3, ACM, Route 53, IAM, STS)
+- `--profile` and `--region` flags for targeting specific credentials during permission checks
+- Branded landing screen when running `iblai infra` with no arguments — shows all available commands and a getting-started guide
+
 ## [0.1.0] — 2026-03-09
 
 ### Added

@@ -163,3 +163,105 @@ def detect_current_ip() -> str | None:
             return resp.read().decode().strip()
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# IAM permission checks
+# ---------------------------------------------------------------------------
+
+# Minimum IAM policy required for provisioning
+REQUIRED_IAM_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "IblaiInfraProvisioning",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:*",
+                "elasticloadbalancing:*",
+                "s3:*",
+                "acm:*",
+                "route53:*",
+                "iam:UploadServerCertificate",
+                "iam:DeleteServerCertificate",
+                "iam:GetServerCertificate",
+                "iam:ListServerCertificates",
+                "sts:GetCallerIdentity",
+            ],
+            "Resource": "*",
+        }
+    ],
+}
+
+# Dry-run checks: (service_label, test_function_name)
+# Each test makes a harmless read-only API call to verify access.
+_PERMISSION_CHECKS: list[tuple[str, str, str]] = [
+    # (label, service, description)
+    ("EC2", "ec2", "Instances, VPC, subnets, security groups, key pairs"),
+    ("Elastic Load Balancing", "elbv2", "Application Load Balancer, target groups, listeners"),
+    ("S3", "s3", "Buckets for backups, media, static files"),
+    ("ACM", "acm", "SSL/TLS certificate provisioning"),
+    ("Route 53", "route53", "DNS hosted zones and records"),
+    ("IAM", "iam", "Server certificate upload (for cert upload mode)"),
+    ("STS", "sts", "Caller identity verification"),
+]
+
+
+@dataclass
+class PermissionCheckResult:
+    service: str
+    description: str
+    passed: bool
+    error: str | None = None
+
+
+def check_permissions(session: boto3.Session) -> list[PermissionCheckResult]:
+    """Run dry-run permission checks against AWS. Returns results per service."""
+    results: list[PermissionCheckResult] = []
+
+    for label, service, description in _PERMISSION_CHECKS:
+        try:
+            if service == "ec2":
+                client = session.client("ec2")
+                # DryRun=True tests permission without making changes
+                try:
+                    client.describe_vpcs(DryRun=True)
+                except ClientError as e:
+                    if e.response["Error"]["Code"] == "DryRunOperation":
+                        pass  # DryRunOperation means permission is granted
+                    else:
+                        raise
+            elif service == "elbv2":
+                client = session.client("elbv2")
+                client.describe_load_balancers(PageSize=1)
+            elif service == "s3":
+                client = session.client("s3")
+                client.list_buckets(MaxBuckets=1)
+            elif service == "acm":
+                client = session.client("acm")
+                client.list_certificates(MaxItems=1)
+            elif service == "route53":
+                client = session.client("route53")
+                client.list_hosted_zones(MaxItems="1")
+            elif service == "iam":
+                client = session.client("iam")
+                client.list_server_certificates(MaxItems=1)
+            elif service == "sts":
+                client = session.client("sts")
+                client.get_caller_identity()
+
+            results.append(PermissionCheckResult(
+                service=label, description=description, passed=True,
+            ))
+        except ClientError as e:
+            code = e.response["Error"]["Code"]
+            msg = e.response["Error"].get("Message", code)
+            results.append(PermissionCheckResult(
+                service=label, description=description, passed=False, error=msg,
+            ))
+        except (BotoCoreError, NoCredentialsError) as e:
+            results.append(PermissionCheckResult(
+                service=label, description=description, passed=False, error=str(e),
+            ))
+
+    return results

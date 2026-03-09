@@ -22,6 +22,16 @@ uv pip install -e .
 
 ## Usage
 
+Run `iblai infra` to see all available commands and a getting-started guide.
+
+### Check IAM permissions
+
+```bash
+iblai infra permissions              # Show required IAM policy
+iblai infra permissions --check      # Verify your credentials have the right permissions
+iblai infra permissions --check --profile myprofile --region eu-west-1
+```
+
 ### Provision infrastructure
 
 ```bash

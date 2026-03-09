@@ -12,7 +12,7 @@ Interactive CLI tool for provisioning ibl.ai platform infrastructure on AWS. Bui
 iblai-infra/
 ├── pyproject.toml                          # uv/hatch config, entry point: iblai = iblai_infra.cli:app
 ├── src/iblai_infra/
-│   ├── __init__.py                         # __version__ = "0.1.0"
+│   ├── __init__.py                         # __version__ = "0.2.0"
 │   ├── __main__.py                         # python -m iblai_infra support
 │   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup
 │   ├── app.py                              # Wizard orchestrator (5-step flow)
@@ -24,7 +24,7 @@ iblai-infra/
 │   │   ├── dns_certs.py                    # Step 4: domain, Route53, certificates
 │   │   └── review.py                       # Step 5: summary + confirm
 │   ├── providers/
-│   │   └── aws.py                          # AWS helpers: STS validation, Route53, key pairs, IP detect
+│   │   └── aws.py                          # AWS helpers: STS validation, Route53, key pairs, IP detect, permission checks
 │   ├── terraform/
 │   │   ├── runner.py                       # TerraformRunner: setup/init/plan/apply/destroy with JSON streaming
 │   │   ├── state.py                        # ProjectState persistence (~/.iblai-infra/projects/)
@@ -42,7 +42,8 @@ iblai-infra/
 ### CLI Structure (Typer)
 
 - **Root app** (`iblai`): `--version`, `--help`
-- **Subgroup** (`iblai infra`): `provision`, `destroy`, `status <name>`, `list`
+- **Subgroup** (`iblai infra`): `provision`, `destroy`, `status <name>`, `list`, `permissions`
+- Running `iblai infra` with no arguments shows branded landing screen with all commands and getting-started steps
 - Entry point in `pyproject.toml`: `iblai = "iblai_infra.cli:app"`
 
 ### Wizard Flow (app.py)
@@ -76,6 +77,15 @@ After confirmation: `TerraformRunner.setup()` → `init()` → `plan()` → `app
 - Rich Live display: resource status table + progress bar, `transient=True`
 - `_generate_tfvars()` converts InfraConfig → terraform.tfvars
 - `RESOURCE_LABELS` maps AWS resource types to human-friendly names
+
+### IAM Permission Checks
+
+- `iblai infra permissions` — displays the minimum IAM policy JSON required for provisioning
+- `iblai infra permissions --check` — dry-run verification against active credentials
+- Checks 7 services: EC2, ELB, S3, ACM, Route 53, IAM, STS
+- Uses harmless read-only API calls (e.g., `DryRun=True` for EC2, `list_*` for others)
+- `REQUIRED_IAM_POLICY` dict and `check_permissions()` live in `providers/aws.py`
+- Accepts `--profile` and `--region` flags for targeting specific credentials
 
 ### State Management
 

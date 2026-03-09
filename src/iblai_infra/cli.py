@@ -53,10 +53,57 @@ def root(
 infra_app = typer.Typer(
     name="infra",
     help="Infrastructure provisioning and management for AWS.",
-    no_args_is_help=True,
+    invoke_without_command=True,
 )
 
 app.add_typer(infra_app)
+
+
+@infra_app.callback(invoke_without_command=True)
+def infra_root(ctx: typer.Context) -> None:
+    """Infrastructure provisioning and management for AWS."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    ui.banner()
+
+    table = Table(
+        show_header=False,
+        box=None,
+        padding=(0, 2),
+        expand=False,
+    )
+    table.add_column("Command", style=f"bold {ui.IBL_BLUE_LIGHT}", min_width=36)
+    table.add_column("Description", style="white")
+
+    commands = [
+        ("iblai infra provision", "Launch the interactive provisioning wizard"),
+        ("iblai infra destroy <name>", "Destroy existing infrastructure"),
+        ("iblai infra status <name>", "Show infrastructure details and outputs"),
+        ("iblai infra list", "List all managed environments"),
+        ("iblai infra permissions", "Show required IAM policy"),
+        ("iblai infra permissions --check", "Verify your AWS permissions"),
+    ]
+    for cmd, desc in commands:
+        table.add_row(cmd, desc)
+
+    from rich.panel import Panel
+
+    ui.console.print(
+        Panel(
+            table,
+            title=f"[brand]Available Commands[/brand]",
+            border_style=ui.IBL_BLUE,
+            padding=(1, 2),
+        )
+    )
+
+    ui.newline()
+    ui.muted("  Getting started:")
+    ui.muted("    1. Check permissions   [bold]iblai infra permissions --check[/bold]")
+    ui.muted("    2. Provision infra     [bold]iblai infra provision[/bold]")
+    ui.muted("    3. View status         [bold]iblai infra status <name>[/bold]")
+    ui.newline()
 
 
 @infra_app.command()
@@ -187,6 +234,144 @@ def status(
                 rows.append((label, v))
 
     ui.summary_panel(f"Infrastructure: {state.name}", rows)
+
+
+@infra_app.command()
+def permissions(
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Dry-run against active AWS credentials to verify permissions.",
+    ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        "-p",
+        help="AWS profile to check against (default: auto-detect).",
+    ),
+    region: str = typer.Option(
+        "us-east-1",
+        "--region",
+        "-r",
+        help="AWS region for the check.",
+    ),
+) -> None:
+    """Show required IAM permissions. Use --check to verify against your credentials."""
+    import json
+
+    from iblai_infra.providers.aws import REQUIRED_IAM_POLICY
+
+    ui.newline()
+    ui.info("Minimum IAM permissions required for [highlight]iblai infra provision[/highlight]")
+
+    policy_json = json.dumps(REQUIRED_IAM_POLICY, indent=2)
+    from rich.syntax import Syntax
+
+    ui.newline()
+    ui.console.print(
+        Syntax(policy_json, "json", theme="monokai", padding=1),
+    )
+    ui.newline()
+    ui.muted("Attach this policy to your IAM user or role before provisioning.")
+
+    if not check:
+        ui.newline()
+        ui.muted(
+            "Run [bold]iblai infra permissions --check[/bold] to verify"
+            " your credentials have these permissions."
+        )
+        ui.newline()
+        return
+
+    # ----- Dry-run permission check -----
+    from rich.status import Status
+
+    from iblai_infra.models import AWSCredentials, AuthMethod
+    from iblai_infra.providers.aws import (
+        check_permissions,
+        get_session,
+        has_env_credentials,
+        validate_credentials,
+    )
+
+    # Build credentials from flags or auto-detect
+    if profile:
+        creds = AWSCredentials(method=AuthMethod.PROFILE, profile=profile, region=region)
+    elif has_env_credentials():
+        creds = AWSCredentials(method=AuthMethod.ENVIRONMENT, region=region)
+    else:
+        from iblai_infra.providers.aws import list_profiles
+
+        profiles = list_profiles()
+        if profiles:
+            creds = AWSCredentials(
+                method=AuthMethod.PROFILE, profile=profiles[0], region=region,
+            )
+        else:
+            ui.error(
+                "No credentials found. Use --profile, set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY,"
+                " or configure ~/.aws/credentials."
+            )
+            raise typer.Exit(1)
+
+    # Validate identity first
+    ui.newline()
+    with Status("[info]Authenticating...[/info]", console=ui.console):
+        try:
+            identity = validate_credentials(creds)
+        except ValueError as e:
+            ui.error(str(e))
+            raise typer.Exit(1)
+
+    ui.success(f"Authenticated as [highlight]{identity.arn}[/highlight]")
+    ui.muted(f"Account: {identity.account_id}  Region: {region}")
+    ui.newline()
+
+    # Run checks
+    session = get_session(creds)
+    with Status("[info]Checking permissions...[/info]", console=ui.console):
+        results = check_permissions(session)
+
+    # Display results
+    table = Table(
+        title=f"[bold {ui.IBL_BLUE}]Permission Check Results[/]",
+        border_style=ui.IBL_NAVY,
+        header_style=f"bold {ui.IBL_BLUE_LIGHT}",
+        padding=(0, 1),
+    )
+    table.add_column("Service", style="bold white", min_width=24)
+    table.add_column("Used For", style="dim", min_width=30)
+    table.add_column("Status", min_width=10, justify="center")
+
+    passed = 0
+    failed = 0
+    for r in results:
+        if r.passed:
+            status_display = "[bold #3ECF6E]\u2713 OK[/]"
+            passed += 1
+        else:
+            status_display = "[bold #E85454]\u2717 DENIED[/]"
+            failed += 1
+        table.add_row(r.service, r.description, status_display)
+
+    ui.console.print(table)
+    ui.newline()
+
+    if failed == 0:
+        ui.success(f"All {passed} permission checks passed. You're ready to provision.")
+    else:
+        ui.error(f"{failed} of {passed + failed} checks failed.")
+        ui.newline()
+        for r in results:
+            if not r.passed:
+                ui.muted(f"  {r.service}: {r.error}")
+        ui.newline()
+        ui.info(
+            "Attach the IAM policy above to your user/role and retry with"
+            " [highlight]iblai infra permissions --check[/highlight]"
+        )
+
+    ui.newline()
 
 
 @infra_app.command(name="list")

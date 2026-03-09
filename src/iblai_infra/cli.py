@@ -137,6 +137,8 @@ def infra_root(ctx: typer.Context) -> None:
     elif action == "auth":
         ctx.invoke(auth)
 
+    ui.newline()
+
 
 @infra_app.command()
 def auth() -> None:

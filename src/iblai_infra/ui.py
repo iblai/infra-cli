@@ -95,8 +95,7 @@ def banner() -> None:
         "|_|_.__/|____(_)__,_|_|"
         "[/]\n"
         "\n"
-        "[bold white]Infrastructure Provisioning[/bold white]\n"
-        f"[{IBL_BLUE_PALE}]Interactive setup for AWS[/]",
+        "[bold white]Infrastructure Provisioning[/bold white]",
         justify="center",
     )
     console.print()

@@ -316,10 +316,8 @@ def _resolve_credentials(
     saved = load_session()
     if saved:
         creds, identity = saved
-        ui.success(
-            f"Using saved session: [highlight]{identity.arn}[/highlight]"
-            f"  ({creds.region})"
-        )
+        user = identity.arn.split("/")[-1] if identity.arn else "unknown"
+        ui.success(f"Authenticated — [highlight]{user}[/highlight] ({creds.account_id})")
         return creds, identity
 
     # 3. Interactive credentials wizard

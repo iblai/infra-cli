@@ -25,10 +25,8 @@ def run_provision_wizard(show_banner: bool = True) -> None:
     if saved:
         credentials, identity = saved
         ui.step_header(1, 5, "AWS Authentication")
-        ui.success(
-            f"Using saved session: [highlight]{credentials.arn}[/highlight]"
-            f"  ({credentials.region})"
-        )
+        user = credentials.arn.split("/")[-1] if credentials.arn else "unknown"
+        ui.success(f"Authenticated — [highlight]{user}[/highlight] ({credentials.account_id})")
     else:
         credentials = prompt_credentials()
         save_session(credentials)

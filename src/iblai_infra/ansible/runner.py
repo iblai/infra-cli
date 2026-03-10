@@ -29,8 +29,6 @@ ROLE_LABELS: dict[str, str] = {
     "docker": "Docker Engine",
     "awscli": "AWS CLI",
     "python": "Python Environment",
-    "ibl_cli_ops": "IBL CLI Ops",
-    "ibl_platform": "Platform Configuration",
 }
 
 TOTAL_ROLES = len(ROLE_LABELS)
@@ -269,7 +267,6 @@ class AnsibleRunner:
     def _build_extra_vars(self) -> dict:
         """Build the extra-vars dict. Secrets are passed here, never to disk."""
         return {
-            "git_access_token": self.config.git_access_token,
             "aws_access_key_id": self.config.aws_access_key_id,
             "aws_secret_access_key": self.config.aws_secret_access_key,
             "aws_default_region": self.config.aws_default_region,

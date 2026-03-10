@@ -141,20 +141,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     # ----- Step 3: Credentials -----
     ui.step_header(3, TOTAL_STEPS, "Credentials")
 
-    # GitHub access token
-    ui.info("A GitHub PAT is required to clone the [highlight]ibl-cli-ops[/highlight] private repo.")
-    ui.muted("  Needs: repo (read) scope")
-    git_token = questionary.password(
-        "GitHub access token:",
-        validate=lambda v: len(v.strip()) > 0 or "Required",
-        style=ui.PROMPT_STYLE,
-    ).ask()
-    if git_token is None:
-        ui.abort()
-    git_token = git_token.strip()
-
     # AWS credentials for the VM
-    ui.newline()
     ui.info("AWS credentials will be configured on the VM for S3 access.")
 
     creds = state.config.credentials
@@ -201,7 +188,6 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
         base_domain=base_domain,
         edx_version=edx_version,
         env_config=env_config,
-        git_access_token=git_token,
         aws_access_key_id=aws_key_id,
         aws_secret_access_key=aws_secret,
         aws_default_region=aws_region,

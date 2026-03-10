@@ -186,13 +186,10 @@ class TestPromptSetup:
 
         with (
             patch("questionary.select") as mock_select,
-            patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
         ):
             # edX version -> sumac, env config -> single-server
             mock_select.return_value.ask.side_effect = ["sumac", "single-server"]
-            # git token
-            mock_password.return_value.ask.return_value = "ghp_testtoken"
             # reuse AWS creds -> yes
             mock_confirm.return_value.ask.return_value = True
 
@@ -200,7 +197,6 @@ class TestPromptSetup:
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.git_access_token == "ghp_testtoken"
         assert config.aws_access_key_id == "AKIA"
         assert config.aws_secret_access_key == "SECRET"
         assert config.target_host == "54.1.2.3"
@@ -219,7 +215,7 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_select.return_value.ask.side_effect = ["teak", "isolated-services"]
-            mock_password.return_value.ask.side_effect = ["ghp_token", "NEW_SECRET"]
+            mock_password.return_value.ask.return_value = "NEW_SECRET"
             mock_confirm.return_value.ask.return_value = False  # decline reuse
             mock_text.return_value.ask.return_value = "NEW_ACCESS_KEY"
 
@@ -242,7 +238,7 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_select.return_value.ask.side_effect = ["redwood", "application-only"]
-            mock_password.return_value.ask.side_effect = ["ghp_token", "SECRET"]
+            mock_password.return_value.ask.return_value = "SECRET"
             mock_text.return_value.ask.return_value = "ACCESS_KEY"
 
             config = prompt_setup(state)
@@ -264,12 +260,10 @@ class TestPromptSetup:
 
         with (
             patch("questionary.select") as mock_select,
-            patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.path") as mock_path,
         ):
             mock_select.return_value.ask.side_effect = ["sumac", "single-server"]
-            mock_password.return_value.ask.return_value = "ghp_token"
             mock_confirm.return_value.ask.return_value = True
             mock_path.return_value.ask.return_value = str(new_key)
 
@@ -289,12 +283,10 @@ class TestPromptSetup:
 
         with (
             patch("questionary.select") as mock_select,
-            patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.path") as mock_path,
         ):
             mock_select.return_value.ask.side_effect = ["sumac", "single-server"]
-            mock_password.return_value.ask.return_value = "ghp_token"
             mock_confirm.return_value.ask.return_value = True
             mock_path.return_value.ask.return_value = str(key)
 
@@ -314,12 +306,10 @@ class TestPromptSetup:
 
         with (
             patch("questionary.select") as mock_select,
-            patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.path") as mock_path,
         ):
             mock_select.return_value.ask.side_effect = ["sumac", "single-server"]
-            mock_password.return_value.ask.return_value = "ghp_token"
             mock_confirm.return_value.ask.return_value = True
             mock_path.return_value.ask.return_value = str(key)
 

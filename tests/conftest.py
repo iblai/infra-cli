@@ -83,7 +83,6 @@ def setup_config(tmp_path: Path) -> SetupConfig:
         base_domain="example.com",
         edx_version="sumac",
         env_config="single-server",
-        git_access_token="ghp_testtoken123",
         aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
         aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         aws_default_region="us-east-1",

@@ -30,8 +30,8 @@ class TestExtractRole:
         assert runner._extract_role(event) == "docker"
 
     def test_role_from_task_name(self, runner):
-        event = {"task": {"name": "ibl_cli_ops : Clone repository"}}
-        assert runner._extract_role(event) == "ibl_cli_ops"
+        event = {"task": {"name": "awscli : Install AWS CLI"}}
+        assert runner._extract_role(event) == "awscli"
 
     def test_role_from_play_field(self, runner):
         event = {"play": {"role": "awscli"}}
@@ -65,9 +65,9 @@ class TestExtractRole:
             event = {"task": {"role": role_name, "name": f"{role_name} task"}}
             assert runner._extract_role(event) == role_name
 
-    def test_ibl_platform_role(self, runner):
-        event = {"task": {"name": "ibl_platform : Run config save"}}
-        assert runner._extract_role(event) == "ibl_platform"
+    def test_python_role_from_name(self, runner):
+        event = {"task": {"name": "python : Install pyenv"}}
+        assert runner._extract_role(event) == "python"
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +297,7 @@ class TestBuildExtraVars:
         runner.config = setup_config
 
         extra = runner._build_extra_vars()
-        assert extra["git_access_token"] == "ghp_testtoken123"
+        assert "git_access_token" not in extra
         assert extra["aws_access_key_id"] == "AKIAIOSFODNN7EXAMPLE"
         assert extra["aws_default_region"] == "us-east-1"
         assert extra["base_domain"] == "example.com"
@@ -347,10 +347,9 @@ class TestBuildRoleTable:
             "docker": {"label": "Docker Engine", "status": "complete", "elapsed": 30},
             "awscli": {"label": "AWS CLI", "status": "in_progress", "elapsed": 5},
             "python": {"label": "Python Environment", "status": "error", "elapsed": 10},
-            "ibl_cli_ops": {"label": "IBL CLI Ops", "status": "pending", "elapsed": 0},
         }
         table = AnsibleRunner._build_role_table(roles)
-        assert table.row_count == 4
+        assert table.row_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +362,7 @@ class TestConstants:
         assert TOTAL_ROLES == len(ROLE_LABELS)
 
     def test_expected_roles(self):
-        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform"}
+        expected = {"docker", "awscli", "python"}
         assert set(ROLE_LABELS.keys()) == expected
 
 

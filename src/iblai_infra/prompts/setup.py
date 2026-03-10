@@ -118,7 +118,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
             questionary.Choice("Teak", value="teak"),
             questionary.Choice("Redwood", value="redwood"),
         ],
-        default="Sumac",
+        default="sumac",
         style=ui.PROMPT_STYLE,
     ).ask()
     if edx_version is None:
@@ -132,7 +132,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
             questionary.Choice("Isolated Services (separated services)", value="isolated-services"),
             questionary.Choice("Application Only (no edX)", value="application-only"),
         ],
-        default="Single Server (all services on one VM)",
+        default="single-server",
         style=ui.PROMPT_STYLE,
     ).ask()
     if env_config is None:

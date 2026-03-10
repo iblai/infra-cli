@@ -155,7 +155,10 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     ui.success("GitHub token provided")
 
     # AWS credentials for the VM
-    ui.info("AWS credentials will be configured on the VM for S3 access.")
+    ui.info(
+        "AWS credentials will be configured on the VM. "
+        "They must have access to ECR (iblai-dm-pro and iblai-edx-pro images) and S3 buckets."
+    )
 
     creds = state.config.credentials
     aws_key_id = ""

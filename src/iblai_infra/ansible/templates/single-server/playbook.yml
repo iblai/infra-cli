@@ -30,6 +30,10 @@
         group: "{{ ansible_user }}"
         mode: "0755"
 
+    - name: Ensure IBL root contents owned by ansible user
+      command: chown -R {{ ansible_user }}:{{ ansible_user }} {{ ibl_root }}/
+      changed_when: false
+
   roles:
     - docker
     - awscli

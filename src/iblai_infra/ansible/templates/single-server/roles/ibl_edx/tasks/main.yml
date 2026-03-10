@@ -17,10 +17,9 @@
   register: edx_launch_result
   ignore_errors: true
 
-- name: Show ibl edx launch output on failure
+- name: Show ibl edx launch output
   debug:
     var: edx_launch_result.stdout_lines
-  when: edx_launch_result.rc != 0
 
 - name: Fail if ibl edx launch failed
   fail:

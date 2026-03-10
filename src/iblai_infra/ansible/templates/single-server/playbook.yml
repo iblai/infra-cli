@@ -22,6 +22,14 @@
       changed_when: false
       ignore_errors: true
 
+    - name: Create IBL root directory
+      file:
+        path: "{{ ibl_root }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0755"
+
   roles:
     - docker
     - awscli

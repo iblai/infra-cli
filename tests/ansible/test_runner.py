@@ -415,7 +415,7 @@ class TestConstants:
         assert TOTAL_ROLES == len(ROLE_LABELS)
 
     def test_expected_roles(self):
-        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform"}
+        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform", "ibl_dm", "ibl_edx"}
         assert set(ROLE_LABELS.keys()) == expected
 
 

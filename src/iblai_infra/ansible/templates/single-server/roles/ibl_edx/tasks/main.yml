@@ -1,0 +1,15 @@
+---
+- name: Launch Open edX (ibl edx launch)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl edx launch
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  timeout: 3600

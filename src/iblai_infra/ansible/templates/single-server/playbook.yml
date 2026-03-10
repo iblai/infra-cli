@@ -28,3 +28,5 @@
     - python
     - ibl_cli_ops
     - ibl_platform
+    - ibl_dm
+    - ibl_edx

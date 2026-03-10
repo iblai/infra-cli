@@ -1,0 +1,15 @@
+---
+- name: Launch IBL Manager (ibl dm launch)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl dm launch
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  timeout: 1800

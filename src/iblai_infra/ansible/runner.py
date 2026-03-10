@@ -32,6 +32,8 @@ ROLE_LABELS: dict[str, str] = {
     "python": "Python Environment",
     "ibl_cli_ops": "IBL CLI",
     "ibl_platform": "Platform Config",
+    "ibl_dm": "Manager (ibl-dm)",
+    "ibl_edx": "Open edX (ibl-edx)",
 }
 
 TOTAL_ROLES = len(ROLE_LABELS)

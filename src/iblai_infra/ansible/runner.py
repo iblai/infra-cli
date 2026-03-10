@@ -30,7 +30,7 @@ ROLE_LABELS: dict[str, str] = {
     "docker": "Docker Engine",
     "awscli": "AWS CLI",
     "python": "Python Environment",
-    "ibl_cli_ops": "IBL CLI",
+    "ibl_cli_ops": "iblai-cli-ops",
     "ibl_platform": "Platform Config",
     "ibl_dm": "iblai-dm-pro",
     "ibl_edx": "iblai-edx-pro",

@@ -32,8 +32,8 @@ ROLE_LABELS: dict[str, str] = {
     "python": "Python Environment",
     "ibl_cli_ops": "IBL CLI",
     "ibl_platform": "Platform Config",
-    "ibl_dm": "ibl-dm-pro",
-    "ibl_edx": "ibl-edx-pro",
+    "ibl_dm": "iblai-dm-pro",
+    "ibl_edx": "iblai-edx-pro",
     "final_steps": "Final Steps",
 }
 

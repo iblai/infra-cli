@@ -55,8 +55,9 @@ class AnsibleRunner:
         return True
 
     def setup(self) -> None:
-        """Copy templates and generate inventory."""
+        """Copy templates, install required collections, and generate inventory."""
         self._copy_templates()
+        self._install_collections()
         self._generate_inventory()
         ui.success(f"Ansible workspace ready  [muted]{self.ws}[/muted]")
 
@@ -238,6 +239,16 @@ class AnsibleRunner:
     # ------------------------------------------------------------------
     # Workspace setup
     # ------------------------------------------------------------------
+
+    def _install_collections(self) -> None:
+        """Install required Ansible collections (e.g. ansible.posix for json callback)."""
+        result = subprocess.run(
+            ["ansible-galaxy", "collection", "install", "ansible.posix", "--force"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            ui.warning("Could not install ansible.posix collection — JSON output may not work")
 
     def _copy_templates(self) -> None:
         """Copy Ansible template files to workspace."""

@@ -12,7 +12,7 @@ Interactive CLI tool for provisioning ibl.ai platform infrastructure on AWS. Bui
 iblai-infra/
 ├── pyproject.toml                          # uv/hatch config, dynamic version, entry point: iblai = iblai_infra.cli:app
 ├── src/iblai_infra/
-│   ├── __init__.py                         # __version__ = "0.4.0"
+│   ├── __init__.py                         # __version__ = "0.5.0"
 │   ├── __main__.py                         # python -m iblai_infra support
 │   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup + landing screen menu
 │   ├── app.py                              # Wizard orchestrator (5-step flow)
@@ -34,7 +34,23 @@ iblai-infra/
 │   │       ├── outputs.tf                  # IPs, ALB DNS, S3 buckets, SSH command
 │   │       └── user_data.sh               # Docker, AWS CLI, UFW, systemd setup
 │   └── ansible/
-│       └── __init__.py                     # Phase 2 placeholder
+│       ├── __init__.py
+│       ├── runner.py                       # AnsibleRunner: preflight, SSH test, inventory, playbook execution
+│       └── templates/single-server/        # Ansible playbook + roles (docker, python, awscli, ibl_cli_ops, ibl_platform)
+├── tests/
+│   ├── conftest.py                         # Shared fixtures (aws_credentials, infra_config, project_state, workspace_root)
+│   ├── test_models.py                      # Pydantic model validation, all enum combos, edge cases
+│   ├── test_state.py                       # State persistence, session save/load/clear
+│   ├── test_cli.py                         # CLI commands, _run_setup branches, _resolve_credentials
+│   ├── test_app.py                         # Wizard orchestrator (_show_workspace, _show_results, _offer_setup)
+│   ├── test_ui.py                          # Rich UI helpers, banner, step_header, summary_panel
+│   ├── providers/test_aws.py               # AWS helpers: sessions, credentials, hosted zones, key pairs, permissions
+│   ├── terraform/test_runner.py            # TerraformRunner: tfvars generation, event parsing, labels
+│   ├── ansible/test_runner.py              # AnsibleRunner: role extraction, failure detection, preflight, SSH test
+│   └── prompts/
+│       ├── test_validators.py              # IP, CIDR, domain validation
+│       ├── test_review.py                  # Review prompt with all SSH × cert × env combinations
+│       └── test_setup.py                   # Setup prompt flow, SSH key resolution, key permissions
 ```
 
 ## Architecture
@@ -157,6 +173,19 @@ Uses `locals` with `use_acm`, `use_upload`, `use_https` booleans and conditional
 - `pydantic>=2.5` — Data validation
 - `boto3>=1.34` — AWS SDK
 
+## Testing
+
+- **380 tests**, all via pytest: `uv run pytest tests/ -v`
+- Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
+- Dev dependencies: `uv sync --extra dev`
+- Test patterns:
+  - Fixtures in `tests/conftest.py` provide `aws_credentials`, `infra_config`, `project_state`, `setup_config`, `workspace_root` (patched to tmp_path)
+  - Rich Console tests: always include `theme=ui.IBL_THEME` to avoid `MissingStyle` errors
+  - ANSI stripping: use `re.sub(r"\x1b\[[0-9;]*m", "", text)` when asserting Rich output with `force_terminal=True`
+  - Local imports in functions (e.g., `load_session` importing `validate_credentials`): patch at the **source module** (`iblai_infra.providers.aws.validate_credentials`), not the importing module
+  - `typer.Exit` wraps `click.exceptions.Exit` — catch with `pytest.raises((SystemExit, typer.Exit, click.exceptions.Exit))`
+  - questionary mocking: `patch("questionary.select")` then `mock.return_value.ask.return_value = "value"`
+
 ## Conventions
 
 - Python 3.11+, `from __future__ import annotations`
@@ -169,7 +198,3 @@ Uses `locals` with `use_acm`, `use_upload`, `use_https` booleans and conditional
 - Terraform template strings must use ASCII only (no em dashes, special characters) — AWS APIs reject non-ASCII in descriptions
 - State persisted as JSON via Pydantic's `.model_dump_json()`
 - When using `ctx.invoke()` with Typer, always pass explicit values for all parameters (Typer passes `OptionInfo` objects as defaults, which break Pydantic validation)
-
-## Phase 2 (Future)
-
-Ansible-based environment state setup — placeholder at `src/iblai_infra/ansible/`.

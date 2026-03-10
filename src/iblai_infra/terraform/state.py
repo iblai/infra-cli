@@ -31,7 +31,10 @@ def load_state(name: str) -> ProjectState | None:
     for ws in list_workspaces():
         state_file = ws / "state.json"
         if state_file.exists():
-            state = ProjectState.model_validate_json(state_file.read_text())
+            try:
+                state = ProjectState.model_validate_json(state_file.read_text())
+            except Exception:
+                continue
             if state.name == name:
                 return state
     return None

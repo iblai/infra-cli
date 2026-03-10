@@ -14,6 +14,10 @@ dependencies = [
 
 [project.optional-dependencies]
 ansible = ["ansible-core>=2.15"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
 
 [project.scripts]
 iblai = "iblai_infra.cli:app"
@@ -27,3 +31,10 @@ path = "src/iblai_infra/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/iblai_infra"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "slow: Run tests that are slow",
+]

@@ -95,6 +95,21 @@ Prompts for confirmation. Production environments require typing the project nam
 iblai --version
 ```
 
+## Development
+
+### Running tests
+
+```bash
+uv sync --extra dev
+uv run pytest tests/ -v
+```
+
+With coverage:
+
+```bash
+uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing
+```
+
 ## What gets created
 
 - VPC with 2 public subnets (multi-AZ)

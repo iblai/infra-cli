@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0] — 2026-03-10
+
+### Added
+- Comprehensive pytest test suite — 380 tests covering models, providers, Terraform runner, Ansible runner, CLI commands, prompts, validators, review flows, state management, and UI helpers
+- Dev dependencies in `pyproject.toml`: `pytest>=8.0`, `pytest-cov>=4.1`
+- Pytest configuration: `--strict-markers`, `testpaths = ["tests"]`, `slow` marker
+- Test coverage for all enum combinations (SSH method × cert method × environment), IP/CIDR/domain validators, and session persistence paths
+
+### Fixed
+- `load_state()` now skips corrupt `state.json` files instead of crashing — previously a single corrupt workspace would prevent loading any project by name
+- Replaced fragile `AnsibleRunner.__new__()` hack in `_run_setup()` with a direct `shutil.which()` check for ansible-playbook
+
 ## [0.4.0] — 2026-03-09
 
 ### Added

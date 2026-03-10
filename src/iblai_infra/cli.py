@@ -236,13 +236,18 @@ def _run_setup(name: str) -> None:
         if not rerun:
             raise typer.Exit(0)
 
+    import shutil
+
     from iblai_infra.ansible.runner import AnsibleRunner
     from iblai_infra.prompts.setup import prompt_setup
 
     # Pre-flight: check ansible is installed
-    runner_check = AnsibleRunner.__new__(AnsibleRunner)
-    runner_check.state = state
-    if not runner_check._check_ansible_installed():
+    if shutil.which("ansible-playbook") is None:
+        ui.error("ansible-playbook not found")
+        ui.newline()
+        ui.info("Install with: [highlight]pip install ansible-core[/highlight]")
+        ui.muted(f"Then re-run: [brand]iblai infra setup {name}[/brand]")
+        ui.newline()
         raise typer.Exit(1)
 
     # Collect setup variables

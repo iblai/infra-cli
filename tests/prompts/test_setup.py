@@ -191,13 +191,13 @@ class TestPromptSetup:
         ):
             mock_password.return_value.ask.return_value = "ghp_testtoken"
             mock_confirm.return_value.ask.return_value = True
-            mock_text.return_value.ask.side_effect = ["4.190.0-ai", "sumac.2.4.13"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.dm_image_tag == "4.190.0-ai"
+        assert config.dm_image_tag == "4.189.1-ai"
         assert config.edx_image_tag == "sumac.2.4.13"
         assert config.aws_access_key_id == "AKIA"
         assert config.aws_secret_access_key == "SECRET"
@@ -218,13 +218,13 @@ class TestPromptSetup:
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET"]
             mock_confirm.return_value.ask.return_value = False
-            mock_text.return_value.ask.side_effect = ["4.190.0-ai", "sumac.2.4.13", "NEW_ACCESS_KEY"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "NEW_ACCESS_KEY"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.dm_image_tag == "4.190.0-ai"
+        assert config.dm_image_tag == "4.189.1-ai"
         assert config.edx_image_tag == "sumac.2.4.13"
         assert config.aws_access_key_id == "NEW_ACCESS_KEY"
         assert config.aws_secret_access_key == "NEW_SECRET"
@@ -241,13 +241,13 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET"]
-            mock_text.return_value.ask.side_effect = ["4.190.0-ai", "sumac.2.4.13", "ACCESS_KEY"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "ACCESS_KEY"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.dm_image_tag == "4.190.0-ai"
+        assert config.dm_image_tag == "4.189.1-ai"
         assert config.edx_image_tag == "sumac.2.4.13"
         assert config.git_access_token == "ghp_testtoken"
 
@@ -271,7 +271,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.return_value = "ghp_testtoken"
             mock_confirm.return_value.ask.return_value = True
             mock_path.return_value.ask.return_value = str(new_key)
-            mock_text.return_value.ask.side_effect = ["4.190.0-ai", "sumac.2.4.13"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13"]
 
             config = prompt_setup(state)
 
@@ -296,7 +296,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.return_value = "ghp_testtoken"
             mock_confirm.return_value.ask.return_value = True
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["4.190.0-ai", "sumac.2.4.13"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13"]
 
             config = prompt_setup(state)
 
@@ -321,7 +321,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.return_value = "ghp_testtoken"
             mock_confirm.return_value.ask.return_value = True
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["4.190.0-ai", "sumac.2.4.13"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13"]
 
             config = prompt_setup(state)
 

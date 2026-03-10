@@ -122,7 +122,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     # Release image tags
     dm_image_tag = questionary.text(
         "DM release tag:",
-        default="4.190.0-ai",
+        default="4.189.1-ai",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     ).ask()

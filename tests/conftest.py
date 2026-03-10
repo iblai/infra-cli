@@ -83,7 +83,7 @@ def setup_config(tmp_path: Path) -> SetupConfig:
         base_domain="example.com",
         edx_version="sumac",
         env_config="single-server",
-        dm_image_tag="4.190.0-ai",
+        dm_image_tag="4.189.1-ai",
         edx_image_tag="sumac.2.4.13",
         aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
         aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",

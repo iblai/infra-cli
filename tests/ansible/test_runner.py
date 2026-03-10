@@ -120,7 +120,7 @@ class TestBuildExtraVars:
         assert extra["base_domain"] == "example.com"
         assert extra["edx_version"] == "sumac"
         assert extra["env_config"] == "single-server"
-        assert extra["dm_image_tag"] == "4.190.0-ai"
+        assert extra["dm_image_tag"] == "4.189.1-ai"
         assert extra["edx_image_tag"] == "sumac.2.4.13"
 
 

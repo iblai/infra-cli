@@ -1,10 +1,15 @@
 # Changelog
 
+## [0.6.1] — 2026-03-10
+
+### Fixed
+- Default DM image tag changed from `4.190.0-ai` to `4.189.1-ai` — previous tag did not exist in ECR, causing silent `ibl dm launch` failure
+
 ## [0.6.0] — 2026-03-10
 
 ### Added
 - Full platform setup via Ansible — 8 roles: docker, awscli, python, ibl_cli_ops, ibl_platform, ibl_dm, ibl_edx, final_steps
-- DM and edX image tag prompts with defaults (`4.190.0-ai`, `sumac.2.4.13`); sets ECR image URIs before launch
+- DM and edX image tag prompts with defaults (`4.189.1-ai`, `sumac.2.4.13`); sets ECR image URIs before launch
 - `ibl_platform` role configures edX version, base domain, environment, and DM/edX container images
 - `ibl_dm` role runs `ibl dm launch` (timeout 1800s)
 - `ibl_edx` role runs `ibl edx launch` (timeout 3600s)

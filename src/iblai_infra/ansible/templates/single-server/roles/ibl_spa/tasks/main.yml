@@ -19,19 +19,9 @@
 
 - name: Wait for LMS to be ready
   become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    export TUTOR_PLUGINS_ROOT={{ ibl_root }}/app/ibl-edx/ibl-edx-plugins/
-    tutor --root {{ ibl_root }}/app/ibl-edx/ibl-edx-pro/ local exec lms echo "LMS ready"
+  shell: docker exec ibl_prod_lms echo "LMS ready"
   args:
     executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
   register: lms_ready
   until: lms_ready.rc == 0
   retries: 30
@@ -40,19 +30,10 @@
 - name: Create OAuth2 Application in edX for SPA SSO
   become: false
   shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    export TUTOR_PLUGINS_ROOT={{ ibl_root }}/app/ibl-edx/ibl-edx-plugins/
-    tutor --root {{ ibl_root }}/app/ibl-edx/ibl-edx-pro/ local run lms ./manage.py lms shell -c \
+    docker exec ibl_prod_lms ./manage.py lms shell -c \
       'from oauth2_provider.models import Application; from django.contrib.auth.models import User; usr=User.objects.get(username="ibl_admin"); app, created = Application.objects.get_or_create(name="spa-sso", user=usr, defaults={"client_id": "{{ spa_sso_client_id }}", "client_secret": "{{ spa_sso_client_secret }}", "client_type": "confidential", "authorization_grant_type": "password", "redirect_uris": "https://web.{{ base_domain }}", "skip_authorization": True}); print(app.client_id)'
   args:
     executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
   register: oauth_app_result
 
 - name: Capture actual SPA SSO client ID from edX

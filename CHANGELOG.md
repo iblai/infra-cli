@@ -4,7 +4,7 @@
 
 ### Added
 - `ibl_spa` Ansible role — creates OAuth2 Application in edX for SPA SSO, sets SPA config defaults, authenticates Docker with ECR, and launches Auth, Mentor, and Skills SPA containers
-- SPA image tag prompts in setup wizard: Auth SPA (`1.3.2`), Mentor SPA (`0.1.10`), Skills SPA (`0.0.1`)
+- SPA image tag prompts in setup wizard: Auth SPA (`1.13.15`), Mentor SPA (`0.35.14`), Skills SPA (`0.9.8`)
 - `spa_auth_image_tag`, `spa_mentor_image_tag`, `spa_skills_image_tag` fields on `SetupConfig` model
 - 3 new platform subdomains: `api.`, `platform.`, `prometheus.`
 - `web.data.` subdomain for SPA data API

@@ -159,7 +159,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     # SPA image tags
     spa_auth_image_tag = questionary.text(
         "Auth SPA release tag:",
-        default="1.3.2",
+        default="1.13.15",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     ).ask()
@@ -170,7 +170,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
 
     spa_mentor_image_tag = questionary.text(
         "Mentor SPA release tag:",
-        default="0.1.10",
+        default="0.35.14",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     ).ask()
@@ -181,7 +181,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
 
     spa_skills_image_tag = questionary.text(
         "Skills SPA release tag:",
-        default="0.0.1",
+        default="0.9.8",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     ).ask()

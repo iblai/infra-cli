@@ -1,4 +1,12 @@
 ---
+- name: Ensure DM postgres data directory has correct ownership
+  file:
+    path: "{{ ibl_root }}/app/ibl-dm/ibl-dm-pro/data/postgres"
+    state: directory
+    owner: "999"
+    group: "999"
+    mode: "0700"
+
 - name: Launch IBL Manager (ibl dm launch)
   become: false
   shell: |

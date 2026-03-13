@@ -1,4 +1,12 @@
 ---
+- name: Ensure /ibl/ is owned by the SSH user
+  file:
+    path: "{{ ibl_root }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    recurse: true
+
 - name: Configure edX version
   become: false
   shell: |

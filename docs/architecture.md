@@ -64,43 +64,43 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph PLATFORM["Role 5: ibl_platform"]
-        RP[Reverse Proxy\nCaddy/Nginx]
+    subgraph PLATFORM["Role 5: Platform Config"]
+        RP[Reverse Proxy]
     end
 
-    subgraph DM["Role 6: ibl_dm"]
-        DM_WEB[ibl-dm-pro-web-1\nDjango]
-        DM_ASGI[ibl-dm-pro-asgi_web-1\nASGI]
-        DM_WORKER[celery_worker\nBackground Tasks]
-        DM_BEAT[celery_beat\nScheduler]
-        DM_PG[ibl_dm_db\nPostgreSQL]
-        DM_REDIS[ibl_dm_pro_redis\nRedis]
+    subgraph DM["Role 6: IBL Manager"]
+        DM_WEB[Web Server]
+        DM_ASGI[ASGI Server]
+        DM_WORKER[Celery Worker]
+        DM_BEAT[Celery Beat]
+        DM_PG[PostgreSQL]
+        DM_REDIS[Redis]
     end
 
-    subgraph EDX["Role 7: ibl_edx"]
-        LMS[ibl_prod_lms\nLMS]
-        CMS[ibl_prod_cms\nCMS]
-        LMS_W[lms-worker]
-        CMS_W[cms-worker]
-        MYSQL[MySQL 8.4]
-        REDIS2[Redis 7.2]
-        MONGO[MongoDB 7.0]
-        ES[Elasticsearch 7.17]
-        FORUM[Forum 19.0]
-        NOTES[Notes 19.0]
-        MEILI[Meilisearch 1.8]
-        CADDY[Caddy 2.11]
+    subgraph EDX["Role 7: Open edX"]
+        LMS[LMS]
+        CMS[CMS]
+        LMS_W[LMS Worker]
+        CMS_W[CMS Worker]
+        MYSQL[MySQL]
+        REDIS2[Redis]
+        MONGO[MongoDB]
+        ES[Elasticsearch]
+        FORUM[Forum]
+        NOTES[Notes]
+        MEILI[Meilisearch]
+        CADDY[Caddy]
         SMTP[SMTP Relay]
-        PERMS[Permissions 18.1]
+        PERMS[Permissions]
     end
 
-    subgraph SPA["Role 8: ibl_spa"]
-        AUTH[Auth SPA\nauth.*]
-        MENTOR[Mentor SPA\nmentorai.*]
-        SKILLS[Skills SPA\nskillsai.*]
+    subgraph SPA["Role 8: SPA Services"]
+        AUTH[Auth SPA]
+        MENTOR[Mentor SPA]
+        SKILLS[Skills SPA]
     end
 
-    subgraph FINAL["Role 9: final_steps"]
+    subgraph FINAL["Role 9: Final Steps"]
         OAUTH[OAuth2 Server]
         OIDC[OIDC Provider]
     end
@@ -116,21 +116,21 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    USER[User Browser] --> ALB[AWS ALB\nHTTPS:443]
+    USER[User Browser] --> ALB[AWS Application Load Balancer]
 
-    ALB --> |learn.*| LMS
-    ALB --> |studio.learn.*| CMS
-    ALB --> |api.data.* / web.data.*| DM_WEB[DM Web/ASGI]
-    ALB --> |auth.*| AUTH[Auth SPA]
-    ALB --> |mentorai.*| MENTOR[Mentor SPA]
-    ALB --> |skillsai.*| SKILLS[Skills SPA]
-    ALB --> |monitor.*| MONITOR[Monitoring]
-    ALB --> |prometheus.*| PROM[Prometheus]
-    ALB --> |flowise.*| FLOWISE[Flowise]
+    ALB --> |learn| LMS
+    ALB --> |studio.learn| CMS
+    ALB --> |api.data / web.data| DM_WEB[IBL Manager]
+    ALB --> |auth| AUTH[Auth SPA]
+    ALB --> |mentorai| MENTOR[Mentor SPA]
+    ALB --> |skillsai| SKILLS[Skills SPA]
+    ALB --> |monitor| MONITOR[Monitoring]
+    ALB --> |prometheus| PROM[Prometheus]
+    ALB --> |flowise| FLOWISE[Flowise]
 
     subgraph EC2["EC2 Instance"]
-        RP[Reverse Proxy] --> LMS
-        RP --> CMS
+        RP[Reverse Proxy] --> LMS[Open edX LMS]
+        RP --> CMS[Open edX CMS]
         RP --> DM_WEB
         RP --> AUTH
         RP --> MENTOR
@@ -140,9 +140,12 @@ flowchart TB
         RP --> FLOWISE
     end
 
-    subgraph CERTS["ACM Certificates"]
-        CERT1["Certificate 1\nlearn.*, studio.learn.*, apps.learn.*\nmeilisearch.learn.*, preview.learn.*\napi.data.*, asgi.data.*, llm.data.*\nmentor.data.*, api.*, web.data.*"]
-        CERT2["Certificate 2\nbase.manager.*, auth.*, mentorai.*\nskillsai.*, monitor.*, flowise.*\nplatform.*, prometheus.*"]
+    subgraph CERT1["ACM Certificate 1"]
+        C1["learn, studio.learn, apps.learn\nmeilisearch.learn, preview.learn\napi.data, asgi.data, llm.data\nmentor.data, api, web.data"]
+    end
+
+    subgraph CERT2["ACM Certificate 2"]
+        C2["base.manager, auth, mentorai\nskillsai, monitor, flowise\nplatform, prometheus"]
     end
 
     ALB -.-> CERT1

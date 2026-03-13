@@ -1,10 +1,10 @@
-# IBLAI Infra Architecture
+# iblai-infra-ops Architecture
 
 ## Full Provisioning & Setup Flow
 
 ```mermaid
 flowchart TB
-    subgraph CLI["IBLAI INFRA CLI"]
+    subgraph CLI["iblai-infra-ops"]
         A[iblai infra provision] --> P1[AWS Credentials]
         P1 --> P2[Project & Compute Config]
         P2 --> P3[Network & SSH]
@@ -36,7 +36,7 @@ flowchart TB
             R1["1. Docker"]
             R1 --> R2["2. AWS CLI"]
             R2 --> R3["3. Python"]
-            R3 --> R4["4. IBL CLI Ops"]
+            R3 --> R4["4. iblai-cli-ops"]
         end
 
         subgraph CONFIG_ROLE["Platform Configuration"]
@@ -44,9 +44,9 @@ flowchart TB
         end
 
         subgraph SERVICE_ROLES["Service Launch Roles"]
-            R5 --> R6["6. IBL Manager"]
-            R6 --> R7["7. Open edX"]
-            R7 --> R8["8. SPA Services"]
+            R5 --> R6["6. iblai-dm-pro"]
+            R6 --> R7["7. iblai-edx-pro"]
+            R7 --> R8["8. iblai-web-frontend"]
             R8 --> R9["9. Final Steps"]
         end
     end
@@ -68,7 +68,7 @@ flowchart LR
         RP[Reverse Proxy]
     end
 
-    subgraph DM["Role 6: IBL Manager"]
+    subgraph DM["Role 6: iblai-dm-pro"]
         DM_WEB[Web Server]
         DM_ASGI[ASGI Server]
         DM_WORKER[Celery Worker]
@@ -77,7 +77,7 @@ flowchart LR
         DM_REDIS[Redis]
     end
 
-    subgraph EDX["Role 7: Open edX"]
+    subgraph EDX["Role 7: iblai-edx-pro"]
         LMS[LMS]
         CMS[CMS]
         LMS_W[LMS Worker]
@@ -94,7 +94,7 @@ flowchart LR
         PERMS[Permissions]
     end
 
-    subgraph SPA["Role 8: SPA Services"]
+    subgraph SPA["Role 8: iblai-web-frontend"]
         AUTH[Auth SPA]
         MENTOR[Mentor SPA]
         SKILLS[Skills SPA]
@@ -120,7 +120,7 @@ flowchart TB
 
     ALB --> |learn| LMS
     ALB --> |studio.learn| CMS
-    ALB --> |api.data / web.data| DM_WEB[IBL Manager]
+    ALB --> |api.data / web.data| DM_WEB[iblai-dm-pro]
     ALB --> |auth| AUTH[Auth SPA]
     ALB --> |mentorai| MENTOR[Mentor SPA]
     ALB --> |skillsai| SKILLS[Skills SPA]
@@ -129,8 +129,8 @@ flowchart TB
     ALB --> |flowise| FLOWISE[Flowise]
 
     subgraph EC2["EC2 Instance"]
-        RP[Reverse Proxy] --> LMS[Open edX LMS]
-        RP --> CMS[Open edX CMS]
+        RP[Reverse Proxy] --> LMS[iblai-edx-pro LMS]
+        RP --> CMS[iblai-edx-pro CMS]
         RP --> DM_WEB
         RP --> AUTH
         RP --> MENTOR

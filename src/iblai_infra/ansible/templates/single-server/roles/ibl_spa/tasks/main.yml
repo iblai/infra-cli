@@ -35,6 +35,9 @@
   args:
     executable: /bin/bash
   register: oauth_app_result
+  until: oauth_app_result.rc == 0
+  retries: 5
+  delay: 15
 
 - name: Capture actual SPA SSO client ID from edX
   set_fact:

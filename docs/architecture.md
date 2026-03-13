@@ -33,21 +33,21 @@ flowchart TB
         S3 --> R1
 
         subgraph INFRA_ROLES["Infrastructure Roles"]
-            R1["1. Docker\nEngine + Compose + apache2-utils"]
-            R1 --> R2["2. AWS CLI\nInstall + configure credentials"]
-            R2 --> R3["3. Python\npyenv + Python 3.11.8 + venv"]
-            R3 --> R4["4. ibl_cli_ops\nClone repo + pip install"]
+            R1["1. Docker"]
+            R1 --> R2["2. AWS CLI"]
+            R2 --> R3["3. Python"]
+            R3 --> R4["4. IBL CLI Ops"]
         end
 
         subgraph CONFIG_ROLE["Platform Configuration"]
-            R4 --> R5["5. ibl_platform\nchown /ibl/ → ubuntu\nConfigure domain, images, AI\nSet edX service image defaults\nLaunch reverse proxy\nCreate docker network\nGenerate Langfuse secrets\nECR login"]
+            R4 --> R5["5. Platform Config"]
         end
 
         subgraph SERVICE_ROLES["Service Launch Roles"]
-            R5 --> R6["6. ibl_dm\nchown postgres data → UID 999\nibl dm launch"]
-            R6 --> R7["7. ibl_edx\nibl edx launch"]
-            R7 --> R8["8. ibl_spa\nGenerate OAuth2 creds\nCreate OAuth app in edX\nConfigure SPA settings\nLaunch Auth, Mentor, Skills SPAs"]
-            R8 --> R9["9. final_steps\nibl launch --ibl-oauth --ibl-oidc\nibl dm auth-setup"]
+            R5 --> R6["6. IBL Manager"]
+            R6 --> R7["7. Open edX"]
+            R7 --> R8["8. SPA Services"]
+            R8 --> R9["9. Final Steps"]
         end
     end
 

@@ -35,7 +35,7 @@ The following are installed as Python package dependencies when you install ibla
 
 The setup phase installs and configures the following on the provisioned EC2 instance:
 
-- **[iblai-cli-ops](https://github.com/iblai/ibl-cli-ops)** -- the IBL platform management CLI, cloned and installed inside a pyenv virtualenv on the server. This is a required dependency for all service launches.
+- **[iblai-cli-ops](https://github.com/iblai/ibl-cli-ops)** -- the IBL platform management CLI, cloned and installed inside a pyenv virtualenv on the server. This is a required dependency for all service launches. **Note:** This is a private repository -- unauthenticated users or those without access will see a 404.
 - **Docker Engine** with docker compose
 - **pyenv** with Python 3.11.8
 - **AWS CLI v2** for ECR authentication and S3 access

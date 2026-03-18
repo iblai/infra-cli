@@ -11,6 +11,7 @@ from iblai_infra import ui
 from iblai_infra.models import ProjectState, SetupConfig, SSHKeyMethod
 
 TOTAL_STEPS = 3
+BOOTSTRAP_STEPS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +271,235 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
         aws_default_region=aws_region,
         git_access_token=git_access_token,
     )
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap prompt flow (no Terraform state required)
+# ---------------------------------------------------------------------------
+
+def _validate_ip(value: str) -> bool | str:
+    """Validate an IP address string."""
+    import ipaddress
+    try:
+        ipaddress.ip_address(value.strip())
+        return True
+    except ValueError:
+        return "Enter a valid IP address"
+
+
+def _validate_project_name(value: str) -> bool | str:
+    """Validate a project name."""
+    v = value.strip().lower()
+    if not v:
+        return "Required"
+    if not v.replace("-", "").replace("_", "").isalnum():
+        return "Must be alphanumeric (hyphens and underscores allowed)"
+    if len(v) > 32:
+        return "Must be 32 characters or fewer"
+    return True
+
+
+def prompt_bootstrap() -> tuple[SetupConfig, dict]:
+    """Collect all variables for bootstrapping an existing server."""
+
+    # ----- Step 1: Project -----
+    ui.step_header(1, BOOTSTRAP_STEPS, "Project")
+
+    project_name = questionary.text(
+        "Project name:",
+        validate=_validate_project_name,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if project_name is None:
+        ui.abort()
+    project_name = project_name.strip().lower()
+    ui.success(f"Project: [highlight]{project_name}[/highlight]")
+
+    # ----- Step 2: Server Access -----
+    ui.step_header(2, BOOTSTRAP_STEPS, "Server Access")
+
+    target_host = questionary.text(
+        "Server IP address:",
+        validate=_validate_ip,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if target_host is None:
+        ui.abort()
+    target_host = target_host.strip()
+    ui.success(f"Target: [highlight]{target_host}[/highlight]")
+
+    ssh_key = _prompt_ssh_key_path()
+    ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
+    _validate_key_permissions(ssh_key)
+
+    ssh_user = questionary.text(
+        "SSH user:",
+        default="ubuntu",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if ssh_user is None:
+        ui.abort()
+    ssh_user = ssh_user.strip()
+
+    # ----- Step 3: Platform Configuration -----
+    ui.step_header(3, BOOTSTRAP_STEPS, "Platform Configuration")
+
+    base_domain = questionary.text(
+        "Base domain (e.g. myplatform.example.com):",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if base_domain is None:
+        ui.abort()
+    base_domain = base_domain.strip()
+    ui.success(f"Domain: [highlight]{base_domain}[/highlight]")
+
+    edx_version = "sumac"
+    ui.success(f"Open edX version: [highlight]Sumac[/highlight]")
+
+    env_config = "single-server"
+    ui.success(f"Server type: [highlight]Single Server[/highlight]")
+
+    dm_image_tag = questionary.text(
+        "iblai-dm-pro release tag:",
+        default="4.189.1-ai",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if dm_image_tag is None:
+        ui.abort()
+    dm_image_tag = dm_image_tag.strip()
+    ui.success(f"iblai-dm-pro image tag: [highlight]{dm_image_tag}[/highlight]")
+
+    edx_image_tag = questionary.text(
+        "iblai-edx-pro release tag:",
+        default="sumac.2.4.13",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if edx_image_tag is None:
+        ui.abort()
+    edx_image_tag = edx_image_tag.strip()
+    ui.success(f"iblai-edx-pro image tag: [highlight]{edx_image_tag}[/highlight]")
+
+    enable_ai = questionary.confirm(
+        "Enable AI features for DM?",
+        default=True,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enable_ai is None:
+        ui.abort()
+    if enable_ai:
+        ui.success("AI features: [highlight]Enabled[/highlight]")
+    else:
+        ui.success("AI features: [highlight]Disabled[/highlight]")
+
+    spa_auth_image_tag = questionary.text(
+        "Auth SPA release tag:",
+        default="1.13.15",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if spa_auth_image_tag is None:
+        ui.abort()
+    spa_auth_image_tag = spa_auth_image_tag.strip()
+    ui.success(f"Auth SPA image tag: [highlight]{spa_auth_image_tag}[/highlight]")
+
+    spa_mentor_image_tag = questionary.text(
+        "Mentor SPA release tag:",
+        default="0.35.14",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if spa_mentor_image_tag is None:
+        ui.abort()
+    spa_mentor_image_tag = spa_mentor_image_tag.strip()
+    ui.success(f"Mentor SPA image tag: [highlight]{spa_mentor_image_tag}[/highlight]")
+
+    spa_skills_image_tag = questionary.text(
+        "Skills SPA release tag:",
+        default="0.9.8",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if spa_skills_image_tag is None:
+        ui.abort()
+    spa_skills_image_tag = spa_skills_image_tag.strip()
+    ui.success(f"Skills SPA image tag: [highlight]{spa_skills_image_tag}[/highlight]")
+
+    # ----- Step 4: Credentials -----
+    ui.step_header(4, BOOTSTRAP_STEPS, "Credentials")
+
+    ui.info("A GitHub Personal Access Token is needed to install iblai-cli-ops on the VM.")
+    git_access_token = questionary.password(
+        "GitHub Personal Access Token:",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if git_access_token is None:
+        ui.abort()
+    git_access_token = git_access_token.strip()
+    ui.success("GitHub token provided")
+
+    ui.info(
+        "AWS credentials for the VM. "
+        "Must have access to ECR (iblai-dm-pro and iblai-edx-pro images) and S3 buckets."
+    )
+
+    aws_key_id = questionary.text(
+        "AWS Access Key ID:",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if aws_key_id is None:
+        ui.abort()
+    aws_key_id = aws_key_id.strip()
+
+    aws_secret = questionary.password(
+        "AWS Secret Access Key:",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if aws_secret is None:
+        ui.abort()
+    aws_secret = aws_secret.strip()
+
+    aws_region = questionary.text(
+        "AWS region:",
+        default="us-east-1",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if aws_region is None:
+        ui.abort()
+    aws_region = aws_region.strip()
+
+    config = SetupConfig(
+        ssh_private_key_path=ssh_key,
+        ssh_user=ssh_user,
+        target_host=target_host,
+        base_domain=base_domain,
+        edx_version=edx_version,
+        env_config=env_config,
+        dm_image_tag=dm_image_tag,
+        edx_image_tag=edx_image_tag,
+        enable_ai=enable_ai,
+        spa_auth_image_tag=spa_auth_image_tag,
+        spa_mentor_image_tag=spa_mentor_image_tag,
+        spa_skills_image_tag=spa_skills_image_tag,
+        aws_access_key_id=aws_key_id,
+        aws_secret_access_key=aws_secret,
+        aws_default_region=aws_region,
+        git_access_token=git_access_token,
+    )
+
+    meta = {"project_name": project_name}
+    return config, meta

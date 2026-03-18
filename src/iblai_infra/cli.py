@@ -1,7 +1,7 @@
 """CLI entry point — `iblai infra <command>` structure.
 
 Root:  iblai --version | --help
-Group: iblai infra provision | setup | destroy | status | list
+Group: iblai infra provision | setup | bootstrap | destroy | status | list
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import typer
 from rich.table import Table
 
 from iblai_infra import __version__, ui
-from iblai_infra.terraform.state import list_all_states, load_session, load_state, save_session
+from iblai_infra.terraform.state import list_all_states, load_session, load_state, save_session, save_state
 
 # ---------------------------------------------------------------------------
 # Root app: `iblai`
@@ -78,7 +78,8 @@ def infra_root(ctx: typer.Context) -> None:
 
     commands = [
         ("iblai infra provision", "Launch the interactive provisioning wizard"),
-        ("iblai infra setup <name>", "Bootstrap a provisioned VM with the IBL platform"),
+        ("iblai infra setup <name>", "Set up a provisioned VM with the IBL platform"),
+        ("iblai infra bootstrap", "Set up an existing server (no Terraform required)"),
         ("iblai infra destroy <name>", "Destroy existing infrastructure"),
         ("iblai infra status <name>", "Show infrastructure details and outputs"),
         ("iblai infra list", "List all managed environments"),
@@ -99,6 +100,7 @@ def infra_root(ctx: typer.Context) -> None:
         choices=[
             questionary.Choice("Provision infrastructure", value="provision"),
             questionary.Choice("Set up platform on provisioned VM", value="setup"),
+            questionary.Choice("Bootstrap existing server (no Terraform)", value="bootstrap"),
             questionary.Choice("Check AWS permissions", value="permissions"),
             questionary.Choice("List managed environments", value="list"),
             questionary.Choice("Show required IAM policy", value="policy"),
@@ -124,6 +126,8 @@ def infra_root(ctx: typer.Context) -> None:
             ui.abort("Interrupted.")
     elif action == "setup":
         _interactive_setup()
+    elif action == "bootstrap":
+        _run_bootstrap()
     elif action == "permissions":
         ctx.invoke(permissions, check=True, profile=None, region="us-east-1")
     elif action == "list":
@@ -163,8 +167,162 @@ def provision() -> None:
 def setup(
     name: str = typer.Argument(help="Project name to set up"),
 ) -> None:
-    """Bootstrap a provisioned VM with the IBL platform."""
+    """Set up a provisioned VM with the IBL platform."""
     _run_setup(name)
+
+
+@infra_app.command()
+def bootstrap() -> None:
+    """Set up an existing server with the IBL platform (no Terraform required)."""
+    _run_bootstrap()
+
+
+def _run_bootstrap() -> None:
+    """Bootstrap an existing server — no Terraform state required."""
+    import shutil
+    from datetime import datetime, timezone
+
+    from iblai_infra.ansible.runner import AnsibleRunner
+    from iblai_infra.models import (
+        AWSCredentials,
+        AuthMethod,
+        CertificateConfig,
+        CertMethod,
+        ComputeConfig,
+        DNSConfig,
+        Environment,
+        InfraConfig,
+        NetworkConfig,
+        ProjectState,
+        SSHConfig,
+        SSHKeyMethod,
+    )
+    from iblai_infra.prompts.setup import prompt_bootstrap
+    from iblai_infra.terraform.state import WORKSPACE_ROOT
+
+    ui.banner()
+
+    # Pre-flight: check ansible is installed
+    if shutil.which("ansible-playbook") is None:
+        ui.error("ansible-playbook not found")
+        ui.newline()
+        ui.info("Install with: [highlight]pip install ansible-core[/highlight]")
+        ui.muted("Then re-run: [brand]iblai infra bootstrap[/brand]")
+        ui.newline()
+        raise typer.Exit(1)
+
+    # Collect all setup info interactively
+    try:
+        setup_config, meta = prompt_bootstrap()
+    except KeyboardInterrupt:
+        ui.newline()
+        ui.abort("Interrupted.")
+
+    project_name = meta["project_name"]
+
+    # Check if project name already exists
+    existing = load_state(project_name)
+    if existing is not None:
+        if existing.setup_status == "completed":
+            import questionary
+
+            ui.warning(f"Project '{project_name}' already exists with completed setup.")
+            rerun = questionary.confirm(
+                "Re-run bootstrap?",
+                default=False,
+                style=ui.PROMPT_STYLE,
+                qmark=ui.QMARK,
+            ).ask()
+            if not rerun:
+                raise typer.Exit(0)
+            state = existing
+        elif existing.status == "created":
+            ui.info(f"Resuming bootstrap for existing project '{project_name}'.")
+            state = existing
+        else:
+            ui.error(
+                f"Project '{project_name}' already exists with status '{existing.status}'."
+            )
+            ui.muted("Choose a different project name or destroy the existing one.")
+            raise typer.Exit(1)
+    else:
+        # Build synthetic ProjectState
+        workspace_path = str(WORKSPACE_ROOT / f"{project_name}-bootstrap")
+        state = ProjectState(
+            name=project_name,
+            provider="bootstrap",
+            status="created",
+            config=InfraConfig(
+                project_name=project_name,
+                environment=Environment.DEV,
+                credentials=AWSCredentials(
+                    method=AuthMethod.ACCESS_KEY,
+                    access_key_id=setup_config.aws_access_key_id,
+                    secret_access_key=setup_config.aws_secret_access_key,
+                    region=setup_config.aws_default_region,
+                ),
+                network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip="0.0.0.0"),
+                compute=ComputeConfig(),
+                ssh=SSHConfig(
+                    method=SSHKeyMethod.EXISTING_FILE,
+                    key_name="bootstrap",
+                    private_key_path=setup_config.ssh_private_key_path,
+                ),
+                certificates=CertificateConfig(method=CertMethod.NONE),
+                dns=DNSConfig(base_domain=setup_config.base_domain),
+            ),
+            outputs={"instance_public_ip": setup_config.target_host},
+            workspace_path=workspace_path,
+        )
+        save_state(state)
+
+    # Review summary
+    rows = [
+        ("Project", project_name),
+        ("Target", setup_config.target_host),
+        ("SSH key", str(setup_config.ssh_private_key_path)),
+        ("Domain", setup_config.base_domain),
+        ("edX version", setup_config.edx_version),
+        ("Env config", setup_config.env_config),
+        ("AWS region", setup_config.aws_default_region),
+    ]
+    ui.summary_panel("Bootstrap Summary", rows)
+
+    import questionary
+
+    confirm = questionary.confirm(
+        "Proceed with bootstrap?",
+        default=True,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if not confirm:
+        ui.abort("Cancelled.")
+
+    # Run ansible
+    runner = AnsibleRunner(state, setup_config)
+
+    if not runner.preflight():
+        raise typer.Exit(1)
+
+    runner.setup()
+
+    try:
+        success = runner.run()
+    except KeyboardInterrupt:
+        ui.newline()
+        state.setup_status = "failed"
+        state.updated_at = datetime.now(timezone.utc)
+        save_state(state)
+        ui.abort("Interrupted. Re-run with: iblai infra bootstrap")
+
+    if success:
+        ui.newline()
+        ip = setup_config.target_host
+        key_flag = f"-i {setup_config.ssh_private_key_path} " if setup_config.ssh_private_key_path else ""
+        ui.success(f"Platform bootstrapped on [highlight]{ip}[/highlight]")
+        ui.info(f"SSH: [highlight]ssh {key_flag}{setup_config.ssh_user}@{ip}[/highlight]")
+        ui.newline()
 
 
 def _interactive_setup() -> None:
@@ -326,6 +484,22 @@ def destroy(
     if state.status == "destroyed":
         ui.warning(f"Infrastructure '{name}' is already destroyed.")
         raise typer.Exit(0)
+
+    # Bootstrap projects have no Terraform infrastructure to destroy
+    if state.provider == "bootstrap":
+        confirm_remove = questionary.confirm(
+            f"Remove bootstrap project '{name}' from tracked environments?",
+            default=False,
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if not confirm_remove:
+            ui.abort("Cancelled.")
+        state.status = "destroyed"
+        state.outputs = None
+        save_state(state)
+        ui.success(f"Bootstrap project '{name}' marked as destroyed.")
+        return
 
     ui.banner()
     ui.warning(

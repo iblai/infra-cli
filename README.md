@@ -4,7 +4,7 @@
 
 # Infra CLI
 
-Interactive CLI for provisioning and configuring the [ibl.ai](https://ibl.ai) platform on AWS. Handles end-to-end infrastructure creation with Terraform and full application setup with Ansible.
+Interactive CLI for provisioning and configuring the [ibl.ai](https://ibl.ai) platform on AWS. Handles end-to-end infrastructure creation with Terraform and full application setup with Ansible. Can also bootstrap existing servers (any cloud or bare metal) without Terraform.
 
 [![AWS](https://img.shields.io/badge/AWS-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com)
 [![Terraform](https://img.shields.io/badge/Terraform-7B42BC?logo=terraform&logoColor=white)](https://www.terraform.io)
@@ -162,7 +162,7 @@ The setup wizard prompts for:
 iblai infra list                # List all managed environments
 iblai infra status <name>       # Show infrastructure details and outputs
 iblai infra auth                # Switch AWS credentials
-iblai infra destroy <name>      # Tear down infrastructure (with confirmation)
+iblai infra destroy <name>      # Tear down infrastructure or remove bootstrap project
 ```
 
 ## Authentication

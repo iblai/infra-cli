@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.2.0] — 2026-03-20
+
+### Added
+- `iblai infra bootstrap` command — set up the IBL platform on any existing server (any cloud, bare metal) without Terraform provisioning
+- Interactive bootstrap wizard collects server IP, SSH key, domain, image tags, and AWS/GitHub credentials
+- Bootstrap projects tracked with `provider="bootstrap"` — `list`, `status`, and `destroy` all work
+- Destroy guard for bootstrap projects skips Terraform teardown and marks project as destroyed
+- "Bootstrap existing server" option in landing screen menu
+
+## [1.1.0] — 2026-03-18
+
+### Added
+- `edx_supporting_service_defaults` — set default image tags for edX supporting services (MySQL 8.0.40, Elasticsearch, Redis, MongoDB) during provisioning
+- Architecture diagrams (single-server and multi-server AWS topologies) in README
+- Branded README header with badges, install instructions, and dependency documentation
+
+### Fixed
+- MySQL version pinned to 8.0.40 instead of 8.4.0 — 8.4.0 caused compatibility issues with edX
+- LMS container health verified (running and not restarting) before OAuth2 application creation
+- Retries added to OAuth2 creation for container restart resilience
+- Postgres data directory recursively chowned to UID 999 before DM launch
+- `/ibl/` directory ownership set to SSH user before any services launch
+- `apache2-utils` added to prerequisites for `htpasswd` availability
+- LMS health check and OAuth creation use `docker exec` instead of `tutor` CLI
+- Langfuse secrets generated before DM launch when AI features are enabled
+
 ## [0.7.0] — 2026-03-12
 
 ### Added

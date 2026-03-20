@@ -4,7 +4,7 @@
 
 # Infra CLI
 
-Interactive CLI for provisioning and configuring the [ibl.ai](https://ibl.ai) platform on AWS. Handles end-to-end infrastructure creation with Terraform and full application setup with Ansible.
+Interactive CLI for provisioning and configuring the [ibl.ai](https://ibl.ai) platform on AWS. Handles end-to-end infrastructure creation with Terraform and full application setup with Ansible. Can also bootstrap existing servers (any cloud or bare metal) without Terraform.
 
 [![AWS](https://img.shields.io/badge/AWS-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com)
 [![Terraform](https://img.shields.io/badge/Terraform-7B42BC?logo=terraform&logoColor=white)](https://www.terraform.io)
@@ -119,13 +119,23 @@ Terraform runs with real-time progress showing each resource as it's created.
 
 ### 3. Setup the platform
 
-After provisioning, configure the server and deploy all services:
+There are two ways to set up the IBL platform on a server:
+
+**Option A: After Terraform provisioning** -- if you used `iblai infra provision` to create the server:
 
 ```bash
 iblai infra setup <project-name>
 ```
 
-This runs an Ansible playbook with 9 sequential roles:
+**Option B: Bootstrap an existing server** -- if you already have a server (any cloud, bare metal, etc.):
+
+```bash
+iblai infra bootstrap
+```
+
+The bootstrap command walks you through providing the server IP, SSH key, domain, image tags, and credentials interactively. No Terraform state required.
+
+Both options run the same Ansible playbook with 9 sequential roles:
 
 | Role | What it does |
 |------|-------------|
@@ -152,7 +162,7 @@ The setup wizard prompts for:
 iblai infra list                # List all managed environments
 iblai infra status <name>       # Show infrastructure details and outputs
 iblai infra auth                # Switch AWS credentials
-iblai infra destroy <name>      # Tear down infrastructure (with confirmation)
+iblai infra destroy <name>      # Tear down infrastructure or remove bootstrap project
 ```
 
 ## Authentication

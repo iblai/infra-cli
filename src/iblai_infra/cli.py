@@ -247,11 +247,12 @@ def _run_retry(name: str) -> None:
     ui.info(f"Workspace: [highlight]{ws}[/highlight]")
     ui.newline()
 
-    # Reuse the existing workspace — TerraformRunner normally creates a new one,
-    # so we construct it and override the workspace and state.
+    # Reuse the existing workspace — re-copy templates to pick up any fixes,
+    # then re-run init/plan/apply. tfvars are regenerated from the saved config.
     runner = TerraformRunner(state.config)
     runner.ws = ws
     runner.state = state
+    runner.setup()
 
     runner.init()
     add_count = runner.plan()

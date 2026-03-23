@@ -8,6 +8,40 @@
     mode: "0700"
     recurse: true
 
+- name: Start DM database container
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose up -d dm-data
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Wait for postgres to be ready
+  become: false
+  shell: |
+    docker exec ibl_dm_db pg_isready -U postgres
+  args:
+    executable: /bin/bash
+  register: pg_ready
+  until: pg_ready.rc == 0
+  retries: 30
+  delay: 2
+
+- name: Enable pgvector extension
+  become: false
+  shell: |
+    docker exec ibl_dm_db psql -U postgres -d ibl_dm_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+  args:
+    executable: /bin/bash
+  register: pgvector_result
+  ignore_errors: true
+
+- name: Show pgvector result
+  debug:
+    var: pgvector_result.stdout_lines
+  when: pgvector_result.stdout_lines is defined
+
 - name: Launch IBL Manager (ibl dm launch)
   become: false
   shell: |

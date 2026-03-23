@@ -31,7 +31,9 @@
         mode: "0755"
 
     - name: Ensure IBL root contents owned by ansible user
-      command: chown -R {{ ansible_user }}:{{ ansible_user }} {{ ibl_root }}/
+      shell: chown -Rh {{ ansible_user }}:{{ ansible_user }} {{ ibl_root }}/ 2>/dev/null || true
+      args:
+        executable: /bin/bash
       changed_when: false
 
   roles:

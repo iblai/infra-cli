@@ -1,7 +1,7 @@
 """CLI entry point — `iblai infra <command>` structure.
 
 Root:  iblai --version | --help
-Group: iblai infra provision | setup | bootstrap | destroy | status | list
+Group: iblai infra provision | retry | setup | bootstrap | destroy | status | list
 """
 
 from __future__ import annotations
@@ -78,6 +78,7 @@ def infra_root(ctx: typer.Context) -> None:
 
     commands = [
         ("iblai infra provision", "Launch the interactive provisioning wizard"),
+        ("iblai infra retry <name>", "Retry a failed provisioning run"),
         ("iblai infra setup <name>", "Set up a provisioned VM with the IBL platform"),
         ("iblai infra bootstrap", "Set up an existing server (no Terraform required)"),
         ("iblai infra destroy <name>", "Destroy existing infrastructure"),
@@ -99,6 +100,7 @@ def infra_root(ctx: typer.Context) -> None:
         "What would you like to do?",
         choices=[
             questionary.Choice("Provision infrastructure", value="provision"),
+            questionary.Choice("Retry failed provisioning", value="retry"),
             questionary.Choice("Set up platform on provisioned VM", value="setup"),
             questionary.Choice("Bootstrap existing server (no Terraform)", value="bootstrap"),
             questionary.Choice("Check AWS permissions", value="permissions"),
@@ -124,6 +126,8 @@ def infra_root(ctx: typer.Context) -> None:
         except KeyboardInterrupt:
             ui.newline()
             ui.abort("Interrupted.")
+    elif action == "retry":
+        _interactive_retry()
     elif action == "setup":
         _interactive_setup()
     elif action == "bootstrap":
@@ -161,6 +165,109 @@ def provision() -> None:
     except KeyboardInterrupt:
         ui.newline()
         ui.abort("Interrupted.")
+
+
+@infra_app.command()
+def retry(
+    name: str = typer.Argument(help="Project name to retry"),
+) -> None:
+    """Retry a failed provisioning run."""
+    _run_retry(name)
+
+
+def _interactive_retry() -> None:
+    """Launch retry from the landing menu — prompts for project name."""
+    import questionary
+
+    states = list_all_states()
+    eligible = [s for s in states if s.status == "failed"]
+
+    if not eligible:
+        ui.info("No failed environments found to retry.")
+        ui.muted("Run [brand]iblai infra provision[/brand] to create a new environment.")
+        ui.newline()
+        return
+
+    if len(eligible) == 1:
+        _run_retry(eligible[0].name)
+        return
+
+    choices = [
+        questionary.Choice(
+            f"{s.name} ({s.config.dns.base_domain})",
+            value=s.name,
+        )
+        for s in eligible
+    ]
+    name = questionary.select(
+        "Which environment to retry?",
+        choices=choices,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if name is None:
+        return
+
+    _run_retry(name)
+
+
+def _run_retry(name: str) -> None:
+    """Retry a failed Terraform provisioning run using the existing workspace."""
+    from pathlib import Path
+
+    from iblai_infra.terraform.runner import TerraformRunner
+    from iblai_infra.terraform.state import save_state as _save_state
+
+    state = load_state(name)
+    if state is None:
+        ui.error(f"No infrastructure found with name: {name}")
+        raise typer.Exit(1)
+
+    if state.status == "created":
+        ui.info(f"Infrastructure '{name}' is already provisioned (status: created).")
+        ui.muted(f"Run [brand]iblai infra setup {name}[/brand] to bootstrap the platform.")
+        raise typer.Exit(0)
+
+    if state.status == "destroyed":
+        ui.error(f"Infrastructure '{name}' has been destroyed. Run a new provision instead.")
+        raise typer.Exit(1)
+
+    if state.status not in ("failed", "initialized"):
+        ui.error(f"Infrastructure '{name}' has status '{state.status}'. Cannot retry.")
+        raise typer.Exit(1)
+
+    ws = Path(state.workspace_path)
+    if not ws.exists() or not (ws / "main.tf").exists():
+        ui.error(f"Workspace not found at {ws}. Run a new provision instead.")
+        raise typer.Exit(1)
+
+    ui.banner()
+    ui.info(f"Retrying provisioning for [highlight]{name}[/highlight]")
+    ui.info(f"Domain: [highlight]{state.config.dns.base_domain}[/highlight]")
+    ui.info(f"Workspace: [highlight]{ws}[/highlight]")
+    ui.newline()
+
+    # Reuse the existing workspace — TerraformRunner normally creates a new one,
+    # so we construct it and override the workspace and state.
+    runner = TerraformRunner(state.config)
+    runner.ws = ws
+    runner.state = state
+
+    runner.init()
+    add_count = runner.plan()
+
+    if add_count == 0:
+        ui.info("No changes needed. All resources are up to date.")
+        state.status = "created"
+        _save_state(state)
+        ui.success(f"Infrastructure '{name}' is now in created state.")
+        return
+
+    outputs = runner.apply()
+
+    from iblai_infra.app import _show_results, _offer_setup
+    _show_results(state.config, outputs, ws)
+    _offer_setup(state.config, runner.state)
 
 
 @infra_app.command()

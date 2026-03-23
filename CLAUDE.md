@@ -58,7 +58,7 @@ iblai-infra/
 ### CLI Structure (Typer)
 
 - **Root app** (`iblai`): `--version`, `--help`
-- **Subgroup** (`iblai infra`): `provision`, `destroy`, `status <name>`, `list`, `permissions`, `auth`
+- **Subgroup** (`iblai infra`): `provision`, `retry <name>`, `setup [name]`, `destroy <name>`, `status <name>`, `list`, `permissions`, `auth`
 - Running `iblai infra` with no arguments shows branded landing screen with interactive arrow-key menu
 - The landing screen menu uses `questionary.select()` to dispatch to commands directly
 - When launching provision from the menu, calls `run_provision_wizard(show_banner=False)` to avoid double banner
@@ -92,6 +92,18 @@ No silent auto-detection from `~/.aws/` or environment variables. The user alway
 5. **Review** — full summary panel, confirm
 
 After confirmation: `TerraformRunner.setup()` → `init()` → `plan()` → `apply()` → show results.
+
+### Setup Command
+
+Unified `iblai infra setup [name]` command with two paths:
+- **With name:** loads `ProjectState` from Terraform workspace, auto-populates IP/domain/SSH from state, runs `prompt_setup(state)` → `AnsibleRunner`
+- **Without name:** prompts for everything (project name, IP, SSH key, domain, creds) via `prompt_bootstrap()`, creates synthetic `ProjectState` with `provider="bootstrap"`, runs same `AnsibleRunner`
+
+Both paths share `_confirm_and_run()` for the review summary → confirm → ansible execution flow. Bootstrap projects use `provider="bootstrap"` to distinguish from Terraform-provisioned ones (affects `destroy` behavior — no Terraform teardown).
+
+### Retry Command
+
+`iblai infra retry <name>` retries a failed Terraform provisioning. Reuses the existing workspace, re-copies `.tf` templates (to pick up fixes), preserves `terraform.tfvars`, and checks for conflicting CNAME records before running `init` → `plan` → `apply`.
 
 `run_provision_wizard(show_banner: bool = True)` — controls whether the ASCII banner is shown (set to `False` when launched from the landing screen menu).
 

@@ -119,23 +119,17 @@ Terraform runs with real-time progress showing each resource as it's created.
 
 ### 3. Setup the platform
 
-There are two ways to set up the IBL platform on a server:
-
-**Option A: After Terraform provisioning** -- if you used `iblai infra provision` to create the server:
-
 ```bash
-iblai infra setup <project-name>
+iblai infra setup              # Set up an existing server (any provider, bare metal)
+iblai infra setup <name>       # Set up a Terraform-provisioned environment by name
 ```
 
-**Option B: Bootstrap an existing server** -- if you already have a server (any cloud, bare metal, etc.):
+Both paths run the same Ansible playbook. The difference is where the inputs come from:
 
-```bash
-iblai infra bootstrap
-```
+- **With a project name** -- auto-populates IP, domain, SSH key, and AWS credentials from the Terraform state
+- **Without a project name** -- prompts for server IP, SSH key, domain, image tags, and credentials interactively. No Terraform required.
 
-The bootstrap command walks you through providing the server IP, SSH key, domain, image tags, and credentials interactively. No Terraform state required.
-
-Both options run the same Ansible playbook with 9 sequential roles:
+The playbook runs 9 sequential roles:
 
 | Role | What it does |
 |------|-------------|

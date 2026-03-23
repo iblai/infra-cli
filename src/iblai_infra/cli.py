@@ -1,7 +1,7 @@
 """CLI entry point — `iblai infra <command>` structure.
 
 Root:  iblai --version | --help
-Group: iblai infra provision | retry | setup | bootstrap | destroy | status | list
+Group: iblai infra provision | retry | setup | destroy | status | list
 """
 
 from __future__ import annotations
@@ -79,8 +79,7 @@ def infra_root(ctx: typer.Context) -> None:
     commands = [
         ("iblai infra provision", "Launch the interactive provisioning wizard"),
         ("iblai infra retry <name>", "Retry a failed provisioning run"),
-        ("iblai infra setup <name>", "Set up a provisioned VM with the IBL platform"),
-        ("iblai infra bootstrap", "Set up an existing server (no Terraform required)"),
+        ("iblai infra setup", "Set up the IBL platform on a server"),
         ("iblai infra destroy <name>", "Destroy existing infrastructure"),
         ("iblai infra status <name>", "Show infrastructure details and outputs"),
         ("iblai infra list", "List all managed environments"),
@@ -101,8 +100,7 @@ def infra_root(ctx: typer.Context) -> None:
         choices=[
             questionary.Choice("Provision infrastructure", value="provision"),
             questionary.Choice("Retry failed provisioning", value="retry"),
-            questionary.Choice("Set up platform on provisioned VM", value="setup"),
-            questionary.Choice("Bootstrap existing server (no Terraform)", value="bootstrap"),
+            questionary.Choice("Set up platform on a server", value="setup"),
             questionary.Choice("Check AWS permissions", value="permissions"),
             questionary.Choice("List managed environments", value="list"),
             questionary.Choice("Show required IAM policy", value="policy"),
@@ -130,8 +128,6 @@ def infra_root(ctx: typer.Context) -> None:
         _interactive_retry()
     elif action == "setup":
         _interactive_setup()
-    elif action == "bootstrap":
-        _run_bootstrap()
     elif action == "permissions":
         ctx.invoke(permissions, check=True, profile=None, region="us-east-1")
     elif action == "list":
@@ -322,204 +318,76 @@ def _run_retry(name: str) -> None:
 
 @infra_app.command()
 def setup(
-    name: str = typer.Argument(help="Project name to set up"),
+    name: str = typer.Argument(None, help="Project name (from provision). Omit to set up an existing server."),
 ) -> None:
-    """Set up a provisioned VM with the IBL platform."""
-    _run_setup(name)
-
-
-@infra_app.command()
-def bootstrap() -> None:
-    """Set up an existing server with the IBL platform (no Terraform required)."""
-    _run_bootstrap()
-
-
-def _run_bootstrap() -> None:
-    """Bootstrap an existing server — no Terraform state required."""
-    import shutil
-    from datetime import datetime, timezone
-
-    from iblai_infra.ansible.runner import AnsibleRunner
-    from iblai_infra.models import (
-        AWSCredentials,
-        AuthMethod,
-        CertificateConfig,
-        CertMethod,
-        ComputeConfig,
-        DNSConfig,
-        Environment,
-        InfraConfig,
-        NetworkConfig,
-        ProjectState,
-        SSHConfig,
-        SSHKeyMethod,
-    )
-    from iblai_infra.prompts.setup import prompt_bootstrap
-    from iblai_infra.terraform.state import WORKSPACE_ROOT
-
-    ui.banner()
-
-    # Pre-flight: check ansible is installed
-    if shutil.which("ansible-playbook") is None:
-        ui.error("ansible-playbook not found")
-        ui.newline()
-        ui.info("Install with: [highlight]pip install ansible-core[/highlight]")
-        ui.muted("Then re-run: [brand]iblai infra bootstrap[/brand]")
-        ui.newline()
-        raise typer.Exit(1)
-
-    # Collect all setup info interactively
-    try:
-        setup_config, meta = prompt_bootstrap()
-    except KeyboardInterrupt:
-        ui.newline()
-        ui.abort("Interrupted.")
-
-    project_name = meta["project_name"]
-
-    # Check if project name already exists
-    existing = load_state(project_name)
-    if existing is not None:
-        if existing.setup_status == "completed":
-            import questionary
-
-            ui.warning(f"Project '{project_name}' already exists with completed setup.")
-            rerun = questionary.confirm(
-                "Re-run bootstrap?",
-                default=False,
-                style=ui.PROMPT_STYLE,
-                qmark=ui.QMARK,
-            ).ask()
-            if not rerun:
-                raise typer.Exit(0)
-            state = existing
-        elif existing.status == "created":
-            ui.info(f"Resuming bootstrap for existing project '{project_name}'.")
-            state = existing
-        else:
-            ui.error(
-                f"Project '{project_name}' already exists with status '{existing.status}'."
-            )
-            ui.muted("Choose a different project name or destroy the existing one.")
-            raise typer.Exit(1)
+    """Set up the IBL platform on a server."""
+    if name:
+        _run_setup_provisioned(name)
     else:
-        # Build synthetic ProjectState
-        workspace_path = str(WORKSPACE_ROOT / f"{project_name}-bootstrap")
-        state = ProjectState(
-            name=project_name,
-            provider="bootstrap",
-            status="created",
-            config=InfraConfig(
-                project_name=project_name,
-                environment=Environment.DEV,
-                credentials=AWSCredentials(
-                    method=AuthMethod.ACCESS_KEY,
-                    access_key_id=setup_config.aws_access_key_id,
-                    secret_access_key=setup_config.aws_secret_access_key,
-                    region=setup_config.aws_default_region,
-                ),
-                network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip="0.0.0.0"),
-                compute=ComputeConfig(),
-                ssh=SSHConfig(
-                    method=SSHKeyMethod.EXISTING_FILE,
-                    key_name="bootstrap",
-                    private_key_path=setup_config.ssh_private_key_path,
-                ),
-                certificates=CertificateConfig(method=CertMethod.NONE),
-                dns=DNSConfig(base_domain=setup_config.base_domain),
-            ),
-            outputs={"instance_public_ip": setup_config.target_host},
-            workspace_path=workspace_path,
-        )
-        save_state(state)
-
-    # Review summary
-    rows = [
-        ("Project", project_name),
-        ("Target", setup_config.target_host),
-        ("SSH key", str(setup_config.ssh_private_key_path)),
-        ("Domain", setup_config.base_domain),
-        ("edX version", setup_config.edx_version),
-        ("Env config", setup_config.env_config),
-        ("AWS region", setup_config.aws_default_region),
-    ]
-    ui.summary_panel("Bootstrap Summary", rows)
-
-    import questionary
-
-    confirm = questionary.confirm(
-        "Proceed with bootstrap?",
-        default=True,
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if not confirm:
-        ui.abort("Cancelled.")
-
-    # Run ansible
-    runner = AnsibleRunner(state, setup_config)
-
-    if not runner.preflight():
-        raise typer.Exit(1)
-
-    runner.setup()
-
-    try:
-        success = runner.run()
-    except KeyboardInterrupt:
-        ui.newline()
-        state.setup_status = "failed"
-        state.updated_at = datetime.now(timezone.utc)
-        save_state(state)
-        ui.abort("Interrupted. Re-run with: iblai infra bootstrap")
-
-    if success:
-        ui.newline()
-        ip = setup_config.target_host
-        key_flag = f"-i {setup_config.ssh_private_key_path} " if setup_config.ssh_private_key_path else ""
-        ui.success(f"Platform bootstrapped on [highlight]{ip}[/highlight]")
-        ui.info(f"SSH: [highlight]ssh {key_flag}{setup_config.ssh_user}@{ip}[/highlight]")
-        ui.newline()
+        _run_setup_interactive()
 
 
 def _interactive_setup() -> None:
-    """Launch setup from the landing menu — prompts for project name."""
+    """Launch setup from the landing menu."""
     import questionary
 
     states = list_all_states()
     eligible = [s for s in states if s.status == "created"]
 
-    if not eligible:
-        ui.info("No provisioned environments found to set up.")
-        ui.muted("Run [brand]iblai infra provision[/brand] first.")
-        ui.newline()
+    # Ask which path
+    choices = []
+    if eligible:
+        choices.append(questionary.Choice(
+            "Set up a provisioned environment", value="provisioned",
+        ))
+    choices.append(questionary.Choice(
+        "Set up an existing server (no Terraform)", value="existing",
+    ))
+
+    if len(choices) == 1:
+        # Only "existing server" is available
+        _run_setup_interactive()
         return
 
+    path = questionary.select(
+        "What would you like to set up?",
+        choices=choices,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if path is None:
+        return
+
+    if path == "existing":
+        _run_setup_interactive()
+        return
+
+    # Provisioned path — select environment
     if len(eligible) == 1:
-        _run_setup(eligible[0].name)
+        _run_setup_provisioned(eligible[0].name)
         return
 
-    choices = [
+    env_choices = [
         questionary.Choice(
             f"{s.name} ({s.config.dns.base_domain})",
             value=s.name,
         )
         for s in eligible
     ]
-    name = questionary.select(
+    selected = questionary.select(
         "Which environment?",
-        choices=choices,
+        choices=env_choices,
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     ).ask()
-    if name is None:
+    if selected is None:
         return
 
-    _run_setup(name)
+    _run_setup_provisioned(selected)
 
 
-def _run_setup(name: str) -> None:
-    """Core setup logic shared by the command and the interactive menu."""
+def _run_setup_provisioned(name: str) -> None:
+    """Set up a Terraform-provisioned environment by name."""
     state = load_state(name)
     if state is None:
         ui.error(f"No infrastructure found with name: {name}")
@@ -559,7 +427,6 @@ def _run_setup(name: str) -> None:
     from iblai_infra.ansible.runner import AnsibleRunner
     from iblai_infra.prompts.setup import prompt_setup
 
-    # Pre-flight: check ansible is installed
     if shutil.which("ansible-playbook") is None:
         ui.error("ansible-playbook not found")
         ui.newline()
@@ -568,14 +435,117 @@ def _run_setup(name: str) -> None:
         ui.newline()
         raise typer.Exit(1)
 
-    # Collect setup variables
     try:
         setup_config = prompt_setup(state)
     except KeyboardInterrupt:
         ui.newline()
         ui.abort("Interrupted.")
 
-    # Review summary
+    _confirm_and_run(state, setup_config, f"iblai infra setup {name}")
+
+
+def _run_setup_interactive() -> None:
+    """Set up an existing server — no Terraform state required."""
+    import shutil
+    from datetime import datetime, timezone
+
+    from iblai_infra.models import (
+        AWSCredentials,
+        AuthMethod,
+        CertificateConfig,
+        CertMethod,
+        ComputeConfig,
+        DNSConfig,
+        Environment,
+        InfraConfig,
+        NetworkConfig,
+        ProjectState,
+        SSHConfig,
+        SSHKeyMethod,
+    )
+    from iblai_infra.prompts.setup import prompt_bootstrap
+    from iblai_infra.terraform.state import WORKSPACE_ROOT
+
+    if shutil.which("ansible-playbook") is None:
+        ui.error("ansible-playbook not found")
+        ui.newline()
+        ui.info("Install with: [highlight]pip install ansible-core[/highlight]")
+        ui.muted("Then re-run: [brand]iblai infra setup[/brand]")
+        ui.newline()
+        raise typer.Exit(1)
+
+    try:
+        setup_config, meta = prompt_bootstrap()
+    except KeyboardInterrupt:
+        ui.newline()
+        ui.abort("Interrupted.")
+
+    project_name = meta["project_name"]
+
+    # Check if project name already exists
+    existing = load_state(project_name)
+    if existing is not None:
+        if existing.setup_status == "completed":
+            import questionary
+
+            ui.warning(f"Project '{project_name}' already exists with completed setup.")
+            rerun = questionary.confirm(
+                "Re-run setup?",
+                default=False,
+                style=ui.PROMPT_STYLE,
+                qmark=ui.QMARK,
+            ).ask()
+            if not rerun:
+                raise typer.Exit(0)
+            state = existing
+        elif existing.status == "created":
+            ui.info(f"Resuming setup for existing project '{project_name}'.")
+            state = existing
+        else:
+            ui.error(
+                f"Project '{project_name}' already exists with status '{existing.status}'."
+            )
+            ui.muted("Choose a different project name or destroy the existing one.")
+            raise typer.Exit(1)
+    else:
+        workspace_path = str(WORKSPACE_ROOT / f"{project_name}-bootstrap")
+        state = ProjectState(
+            name=project_name,
+            provider="bootstrap",
+            status="created",
+            config=InfraConfig(
+                project_name=project_name,
+                environment=Environment.DEV,
+                credentials=AWSCredentials(
+                    method=AuthMethod.ACCESS_KEY,
+                    access_key_id=setup_config.aws_access_key_id,
+                    secret_access_key=setup_config.aws_secret_access_key,
+                    region=setup_config.aws_default_region,
+                ),
+                network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip="0.0.0.0"),
+                compute=ComputeConfig(),
+                ssh=SSHConfig(
+                    method=SSHKeyMethod.EXISTING_FILE,
+                    key_name="bootstrap",
+                    private_key_path=setup_config.ssh_private_key_path,
+                ),
+                certificates=CertificateConfig(method=CertMethod.NONE),
+                dns=DNSConfig(base_domain=setup_config.base_domain),
+            ),
+            outputs={"instance_public_ip": setup_config.target_host},
+            workspace_path=workspace_path,
+        )
+        save_state(state)
+
+    _confirm_and_run(state, setup_config, "iblai infra setup")
+
+
+def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
+    """Show summary, confirm, and run Ansible. Shared by both setup paths."""
+    from datetime import datetime, timezone
+
+    from iblai_infra.ansible.runner import AnsibleRunner
+
     rows = [
         ("Target", setup_config.target_host),
         ("SSH key", str(setup_config.ssh_private_key_path)),
@@ -597,7 +567,6 @@ def _run_setup(name: str) -> None:
     if not confirm:
         ui.abort("Cancelled.")
 
-    # Run ansible
     runner = AnsibleRunner(state, setup_config)
 
     if not runner.preflight():
@@ -608,21 +577,18 @@ def _run_setup(name: str) -> None:
     try:
         success = runner.run()
     except KeyboardInterrupt:
-        from datetime import datetime, timezone
-
         ui.newline()
         state.setup_status = "failed"
         state.updated_at = datetime.now(timezone.utc)
-        from iblai_infra.terraform.state import save_state
         save_state(state)
-        ui.abort("Interrupted. Re-run with: iblai infra setup " + name)
+        ui.abort(f"Interrupted. Re-run with: {rerun_hint}")
 
     if success:
         ui.newline()
         ip = setup_config.target_host
         key_flag = f"-i {setup_config.ssh_private_key_path} " if setup_config.ssh_private_key_path else ""
-        ui.success(f"Platform bootstrapped on [highlight]{ip}[/highlight]")
-        ui.info(f"SSH: [highlight]ssh {key_flag}ubuntu@{ip}[/highlight]")
+        ui.success(f"Platform setup complete on [highlight]{ip}[/highlight]")
+        ui.info(f"SSH: [highlight]ssh {key_flag}{setup_config.ssh_user}@{ip}[/highlight]")
         ui.newline()
 
 

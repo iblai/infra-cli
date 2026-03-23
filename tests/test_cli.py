@@ -13,7 +13,7 @@ import typer
 from typer.testing import CliRunner
 
 from iblai_infra import __version__
-from iblai_infra.cli import app, _run_setup, _interactive_setup, _resolve_credentials
+from iblai_infra.cli import app, _run_setup_provisioned, _interactive_setup, _resolve_credentials
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
@@ -74,43 +74,43 @@ class TestRunSetup:
     def test_not_found(self):
         with patch("iblai_infra.cli.load_state", return_value=None):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("nonexistent")
+                _run_setup_provisioned("nonexistent")
 
     def test_destroyed_state(self, project_state):
         project_state.status = "destroyed"
         with patch("iblai_infra.cli.load_state", return_value=project_state):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_initialized_state(self, project_state):
         project_state.status = "initialized"
         with patch("iblai_infra.cli.load_state", return_value=project_state):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_failed_state(self, project_state):
         project_state.status = "failed"
         with patch("iblai_infra.cli.load_state", return_value=project_state):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_no_outputs(self, project_state):
         project_state.outputs = None
         with patch("iblai_infra.cli.load_state", return_value=project_state):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_no_instance_ip(self, project_state):
         project_state.outputs = {"alb_dns_name": "some-alb.amazonaws.com"}
         with patch("iblai_infra.cli.load_state", return_value=project_state):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_empty_instance_ip(self, project_state):
         project_state.outputs = {"instance_public_ip": ""}
         with patch("iblai_infra.cli.load_state", return_value=project_state):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_already_completed_decline_rerun(self, project_state):
         project_state.setup_status = "completed"
@@ -120,7 +120,7 @@ class TestRunSetup:
         ):
             mock_confirm.return_value.ask.return_value = False
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_already_completed_accept_rerun(self, project_state):
         """User accepts re-running setup, but ansible not installed."""
@@ -132,7 +132,7 @@ class TestRunSetup:
         ):
             mock_confirm.return_value.ask.return_value = True
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
     def test_ansible_not_installed(self, project_state):
         with (
@@ -140,7 +140,7 @@ class TestRunSetup:
             patch("shutil.which", return_value=None),
         ):
             with pytest.raises(_EXIT_EXCEPTIONS):
-                _run_setup("testproject")
+                _run_setup_provisioned("testproject")
 
 
 # ---------------------------------------------------------------------------
@@ -149,41 +149,62 @@ class TestRunSetup:
 
 
 class TestInteractiveSetup:
-    def test_no_eligible_environments(self):
-        with patch("iblai_infra.cli.list_all_states", return_value=[]):
-            _interactive_setup()  # Should just print info and return
+    def test_no_eligible_goes_to_existing_server(self):
+        """With no provisioned environments, goes directly to existing server flow."""
+        with (
+            patch("iblai_infra.cli.list_all_states", return_value=[]),
+            patch("iblai_infra.cli._run_setup_interactive") as mock_run,
+        ):
+            _interactive_setup()
+            mock_run.assert_called_once()
 
-    def test_no_created_environments(self, project_state):
+    def test_no_created_goes_to_existing_server(self, project_state):
         project_state.status = "initialized"
-        with patch("iblai_infra.cli.list_all_states", return_value=[project_state]):
-            _interactive_setup()  # No eligible = prints info
-
-    def test_single_eligible_skips_selection(self, project_state):
-        """With one eligible env, goes directly to _run_setup."""
         with (
             patch("iblai_infra.cli.list_all_states", return_value=[project_state]),
-            patch("iblai_infra.cli._run_setup") as mock_run,
+            patch("iblai_infra.cli._run_setup_interactive") as mock_run,
         ):
+            _interactive_setup()
+            mock_run.assert_called_once()
+
+    def test_eligible_env_choose_provisioned(self, project_state):
+        """User selects 'provisioned' path, then single env goes directly to setup."""
+        with (
+            patch("iblai_infra.cli.list_all_states", return_value=[project_state]),
+            patch("questionary.select") as mock_select,
+            patch("iblai_infra.cli._run_setup_provisioned") as mock_run,
+        ):
+            mock_select.return_value.ask.return_value = "provisioned"
             _interactive_setup()
             mock_run.assert_called_once_with("testproject")
 
-    def test_multiple_eligible_prompts_selection(self, project_state):
+    def test_eligible_env_choose_existing(self, project_state):
+        """User selects 'existing' path even though provisioned envs exist."""
+        with (
+            patch("iblai_infra.cli.list_all_states", return_value=[project_state]),
+            patch("questionary.select") as mock_select,
+            patch("iblai_infra.cli._run_setup_interactive") as mock_run,
+        ):
+            mock_select.return_value.ask.return_value = "existing"
+            _interactive_setup()
+            mock_run.assert_called_once()
+
+    def test_multiple_eligible_prompts_env_selection(self, project_state):
         state2 = project_state.model_copy()
         state2.name = "project2"
         with (
             patch("iblai_infra.cli.list_all_states", return_value=[project_state, state2]),
             patch("questionary.select") as mock_select,
-            patch("iblai_infra.cli._run_setup") as mock_run,
+            patch("iblai_infra.cli._run_setup_provisioned") as mock_run,
         ):
-            mock_select.return_value.ask.return_value = "project2"
+            # First select: path choice, second select: env choice
+            mock_select.return_value.ask.side_effect = ["provisioned", "project2"]
             _interactive_setup()
             mock_run.assert_called_once_with("project2")
 
-    def test_user_cancels_selection(self, project_state):
-        state2 = project_state.model_copy()
-        state2.name = "project2"
+    def test_user_cancels_path_selection(self, project_state):
         with (
-            patch("iblai_infra.cli.list_all_states", return_value=[project_state, state2]),
+            patch("iblai_infra.cli.list_all_states", return_value=[project_state]),
             patch("questionary.select") as mock_select,
         ):
             mock_select.return_value.ask.return_value = None

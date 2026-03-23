@@ -10,7 +10,7 @@ import questionary
 from iblai_infra import ui
 from iblai_infra.models import ProjectState, SetupConfig, SSHKeyMethod
 
-TOTAL_STEPS = 3
+SETUP_STEPS = 3
 BOOTSTRAP_STEPS = 4
 
 
@@ -68,59 +68,40 @@ def _validate_key_permissions(path: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Main prompt flow
+# Shared platform config + credentials prompts
 # ---------------------------------------------------------------------------
 
-def prompt_setup(state: ProjectState) -> SetupConfig:
-    """Collect all variables needed for Ansible setup."""
-    target_host = state.outputs.get("instance_public_ip", "")
+def _prompt_platform_config(
+    step: int,
+    total: int,
+    base_domain: str | None = None,
+) -> dict:
+    """Collect platform configuration. Returns a dict of config values.
 
-    # ----- Step 1: SSH Access -----
-    ui.step_header(1, TOTAL_STEPS, "SSH Access")
+    If base_domain is provided, it's used as-is (from Terraform state).
+    Otherwise, it's prompted interactively.
+    """
+    ui.step_header(step, total, "Platform Configuration")
 
-    ui.success(f"Target: [highlight]{target_host}[/highlight]")
+    if base_domain is None:
+        base_domain = questionary.text(
+            "Base domain (e.g. myplatform.example.com):",
+            validate=lambda v: len(v.strip()) > 0 or "Required",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if base_domain is None:
+            ui.abort()
+        base_domain = base_domain.strip()
 
-    # Resolve SSH key
-    ssh_key = _resolve_ssh_key(state)
-
-    if ssh_key:
-        ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
-    else:
-        method = state.config.ssh.method
-        if method == SSHKeyMethod.EXISTING_FILE:
-            ui.info(
-                "You provided a public key file during provisioning. "
-                "The private key is needed for SSH access."
-            )
-        elif method == SSHKeyMethod.AWS_KEYPAIR:
-            ui.info(
-                f"Infrastructure uses AWS key pair [highlight]{state.config.ssh.key_name}[/highlight]. "
-                "Provide the matching private key."
-            )
-        else:
-            ui.info("Could not locate the SSH private key from provisioning.")
-
-        ssh_key = _prompt_ssh_key_path()
-        ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
-
-    _validate_key_permissions(ssh_key)
-
-    # ----- Step 2: Platform Configuration -----
-    ui.step_header(2, TOTAL_STEPS, "Platform Configuration")
-
-    # Domain (auto-populated, let user confirm)
-    base_domain = state.config.dns.base_domain
     ui.success(f"Domain: [highlight]{base_domain}[/highlight]")
 
-    # Open edX version
     edx_version = "sumac"
     ui.success(f"Open edX version: [highlight]Sumac[/highlight]")
 
-    # Environment config
     env_config = "single-server"
     ui.success(f"Server type: [highlight]Single Server[/highlight]")
 
-    # Release image tags
     dm_image_tag = questionary.text(
         "iblai-dm-pro release tag:",
         default="4.189.1-ai",
@@ -143,7 +124,6 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     edx_image_tag = edx_image_tag.strip()
     ui.success(f"iblai-edx-pro image tag: [highlight]{edx_image_tag}[/highlight]")
 
-    # AI features
     enable_ai = questionary.confirm(
         "Enable AI features for DM?",
         default=True,
@@ -157,7 +137,6 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     else:
         ui.success("AI features: [highlight]Disabled[/highlight]")
 
-    # SPA image tags
     spa_auth_image_tag = questionary.text(
         "Auth SPA release tag:",
         default="1.13.15",
@@ -191,11 +170,28 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     spa_skills_image_tag = spa_skills_image_tag.strip()
     ui.success(f"Skills SPA image tag: [highlight]{spa_skills_image_tag}[/highlight]")
 
-    # ----- Step 3: Credentials -----
-    ui.step_header(3, TOTAL_STEPS, "Credentials")
+    return {
+        "base_domain": base_domain,
+        "edx_version": edx_version,
+        "env_config": env_config,
+        "dm_image_tag": dm_image_tag,
+        "edx_image_tag": edx_image_tag,
+        "enable_ai": enable_ai,
+        "spa_auth_image_tag": spa_auth_image_tag,
+        "spa_mentor_image_tag": spa_mentor_image_tag,
+        "spa_skills_image_tag": spa_skills_image_tag,
+    }
 
-    # GitHub PAT for cloning ibl-cli-ops
-    ui.info("A GitHub Personal Access Token is needed to install ibl-cli-ops on the VM.")
+
+def _prompt_credentials(
+    step: int,
+    total: int,
+    state: ProjectState | None = None,
+) -> dict:
+    """Collect credentials. If state is provided, offers to reuse provisioning creds."""
+    ui.step_header(step, total, "Credentials")
+
+    ui.info("A GitHub Personal Access Token is needed to install iblai-cli-ops on the VM.")
     git_access_token = questionary.password(
         "GitHub Personal Access Token:",
         validate=lambda v: len(v.strip()) > 0 or "Required",
@@ -207,35 +203,36 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     git_access_token = git_access_token.strip()
     ui.success("GitHub token provided")
 
-    # AWS credentials for the VM
     ui.info(
-        "AWS credentials will be configured on the VM. "
-        "They must have access to ECR (iblai-dm-pro and iblai-edx-pro images) and S3 buckets."
+        "AWS credentials for the VM. "
+        "Must have access to ECR (iblai-dm-pro and iblai-edx-pro images) and S3 buckets."
     )
 
-    creds = state.config.credentials
     aws_key_id = ""
     aws_secret = ""
-    aws_region = creds.region
+    aws_region = ""
 
-    # If provisioning used access keys, offer to reuse
-    if creds.access_key_id and creds.secret_access_key:
-        reuse = questionary.confirm(
-            "Use the same AWS credentials from provisioning?",
-            default=True,
-            style=ui.PROMPT_STYLE,
-            qmark=ui.QMARK,
-        ).ask()
-        if reuse is None:
-            ui.abort()
-        if reuse:
-            aws_key_id = creds.access_key_id
-            aws_secret = creds.secret_access_key
-            ui.success("Using provisioning credentials for VM")
+    # If we have state with access keys, offer to reuse
+    if state is not None:
+        creds = state.config.credentials
+        aws_region = creds.region
+        if creds.access_key_id and creds.secret_access_key:
+            reuse = questionary.confirm(
+                "Use the same AWS credentials from provisioning?",
+                default=True,
+                style=ui.PROMPT_STYLE,
+                qmark=ui.QMARK,
+            ).ask()
+            if reuse is None:
+                ui.abort()
+            if reuse:
+                aws_key_id = creds.access_key_id
+                aws_secret = creds.secret_access_key
+                ui.success("Using provisioning credentials for VM")
 
     if not aws_key_id:
         aws_key_id = questionary.text(
-            "AWS Access Key ID (for the VM):",
+            "AWS Access Key ID:",
             validate=lambda v: len(v.strip()) > 0 or "Required",
             style=ui.PROMPT_STYLE,
             qmark=ui.QMARK,
@@ -245,7 +242,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
         aws_key_id = aws_key_id.strip()
 
         aws_secret = questionary.password(
-            "AWS Secret Access Key (for the VM):",
+            "AWS Secret Access Key:",
             validate=lambda v: len(v.strip()) > 0 or "Required",
             style=ui.PROMPT_STYLE,
             qmark=ui.QMARK,
@@ -254,27 +251,82 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
             ui.abort()
         aws_secret = aws_secret.strip()
 
+    if not aws_region:
+        aws_region = questionary.text(
+            "AWS region:",
+            default="us-east-1",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if aws_region is None:
+            ui.abort()
+        aws_region = aws_region.strip()
+
+    return {
+        "git_access_token": git_access_token,
+        "aws_access_key_id": aws_key_id,
+        "aws_secret_access_key": aws_secret,
+        "aws_default_region": aws_region,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Setup flow (from Terraform state)
+# ---------------------------------------------------------------------------
+
+def prompt_setup(state: ProjectState) -> SetupConfig:
+    """Collect variables for Ansible setup from a provisioned environment."""
+    target_host = state.outputs.get("instance_public_ip", "")
+
+    # ----- Step 1: SSH Access -----
+    ui.step_header(1, SETUP_STEPS, "SSH Access")
+
+    ui.success(f"Target: [highlight]{target_host}[/highlight]")
+
+    ssh_key = _resolve_ssh_key(state)
+
+    if ssh_key:
+        ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
+    else:
+        method = state.config.ssh.method
+        if method == SSHKeyMethod.EXISTING_FILE:
+            ui.info(
+                "You provided a public key file during provisioning. "
+                "The private key is needed for SSH access."
+            )
+        elif method == SSHKeyMethod.AWS_KEYPAIR:
+            ui.info(
+                f"Infrastructure uses AWS key pair [highlight]{state.config.ssh.key_name}[/highlight]. "
+                "Provide the matching private key."
+            )
+        else:
+            ui.info("Could not locate the SSH private key from provisioning.")
+
+        ssh_key = _prompt_ssh_key_path()
+        ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
+
+    _validate_key_permissions(ssh_key)
+
+    # ----- Step 2: Platform Configuration -----
+    platform = _prompt_platform_config(
+        step=2,
+        total=SETUP_STEPS,
+        base_domain=state.config.dns.base_domain,
+    )
+
+    # ----- Step 3: Credentials -----
+    cred = _prompt_credentials(step=3, total=SETUP_STEPS, state=state)
+
     return SetupConfig(
         ssh_private_key_path=ssh_key,
         target_host=target_host,
-        base_domain=base_domain,
-        edx_version=edx_version,
-        env_config=env_config,
-        dm_image_tag=dm_image_tag,
-        edx_image_tag=edx_image_tag,
-        enable_ai=enable_ai,
-        spa_auth_image_tag=spa_auth_image_tag,
-        spa_mentor_image_tag=spa_mentor_image_tag,
-        spa_skills_image_tag=spa_skills_image_tag,
-        aws_access_key_id=aws_key_id,
-        aws_secret_access_key=aws_secret,
-        aws_default_region=aws_region,
-        git_access_token=git_access_token,
+        **platform,
+        **cred,
     )
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap prompt flow (no Terraform state required)
+# Bootstrap flow (no Terraform state)
 # ---------------------------------------------------------------------------
 
 def _validate_ip(value: str) -> bool | str:
@@ -300,7 +352,7 @@ def _validate_project_name(value: str) -> bool | str:
 
 
 def prompt_bootstrap() -> tuple[SetupConfig, dict]:
-    """Collect all variables for bootstrapping an existing server."""
+    """Collect all variables for setting up an existing server."""
 
     # ----- Step 1: Project -----
     ui.step_header(1, BOOTSTRAP_STEPS, "Project")
@@ -345,160 +397,17 @@ def prompt_bootstrap() -> tuple[SetupConfig, dict]:
     ssh_user = ssh_user.strip()
 
     # ----- Step 3: Platform Configuration -----
-    ui.step_header(3, BOOTSTRAP_STEPS, "Platform Configuration")
-
-    base_domain = questionary.text(
-        "Base domain (e.g. myplatform.example.com):",
-        validate=lambda v: len(v.strip()) > 0 or "Required",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if base_domain is None:
-        ui.abort()
-    base_domain = base_domain.strip()
-    ui.success(f"Domain: [highlight]{base_domain}[/highlight]")
-
-    edx_version = "sumac"
-    ui.success(f"Open edX version: [highlight]Sumac[/highlight]")
-
-    env_config = "single-server"
-    ui.success(f"Server type: [highlight]Single Server[/highlight]")
-
-    dm_image_tag = questionary.text(
-        "iblai-dm-pro release tag:",
-        default="4.189.1-ai",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if dm_image_tag is None:
-        ui.abort()
-    dm_image_tag = dm_image_tag.strip()
-    ui.success(f"iblai-dm-pro image tag: [highlight]{dm_image_tag}[/highlight]")
-
-    edx_image_tag = questionary.text(
-        "iblai-edx-pro release tag:",
-        default="sumac.2.4.13",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if edx_image_tag is None:
-        ui.abort()
-    edx_image_tag = edx_image_tag.strip()
-    ui.success(f"iblai-edx-pro image tag: [highlight]{edx_image_tag}[/highlight]")
-
-    enable_ai = questionary.confirm(
-        "Enable AI features for DM?",
-        default=True,
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if enable_ai is None:
-        ui.abort()
-    if enable_ai:
-        ui.success("AI features: [highlight]Enabled[/highlight]")
-    else:
-        ui.success("AI features: [highlight]Disabled[/highlight]")
-
-    spa_auth_image_tag = questionary.text(
-        "Auth SPA release tag:",
-        default="1.13.15",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if spa_auth_image_tag is None:
-        ui.abort()
-    spa_auth_image_tag = spa_auth_image_tag.strip()
-    ui.success(f"Auth SPA image tag: [highlight]{spa_auth_image_tag}[/highlight]")
-
-    spa_mentor_image_tag = questionary.text(
-        "Mentor SPA release tag:",
-        default="0.35.14",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if spa_mentor_image_tag is None:
-        ui.abort()
-    spa_mentor_image_tag = spa_mentor_image_tag.strip()
-    ui.success(f"Mentor SPA image tag: [highlight]{spa_mentor_image_tag}[/highlight]")
-
-    spa_skills_image_tag = questionary.text(
-        "Skills SPA release tag:",
-        default="0.9.8",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if spa_skills_image_tag is None:
-        ui.abort()
-    spa_skills_image_tag = spa_skills_image_tag.strip()
-    ui.success(f"Skills SPA image tag: [highlight]{spa_skills_image_tag}[/highlight]")
+    platform = _prompt_platform_config(step=3, total=BOOTSTRAP_STEPS)
 
     # ----- Step 4: Credentials -----
-    ui.step_header(4, BOOTSTRAP_STEPS, "Credentials")
-
-    ui.info("A GitHub Personal Access Token is needed to install iblai-cli-ops on the VM.")
-    git_access_token = questionary.password(
-        "GitHub Personal Access Token:",
-        validate=lambda v: len(v.strip()) > 0 or "Required",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if git_access_token is None:
-        ui.abort()
-    git_access_token = git_access_token.strip()
-    ui.success("GitHub token provided")
-
-    ui.info(
-        "AWS credentials for the VM. "
-        "Must have access to ECR (iblai-dm-pro and iblai-edx-pro images) and S3 buckets."
-    )
-
-    aws_key_id = questionary.text(
-        "AWS Access Key ID:",
-        validate=lambda v: len(v.strip()) > 0 or "Required",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if aws_key_id is None:
-        ui.abort()
-    aws_key_id = aws_key_id.strip()
-
-    aws_secret = questionary.password(
-        "AWS Secret Access Key:",
-        validate=lambda v: len(v.strip()) > 0 or "Required",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if aws_secret is None:
-        ui.abort()
-    aws_secret = aws_secret.strip()
-
-    aws_region = questionary.text(
-        "AWS region:",
-        default="us-east-1",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if aws_region is None:
-        ui.abort()
-    aws_region = aws_region.strip()
+    cred = _prompt_credentials(step=4, total=BOOTSTRAP_STEPS)
 
     config = SetupConfig(
         ssh_private_key_path=ssh_key,
         ssh_user=ssh_user,
         target_host=target_host,
-        base_domain=base_domain,
-        edx_version=edx_version,
-        env_config=env_config,
-        dm_image_tag=dm_image_tag,
-        edx_image_tag=edx_image_tag,
-        enable_ai=enable_ai,
-        spa_auth_image_tag=spa_auth_image_tag,
-        spa_mentor_image_tag=spa_mentor_image_tag,
-        spa_skills_image_tag=spa_skills_image_tag,
-        aws_access_key_id=aws_key_id,
-        aws_secret_access_key=aws_secret,
-        aws_default_region=aws_region,
-        git_access_token=git_access_token,
+        **platform,
+        **cred,
     )
 
     meta = {"project_name": project_name}

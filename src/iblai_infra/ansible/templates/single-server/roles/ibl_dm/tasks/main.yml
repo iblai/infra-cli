@@ -8,10 +8,10 @@
     mode: "0700"
     recurse: true
 
-- name: Start DM database container
+- name: Pull latest DM postgres image and recreate database container
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose up -d dm-data
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose pull dm-data && docker compose up -d --force-recreate dm-data
   args:
     executable: /bin/bash
   environment:

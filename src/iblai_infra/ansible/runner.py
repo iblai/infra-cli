@@ -322,6 +322,7 @@ class AnsibleRunner:
             "spa_auth_image_tag": self.config.spa_auth_image_tag,
             "spa_mentor_image_tag": self.config.spa_mentor_image_tag,
             "spa_skills_image_tag": self.config.spa_skills_image_tag,
+            "openai_api_key": self.config.openai_api_key,
         }
 
     # ------------------------------------------------------------------

@@ -262,11 +262,27 @@ def _prompt_credentials(
             ui.abort()
         aws_region = aws_region.strip()
 
+    openai_api_key = ""
+    ui.info("OpenAI API key enables AI mentor features. Leave blank to skip.")
+    openai_input = questionary.password(
+        "OpenAI API Key (optional):",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if openai_input is None:
+        ui.abort()
+    openai_api_key = openai_input.strip()
+    if openai_api_key:
+        ui.success("OpenAI API key provided")
+    else:
+        ui.muted("Skipped — can be configured later in DM admin")
+
     return {
         "git_access_token": git_access_token,
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,
+        "openai_api_key": openai_api_key,
     }
 
 

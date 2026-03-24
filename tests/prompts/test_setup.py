@@ -221,7 +221,7 @@ class TestPromptSetup:
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET"]
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key"]
             # First confirm: enable AI, second confirm: don't reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False]
             mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "NEW_ACCESS_KEY"]
@@ -251,7 +251,7 @@ class TestPromptSetup:
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET"]
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", ""]
             # Only one confirm: enable AI (no reuse prompt when no access keys)
             mock_confirm.return_value.ask.return_value = True
             mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ACCESS_KEY"]

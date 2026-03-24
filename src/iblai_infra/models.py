@@ -232,6 +232,7 @@ class SetupConfig(BaseModel):
     aws_secret_access_key: str
     aws_default_region: str
     git_access_token: str
+    openai_api_key: str = ""
 
 
 # ---------------------------------------------------------------------------

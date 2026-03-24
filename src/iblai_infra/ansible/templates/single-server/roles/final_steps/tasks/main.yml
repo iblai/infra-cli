@@ -25,3 +25,21 @@
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+
+- name: Configure OpenAI API key
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
+    from ibl_ai_mentor.models import GlobalCredential
+    import json
+    GlobalCredential.objects.update_or_create(
+        name='openai',
+        defaults={'value': json.dumps({'key': '{{ openai_api_key }}'}), 'is_preferred': True},
+    )
+    print('OpenAI credential configured')
+    "
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  when: openai_api_key | length > 0

@@ -192,7 +192,7 @@ class AnsibleRunner:
             completed += 1
             progress.update(task_id, completed=completed)
 
-        if proc.returncode != 0 or errors:
+        if proc.returncode != 0:
             if errors:
                 ui.error("Ansible reported the following errors:")
                 ui.newline()
@@ -209,6 +209,14 @@ class AnsibleRunner:
                     ui.muted(f"  {tail_line}")
 
             return False, completed
+
+        # Warn about ignored errors but don't fail the run
+        if errors:
+            ui.warning(
+                f"{len(errors)} task(s) failed but were ignored by the playbook:"
+            )
+            for e in errors[:5]:
+                ui.muted(f"  {e}")
 
         return True, completed
 

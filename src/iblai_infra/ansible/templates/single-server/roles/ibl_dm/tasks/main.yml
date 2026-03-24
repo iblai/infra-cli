@@ -20,7 +20,7 @@
 - name: Wait for postgres to be ready
   become: false
   shell: |
-    docker exec ibl_dm_db pg_isready -U postgres
+    docker exec ibl_dm_db bash -c 'pg_isready -U "$POSTGRES_USER"'
   args:
     executable: /bin/bash
   register: pg_ready
@@ -31,11 +31,10 @@
 - name: Enable pgvector extension
   become: false
   shell: |
-    docker exec ibl_dm_db psql -U postgres -d ibl_dm_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+    docker exec ibl_dm_db bash -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS vector;"'
   args:
     executable: /bin/bash
   register: pgvector_result
-  ignore_errors: true
 
 - name: Show pgvector result
   debug:

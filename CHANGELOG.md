@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1] — 2026-03-24
+
+### Fixed
+- pgvector extension task used hardcoded `postgres` user and `ibl_dm_db` database — now reads `$POSTGRES_USER` and `$POSTGRES_DB` from container environment, matching actual DM postgres configuration (`ibl`/`dlmanager`)
+- `pg_isready` health check also updated to use `$POSTGRES_USER` instead of hardcoded `postgres`
+- Ansible runner reported false failures when tasks with `ignore_errors: true` emitted `fatal:` lines — runner now trusts `proc.returncode` as the primary success signal and shows ignored errors as warnings instead of failing the run
+- Removed `ignore_errors: true` from pgvector task since it should now succeed with correct credentials
+
 ## [1.2.0] — 2026-03-20
 
 ### Added

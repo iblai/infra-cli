@@ -157,6 +157,21 @@
   retries: 2
   delay: 5
 
+- name: Save config and reload proxy after SPA launch
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save && ibl global-proxy reload
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
 - name: Verify SPA containers are running
   command: docker ps --format "table {% raw %}{{.Names}}\t{{.Status}}{% endraw %}" --filter "name=spa"
   register: spa_containers

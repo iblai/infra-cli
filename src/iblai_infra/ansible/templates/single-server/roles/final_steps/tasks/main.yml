@@ -44,6 +44,50 @@
     HOME: "/home/{{ ansible_user }}"
   when: openai_api_key | length > 0
 
+- name: Create DM super admin
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
+    from django.contrib.auth.models import User
+    if not User.objects.filter(username='{{ admin_username }}').exists():
+        User.objects.create_superuser('{{ admin_username }}', '{{ admin_email }}', '{{ admin_password }}')
+        print('DM superuser created')
+    else:
+        u = User.objects.get(username='{{ admin_username }}')
+        u.email = '{{ admin_email }}'
+        u.set_password('{{ admin_password }}')
+        u.is_superuser = True
+        u.is_staff = True
+        u.save()
+        print('DM superuser updated')
+    "
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  no_log: true
+
+- name: Create LMS super admin
+  become: false
+  shell: |
+    docker exec ibl_prod_lms ./manage.py lms shell -c "
+    from django.contrib.auth.models import User
+    if not User.objects.filter(username='{{ admin_username }}').exists():
+        User.objects.create_superuser('{{ admin_username }}', '{{ admin_email }}', '{{ admin_password }}')
+        print('LMS superuser created')
+    else:
+        u = User.objects.get(username='{{ admin_username }}')
+        u.email = '{{ admin_email }}'
+        u.set_password('{{ admin_password }}')
+        u.is_superuser = True
+        u.is_staff = True
+        u.save()
+        print('LMS superuser updated')
+    "
+  args:
+    executable: /bin/bash
+  no_log: true
+
 - name: Enable main platform to use main LLM key
   become: false
   shell: |

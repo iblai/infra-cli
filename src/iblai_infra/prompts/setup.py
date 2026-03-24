@@ -277,12 +277,50 @@ def _prompt_credentials(
     else:
         ui.muted("Skipped — can be configured later in DM admin")
 
+    ui.info("Super admin account for the platform (LMS and Data Manager).")
+
+    admin_username = questionary.text(
+        "Admin username:",
+        default="ibl_admin",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if admin_username is None:
+        ui.abort()
+    admin_username = admin_username.strip()
+
+    admin_email = questionary.text(
+        "Admin email:",
+        validate=lambda v: (
+            "@" in v.strip() or "Enter a valid email address"
+        ),
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if admin_email is None:
+        ui.abort()
+    admin_email = admin_email.strip()
+
+    admin_password = questionary.password(
+        "Admin password:",
+        validate=lambda v: len(v.strip()) >= 8 or "Must be at least 8 characters",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if admin_password is None:
+        ui.abort()
+    admin_password = admin_password.strip()
+    ui.success(f"Admin: [highlight]{admin_username}[/highlight] ({admin_email})")
+
     return {
         "git_access_token": git_access_token,
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,
         "openai_api_key": openai_api_key,
+        "admin_username": admin_username,
+        "admin_email": admin_email,
+        "admin_password": admin_password,
     }
 
 

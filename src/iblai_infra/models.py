@@ -233,6 +233,9 @@ class SetupConfig(BaseModel):
     aws_default_region: str
     git_access_token: str
     openai_api_key: str = ""
+    admin_username: str = "ibl_admin"
+    admin_email: str = ""
+    admin_password: str = ""
 
 
 # ---------------------------------------------------------------------------

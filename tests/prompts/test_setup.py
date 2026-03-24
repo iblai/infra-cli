@@ -189,10 +189,10 @@ class TestPromptSetup:
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.return_value = "ghp_testtoken"
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
-            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -209,6 +209,9 @@ class TestPromptSetup:
         assert config.git_access_token == "ghp_testtoken"
         assert config.target_host == "54.1.2.3"
         assert config.base_domain == "example.com"
+        assert config.admin_username == "ibl_admin"
+        assert config.admin_email == "admin@example.com"
+        assert config.admin_password == "Admin1234"
 
     def test_full_flow_new_credentials(self, tmp_path):
         """Test the flow where user declines reusing credentials."""
@@ -221,10 +224,10 @@ class TestPromptSetup:
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key"]
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key", "Admin1234"]
             # First confirm: enable AI, second confirm: don't reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False]
-            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "NEW_ACCESS_KEY"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "NEW_ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -251,10 +254,10 @@ class TestPromptSetup:
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", ""]
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", "", "Admin1234"]
             # Only one confirm: enable AI (no reuse prompt when no access keys)
             mock_confirm.return_value.ask.return_value = True
-            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ACCESS_KEY"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -281,11 +284,11 @@ class TestPromptSetup:
             patch("questionary.path") as mock_path,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.return_value = "ghp_testtoken"
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
             mock_path.return_value.ask.return_value = str(new_key)
-            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -307,11 +310,11 @@ class TestPromptSetup:
             patch("questionary.path") as mock_path,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.return_value = "ghp_testtoken"
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -333,11 +336,11 @@ class TestPromptSetup:
             patch("questionary.path") as mock_path,
             patch("questionary.text") as mock_text,
         ):
-            mock_password.return_value.ask.return_value = "ghp_testtoken"
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8"]
+            mock_text.return_value.ask.side_effect = ["4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 

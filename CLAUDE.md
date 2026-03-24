@@ -12,7 +12,7 @@ Interactive CLI tool for provisioning ibl.ai platform infrastructure on AWS. Bui
 iblai-infra/
 ├── pyproject.toml                          # uv/hatch config, dynamic version, entry point: iblai = iblai_infra.cli:app
 ├── src/iblai_infra/
-│   ├── __init__.py                         # __version__ = "1.2.1"
+│   ├── __init__.py                         # __version__ = "1.2.2"
 │   ├── __main__.py                         # python -m iblai_infra support
 │   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup + landing screen menu
 │   ├── app.py                              # Wizard orchestrator (5-step flow)
@@ -132,6 +132,12 @@ Both paths share `_confirm_and_run()` for the review summary → confirm → ans
 
 `ProjectState` tracks lifecycle: initialized → created → failed → destroyed.
 
+`SetupConfig` is the **contract** between setup prompts and `AnsibleRunner`:
+- SSH access (private_key_path, ssh_user, target_host)
+- Platform config (base_domain, edx_version, env_config, image tags for DM/edX/SPAs, enable_ai)
+- Credentials (aws_access_key_id, aws_secret_access_key, aws_default_region, git_access_token)
+- Optional: openai_api_key, admin_username, admin_email, admin_password
+
 ### Terraform Runner
 
 - Uses `terraform apply -json` for structured event streaming
@@ -150,6 +156,9 @@ Both paths share `_confirm_and_run()` for the review summary → confirm → ans
 - **Error handling:** trusts `proc.returncode` as the primary success signal. Tasks with `ignore_errors: true` emit `fatal:` lines but Ansible returns 0 — runner shows these as warnings, not failures
 - `ROLE_LABELS` maps role names to human-friendly labels (9 roles)
 - DM postgres tasks read `$POSTGRES_USER` and `$POSTGRES_DB` from container env (not hardcoded)
+- DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
+- `final_steps` role: config save, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, seed base mentors, configure OpenAI credential (if provided), create super admin (DM + LMS), enable UseMainLLMKey for main platform
+- Django `JSONField` values must be passed as dicts, not `json.dumps()` strings — auto-serialization handles encoding
 
 ### IAM Permission Checks
 

@@ -2,10 +2,18 @@
 
 ## [1.2.2] — 2026-03-24
 
+### Added
+- Super admin credentials prompt — setup wizard asks for admin username (default `ibl_admin`), email, and password; creates superuser in both DM and LMS via Django shell in `final_steps` role
+- Optional OpenAI API key prompt — when provided, creates a `GlobalCredential` entry in DM with `is_preferred=True`; skippable with blank input
+- `UseMainLLMKey` configuration — `final_steps` role enables `use_main_key=True` for the `main` platform so tenants inherit the global LLM credential
+- `seed_base_mentors` — `final_steps` role runs `manage.py seed_base_mentors` to create default OpenAI and Google mentor configurations
+- `openai_api_key`, `admin_username`, `admin_email`, `admin_password` fields on `SetupConfig` model
+
 ### Fixed
 - DM container verification now waits for the web endpoint to respond (up to 10 minutes) instead of only checking `docker ps` — catches crash-looping containers that still show as "Running"
 - DM verification checks `RestartCount` and fails with actionable error (suggests `ibl dm migrate`) if container has restarted more than 3 times
 - edX container verification also checks LMS `/heartbeat` endpoint readiness and restart count
+- `GlobalCredential.value` stored as dict directly (not `json.dumps`) — `JSONField` auto-serializes; double-serializing caused 500 on admin page
 
 ## [1.2.1] — 2026-03-24
 

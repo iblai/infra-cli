@@ -200,12 +200,24 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    CURRENT_PLUGINS=$(ibl config printvalue IBL_EDX.PLUGINS 2>/dev/null | tr -d "'" | tr -d '"')
-    if echo "$CURRENT_PLUGINS" | grep -q "ibl-edx-uwsgi"; then
-      echo "ibl-edx-uwsgi already in plugins"
-    else
-      ibl config save --set "IBL_EDX.PLUGINS=${CURRENT_PLUGINS},ibl-edx-uwsgi"
-    fi
+    python3 -c "
+    import yaml
+    config_path = '{{ ibl_root }}/config.yml'
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f) or {}
+    edx = cfg.setdefault('IBL_EDX', {})
+    plugins = edx.get('PLUGINS', [])
+    if isinstance(plugins, str):
+        plugins = [p.strip() for p in plugins.split(',') if p.strip()]
+    if 'ibl-edx-uwsgi' not in plugins:
+        plugins.append('ibl-edx-uwsgi')
+        edx['PLUGINS'] = plugins
+        with open(config_path, 'w') as f:
+            yaml.dump(cfg, f, default_flow_style=False)
+        print('Added ibl-edx-uwsgi to plugins')
+    else:
+        print('ibl-edx-uwsgi already in plugins')
+    "
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"

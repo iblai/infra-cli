@@ -178,3 +178,12 @@
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+
+- name: Seed RBAC data
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_rbac_data
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"

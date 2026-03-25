@@ -12,7 +12,7 @@ Interactive CLI tool for provisioning ibl.ai platform infrastructure on AWS. Bui
 iblai-infra/
 ├── pyproject.toml                          # uv/hatch config, dynamic version, entry point: iblai = iblai_infra.cli:app
 ├── src/iblai_infra/
-│   ├── __init__.py                         # __version__ = "1.2.2"
+│   ├── __init__.py                         # __version__ = "1.2.3"
 │   ├── __main__.py                         # python -m iblai_infra support
 │   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup + landing screen menu
 │   ├── app.py                              # Wizard orchestrator (5-step flow)
@@ -157,8 +157,10 @@ Both paths share `_confirm_and_run()` for the review summary → confirm → ans
 - `ROLE_LABELS` maps role names to human-friendly labels (9 roles)
 - DM postgres tasks read `$POSTGRES_USER` and `$POSTGRES_DB` from container env (not hardcoded)
 - DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
-- `final_steps` role: config save, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, seed base mentors, configure OpenAI credential (if provided), create super admin (DM + LMS), enable UseMainLLMKey for main platform
+- `final_steps` role: config save, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, edx sync-with-manager, configure OpenAI credential (if provided), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform, seed flows/llm-registry/base-mentors/rbac-data
 - Django `JSONField` values must be passed as dicts, not `json.dumps()` strings — auto-serialization handles encoding
+- SPA boolean config values (`ENABLE_RBAC`, `STRIPE_ENABLED`, etc.) must be written as quoted strings (`'true'`/`'false'`) via Python yaml — `ibl config save --set` cannot handle quoted string values
+- `ibl-edx-uwsgi` plugin and other list-type config values must be manipulated via Python yaml, not `ibl config save --set` — the CLI's `printvalue` returns Python list repr that can't be round-tripped
 
 ### IAM Permission Checks
 

@@ -1,19 +1,32 @@
 # Changelog
 
-## [1.2.2] — 2026-03-24
+## [1.2.3] — 2026-03-26
 
 ### Added
 - Super admin credentials prompt — setup wizard asks for admin username (default `ibl_admin`), email, and password; creates superuser in both DM and LMS via Django shell in `final_steps` role
 - Optional OpenAI API key prompt — when provided, creates a `GlobalCredential` entry in DM with `is_preferred=True`; skippable with blank input
 - `UseMainLLMKey` configuration — `final_steps` role enables `use_main_key=True` for the `main` platform so tenants inherit the global LLM credential
-- `seed_base_mentors` — `final_steps` role runs `manage.py seed_base_mentors` to create default OpenAI and Google mentor configurations
 - `openai_api_key`, `admin_username`, `admin_email`, `admin_password` fields on `SetupConfig` model
+- `ibl_web` OAuth2 application created in LMS (public, password grant) — client ID used for `IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID`
+- CSRF exempt domain seeding — 24 platform subdomains added to `CsrfExemptDomain` in LMS for CORS support
+- Unified API gateway enabled by default (`IBL_REVERSE_PROXY.ENABLE_UNIFIED_API_GATEWAY=true`)
+- MFE image (`ibl-edx-mfe-pro:sumac.0.3.2`) and JWT auth (`ENABLE_JWT_AUTH=True`) set in `ibl_platform` role
+- CORS enabled for edX (`IBL_EDX_CORS_HEADER.CORS_ORIGIN_ALLOW_ALL=true`)
+- DM RBAC enabled (`IBL_DM.ENABLE_RBAC=true`, `IBL_DM.ENABLE_RBAC_SEEDING=true`)
+- `IBL_DM.ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS=true` set before DM launch
+- `ibl-edx-uwsgi` plugin ensured in `IBL_EDX.PLUGINS` via Python yaml (safe append)
+- Full SPA configuration: `DEFAULT_APP_URL`, `ENVIRONMENT`, `SKIP_TEST`, `ENABLE_APP_SITE_ASSOCIATION`, `CANVAS_ADMIN_ONLY`, `STRIPE_ENABLED` with quoted boolean values written via Python yaml
+- `ibl edx sync-with-manager --users` in `final_steps` role
+- Seed commands in order: `seed_flows` → `seed_llm_registry` → `seed_base_mentors` → `seed_rbac_data`
+- `ibl config save && ibl global-proxy reload` after SPA launches
 
 ### Fixed
 - DM container verification now waits for the web endpoint to respond (up to 10 minutes) instead of only checking `docker ps` — catches crash-looping containers that still show as "Running"
 - DM verification checks `RestartCount` and fails with actionable error (suggests `ibl dm migrate`) if container has restarted more than 3 times
 - edX container verification also checks LMS `/heartbeat` endpoint readiness and restart count
 - `GlobalCredential.value` stored as dict directly (not `json.dumps`) — `JSONField` auto-serializes; double-serializing caused 500 on admin page
+- SPA quoted boolean values (`'true'`/`'false'`) written via Python yaml to avoid `ibl config save --set` quoting syntax errors
+- `ibl-edx-uwsgi` plugin appended via Python yaml to avoid `ibl config printvalue` list parsing errors
 
 ## [1.2.1] — 2026-03-24
 

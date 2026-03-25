@@ -169,7 +169,8 @@
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
     ibl config save --set IBL_DM.ENABLE_IBL_AI={{ enable_ai }} && \
-    ibl config save --set IBL_DM.ENABLE_IBL_AI_PLUS={{ enable_ai }}
+    ibl config save --set IBL_DM.ENABLE_IBL_AI_PLUS={{ enable_ai }} && \
+    ibl config save --set IBL_DM.ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS=true
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"

@@ -136,12 +136,12 @@ The playbook runs 9 sequential roles:
 | `docker` | Installs Docker Engine, docker compose, and apache2-utils |
 | `awscli` | Installs AWS CLI v2 for ECR and S3 access |
 | `python` | Installs pyenv and Python 3.11.8 |
-| `iblai_cli_ops` | Clones and installs [iblai-cli-ops](https://github.com/iblai/ibl-cli-ops) in a virtualenv |
-| `base_config` | Configures base domain, environment, image tags, and service defaults |
-| `iblai_dm_pro` | Launches iblai-dm-pro (PostgreSQL, Redis, Django, Celery, Flowise) |
-| `iblai_edx_pro` | Launches iblai-edx-pro (LMS, CMS, MySQL, MongoDB, Redis, Elasticsearch) |
-| `iblai_spa` | Configures OAuth2 SSO and launches iblai-web-frontend (Auth, Mentor AI, Skills AI) |
-| `auth_config` | Reloads proxy, sets up OAuth/OIDC integrations, runs DM auth setup |
+| `ibl_cli_ops` | Clones and installs [iblai-cli-ops](https://github.com/iblai/ibl-cli-ops) in a virtualenv |
+| `ibl_platform` | Configures base domain, environment, image tags, CORS, RBAC, unified API gateway, and service defaults |
+| `ibl_dm` | Launches iblai-dm-pro (PostgreSQL with pgvector, Redis, Django, Celery, Langfuse, Minio) |
+| `ibl_edx` | Launches iblai-edx-pro (LMS, CMS, MySQL, MongoDB, Redis, Elasticsearch, MFE) |
+| `ibl_spa` | Creates OAuth2 apps, configures and launches Auth, Mentor AI, and Skills AI SPAs |
+| `final_steps` | Reloads proxy, OAuth/OIDC setup, syncs edX with DM, creates super admins, seeds CSRF domains, flows, LLM registry, mentors, and RBAC data |
 
 The setup wizard prompts for:
 - Target host IP and SSH key path
@@ -149,6 +149,9 @@ The setup wizard prompts for:
 - DM and edX Docker image tags
 - SPA image tags (Auth, Mentor, Skills)
 - Whether to enable AI features
+- OpenAI API key (optional)
+- Super admin credentials (username, email, password)
+- GitHub PAT and AWS credentials for the VM
 
 ### 4. Manage environments
 
@@ -244,7 +247,7 @@ iblai-infra-ops/
 │       └── templates/single-server/
 │           ├── playbook.yml
 │           └── roles/          # 9 Ansible roles
-├── tests/                      # 380+ tests
+├── tests/                      # 357 tests
 ├── docs/                       # Architecture diagrams
 └── pyproject.toml
 ```

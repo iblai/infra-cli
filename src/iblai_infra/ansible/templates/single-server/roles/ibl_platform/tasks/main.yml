@@ -40,6 +40,15 @@
   delay: 2
   when: is_resetup | default(false) | bool
 
+- name: Capture current MySQL root password before rotation
+  become: false
+  shell: docker exec ibl_prod_mysql printenv MYSQL_ROOT_PASSWORD
+  args:
+    executable: /bin/bash
+  register: mysql_old_root_pass
+  when: is_resetup | default(false) | bool
+  ignore_errors: true
+
 - name: Rotate secrets and auth credentials
   become: false
   shell: |
@@ -79,6 +88,39 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
   when: is_resetup | default(false) | bool
+
+- name: Sync MySQL passwords after secret rotation
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    OLD_ROOT_PASS="{{ mysql_old_root_pass.stdout | default('') | trim }}"
+    NEW_ROOT_PASS=$(python3 -c "
+    import yaml
+    with open('{{ ibl_root }}/config.yml') as f:
+        cfg = yaml.safe_load(f) or {}
+    print(cfg.get('IBL_EDX', {}).get('MYSQL_ROOT_PASSWORD', ''))
+    ")
+    NEW_OPENEDX_PASS=$(python3 -c "
+    import yaml
+    with open('{{ ibl_root }}/config.yml') as f:
+        cfg = yaml.safe_load(f) or {}
+    print(cfg.get('IBL_EDX', {}).get('OPENEDX_MYSQL_PASSWORD', ''))
+    ")
+    if [ -n "$OLD_ROOT_PASS" ] && [ -n "$NEW_ROOT_PASS" ]; then
+      docker exec ibl_prod_mysql mysql -u root -p"$OLD_ROOT_PASS" -e "ALTER USER 'root'@'%' IDENTIFIED BY '$NEW_ROOT_PASS'; ALTER USER 'root'@'localhost' IDENTIFIED BY '$NEW_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null
+      docker exec ibl_prod_mysql mysql -u root -p"$NEW_ROOT_PASS" -e "ALTER USER 'openedx'@'%' IDENTIFIED BY '$NEW_OPENEDX_PASS'; FLUSH PRIVILEGES;" 2>/dev/null
+    fi
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  when: is_resetup | default(false) | bool
+  ignore_errors: true
 
 - name: Configure edX version
   become: false
@@ -203,7 +245,6 @@
     pyenv activate "{{ venv_name }}"
     ibl config save --set 'IBL_EDX.DOCKER_IMAGE_CADDY=docker.io/caddy:2.11.1'
     ibl config save --set 'IBL_EDX.DOCKER_IMAGE_SMTP=docker.io/devture/exim-relay:4.96-r1-1'
-    ibl config save --set 'IBL_EDX.DOCKER_IMAGE_MYSQL=docker.io/mysql:8.0.40'
     ibl config save --set 'IBL_EDX.DOCKER_IMAGE_REDIS=docker.io/redis:7.2.4'
     ibl config save --set 'IBL_EDX.DOCKER_IMAGE_MONGODB=docker.io/mongo:7.0.7'
     ibl config save --set 'IBL_EDX.DOCKER_IMAGE_ELASTICSEARCH=docker.io/elasticsearch:7.17.9'

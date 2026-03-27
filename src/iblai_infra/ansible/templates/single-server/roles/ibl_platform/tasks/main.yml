@@ -23,6 +23,30 @@
     IBL_ROOT: "{{ ibl_root }}/"
   when: is_resetup | default(false) | bool
 
+- name: Sync postgres password after secret rotation
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    NEW_PASS=$(python3 -c "
+    import yaml
+    with open('{{ ibl_root }}/config.yml') as f:
+        cfg = yaml.safe_load(f) or {}
+    print(cfg.get('IBL_DM', {}).get('DB_PASSWORD', ''))
+    ")
+    if [ -n "$NEW_PASS" ]; then
+      docker exec ibl_dm_db bash -c "psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \"ALTER USER \$POSTGRES_USER WITH PASSWORD '$NEW_PASS';\""
+    fi
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  when: is_resetup | default(false) | bool
+
 - name: Configure edX version
   become: false
   shell: |

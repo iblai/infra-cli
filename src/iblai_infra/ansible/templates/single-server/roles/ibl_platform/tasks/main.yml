@@ -7,6 +7,39 @@
     group: "{{ ansible_user }}"
     recurse: true
 
+- name: Restore postgres data directory ownership
+  file:
+    path: "{{ ibl_root }}/app/ibl-dm/ibl-dm-pro/data/postgres"
+    state: directory
+    owner: "999"
+    group: "999"
+    recurse: true
+  when: is_resetup | default(false) | bool
+  ignore_errors: true
+
+- name: Restart postgres after ownership fix
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose restart dm-data
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  when: is_resetup | default(false) | bool
+  ignore_errors: true
+
+- name: Wait for postgres to be ready after restart
+  become: false
+  shell: |
+    docker exec ibl_dm_db bash -c 'pg_isready -U "$POSTGRES_USER"'
+  args:
+    executable: /bin/bash
+  register: pg_ready_resetup
+  until: pg_ready_resetup.rc == 0
+  retries: 30
+  delay: 2
+  when: is_resetup | default(false) | bool
+
 - name: Rotate secrets and auth credentials
   become: false
   shell: |

@@ -461,6 +461,9 @@ class TerraformRunner:
         tf("instance_type", c.compute.instance_type)
         tf("root_volume_size", c.compute.volume_size)
         tf("root_volume_type", c.compute.volume_type)
+        if c.compute.ami_id:
+            tf("ami_id", c.compute.ami_id)
+            tf("skip_user_data", True)
         tf("vpc_cidr", c.network.vpc_cidr)
         tf("vpn_ip", c.network.vpn_ip)
         tf("base_domain", c.dns.base_domain)

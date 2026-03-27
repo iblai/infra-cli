@@ -38,6 +38,13 @@ ROLE_LABELS: dict[str, str] = {
     "final_steps": "Final Steps",
 }
 
+LAUNCH_ROLE_LABELS: dict[str, str] = {
+    "ibl_cli_ops": "iblai-cli-ops",
+    "ibl_launch": "AMI Launch Config",
+    "ibl_launch_services": "Service Restart",
+    "final_steps": "Final Steps",
+}
+
 TOTAL_ROLES = len(ROLE_LABELS)
 
 # Regex to match TASK lines: "TASK [role_name : task description]"
@@ -49,10 +56,22 @@ _FATAL_RE = re.compile(r"^(fatal|FAILED!)", re.IGNORECASE)
 class AnsibleRunner:
     """Manages Ansible workspace, playbook execution, and progress tracking."""
 
-    def __init__(self, state: ProjectState, config: SetupConfig):
+    # Class-level defaults so __new__() (used in tests) doesn't break
+    playbook: str = "playbook.yml"
+    role_labels: dict[str, str] = ROLE_LABELS
+
+    def __init__(
+        self,
+        state: ProjectState,
+        config: SetupConfig,
+        playbook: str = "playbook.yml",
+        role_labels: dict[str, str] | None = None,
+    ):
         self.state = state
         self.config = config
         self.ws = Path(state.workspace_path) / "ansible"
+        self.playbook = playbook
+        self.role_labels = role_labels or ROLE_LABELS
 
     # ------------------------------------------------------------------
     # Public API
@@ -83,12 +102,13 @@ class AnsibleRunner:
 
         # Build step tracking
         steps: dict[str, dict] = {}
-        for name, label in ROLE_LABELS.items():
+        for name, label in self.role_labels.items():
             steps[name] = {"label": label, "status": "pending", "elapsed": 0}
 
+        total_roles = len(self.role_labels)
         completed = 0
         progress = ui.make_overall_progress()
-        task_id = progress.add_task("Setting up platform", total=TOTAL_ROLES)
+        task_id = progress.add_task("Setting up platform", total=total_roles)
 
         ok, completed = self._run_ansible(steps, progress, task_id, completed)
 
@@ -108,7 +128,7 @@ class AnsibleRunner:
         self.state.updated_at = datetime.now(timezone.utc)
         save_state(self.state)
 
-        ui.success(f"[highlight]{completed}[/highlight] of {TOTAL_ROLES} steps completed")
+        ui.success(f"[highlight]{completed}[/highlight] of {len(self.role_labels)} steps completed")
         return True
 
     # ------------------------------------------------------------------
@@ -134,7 +154,7 @@ class AnsibleRunner:
 
         cmd = [
             "ansible-playbook",
-            "playbook.yml",
+            self.playbook,
             "--extra-vars", json.dumps(extra_vars),
         ]
 
@@ -409,11 +429,11 @@ class AnsibleRunner:
 
         if " : " in task_label:
             role_part = task_label.split(" : ", 1)[0].strip()
-            if role_part in ROLE_LABELS:
+            if role_part in self.role_labels:
                 return role_part
 
         label_lower = task_label.lower()
-        for role_name in ROLE_LABELS:
+        for role_name in self.role_labels:
             if role_name in label_lower:
                 return role_name
 

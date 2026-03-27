@@ -1,0 +1,159 @@
+---
+# ---------------------------------------------------------------------------
+# Database startup
+# ---------------------------------------------------------------------------
+
+- name: Restore postgres data directory ownership
+  file:
+    path: "{{ ibl_root }}/app/ibl-dm/ibl-dm-pro/data/postgres"
+    state: directory
+    owner: "999"
+    group: "999"
+    recurse: true
+  ignore_errors: true
+
+- name: Start postgres container if not running
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose up -d dm-data
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Wait for postgres to be ready
+  become: false
+  shell: |
+    docker exec ibl_dm_db bash -c 'pg_isready -U "$POSTGRES_USER"'
+  args:
+    executable: /bin/bash
+  register: pg_ready
+  until: pg_ready.rc == 0
+  retries: 30
+  delay: 2
+
+- name: Start MySQL container if not running
+  become: false
+  shell: docker start ibl_prod_mysql || true
+  args:
+    executable: /bin/bash
+
+- name: Wait for MySQL to be ready
+  become: false
+  shell: |
+    docker exec ibl_prod_mysql mysqladmin ping -h localhost --silent
+  args:
+    executable: /bin/bash
+  register: mysql_ready
+  until: mysql_ready.rc == 0
+  retries: 30
+  delay: 2
+
+# ---------------------------------------------------------------------------
+# Domain and secrets
+# ---------------------------------------------------------------------------
+
+- name: Configure base domain
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set BASE_DOMAIN='{{ base_domain }}'
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Rotate secrets and auth credentials
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config rotate-secrets -f --include-auth
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+# ---------------------------------------------------------------------------
+# Sync database passwords after rotation
+# ---------------------------------------------------------------------------
+
+- name: Sync postgres password after secret rotation
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    NEW_PASS=$(python3 -c "
+    import yaml
+    with open('{{ ibl_root }}/config.yml') as f:
+        cfg = yaml.safe_load(f) or {}
+    print(cfg.get('IBL_DM', {}).get('DB_PASSWORD', ''))
+    ")
+    if [ -n "$NEW_PASS" ]; then
+      docker exec ibl_dm_db bash -c "psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \"ALTER USER \$POSTGRES_USER WITH PASSWORD '$NEW_PASS';\""
+    fi
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Sync MySQL root password after secret rotation
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    NEW_PASS=$(python3 -c "
+    import yaml
+    with open('{{ ibl_root }}/config.yml') as f:
+        cfg = yaml.safe_load(f) or {}
+    print(cfg.get('IBL_EDX', {}).get('MYSQL_ROOT_PASSWORD', ''))
+    ")
+    if [ -n "$NEW_PASS" ]; then
+      docker exec ibl_prod_mysql mysql -u root -e "ALTER USER 'root'@'%' IDENTIFIED BY '$NEW_PASS'; ALTER USER 'root'@'localhost' IDENTIFIED BY '$NEW_PASS'; FLUSH PRIVILEGES;"
+    fi
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  ignore_errors: true
+
+- name: Sync MySQL openedx password after secret rotation
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    NEW_PASS=$(python3 -c "
+    import yaml
+    with open('{{ ibl_root }}/config.yml') as f:
+        cfg = yaml.safe_load(f) or {}
+    print(cfg.get('IBL_EDX', {}).get('OPENEDX_MYSQL_PASSWORD', ''))
+    ")
+    if [ -n "$NEW_PASS" ]; then
+      docker exec ibl_prod_mysql mysql -u root -e "ALTER USER 'openedx'@'%' IDENTIFIED BY '$NEW_PASS'; FLUSH PRIVILEGES;"
+    fi
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  ignore_errors: true

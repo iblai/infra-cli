@@ -256,6 +256,32 @@ class TestGenerateTfvars:
         tfvars = (tmp_path / "terraform.tfvars").read_text()
         assert 'certificate_method = "none"' in tfvars
 
+    def test_ami_id_included(self, infra_config, tmp_path):
+        infra_config.compute.ami_id = "ami-0123456789abcdef0"
+
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix", return_value=""):
+            runner._generate_tfvars()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert 'ami_id = "ami-0123456789abcdef0"' in tfvars
+        assert "skip_user_data = true" in tfvars
+
+    def test_no_ami_id_by_default(self, infra_config, tmp_path):
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix", return_value=""):
+            runner._generate_tfvars()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "ami_id" not in tfvars
+        assert "skip_user_data" not in tfvars
+
 
 # ---------------------------------------------------------------------------
 # TerraformRunner._resolve_bucket_suffix

@@ -130,6 +130,7 @@ class ComputeConfig(BaseModel):
     instance_type: str = "t3.2xlarge"
     volume_size: int = 50
     volume_type: str = "gp3"
+    ami_id: str | None = None
 
     @field_validator("volume_size")
     @classmethod

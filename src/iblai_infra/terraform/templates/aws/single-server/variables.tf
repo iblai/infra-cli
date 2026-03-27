@@ -43,6 +43,18 @@ variable "vpn_ip" {
 
 # --- Compute ---
 
+variable "ami_id" {
+  description = "Custom AMI ID. When set, uses this AMI instead of the default Ubuntu lookup."
+  type        = string
+  default     = ""
+}
+
+variable "skip_user_data" {
+  description = "Skip the user_data bootstrap script (set true for pre-built AMIs)"
+  type        = bool
+  default     = false
+}
+
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string

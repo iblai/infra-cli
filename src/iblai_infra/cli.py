@@ -81,6 +81,7 @@ def infra_root(ctx: typer.Context) -> None:
         ("iblai infra retry <name>", "Retry a failed provisioning run"),
         ("iblai infra setup", "Set up the IBL platform on a server"),
         ("iblai infra resetup <name>", "Re-setup with new domain and secrets"),
+        ("iblai infra launch --ami-id ...", "Launch from AMI (non-interactive, CI/CD)"),
         ("iblai infra destroy <name>", "Destroy existing infrastructure"),
         ("iblai infra status <name>", "Show infrastructure details and outputs"),
         ("iblai infra list", "List all managed environments"),
@@ -337,6 +338,239 @@ def resetup(
 ) -> None:
     """Re-setup an existing environment with a new domain and fresh secrets."""
     _run_resetup(name)
+
+
+@infra_app.command()
+def launch(
+    ami_id: str = typer.Option(..., "--ami-id", help="Custom AMI ID to launch from"),
+    domain: str = typer.Option(..., "--domain", help="Base domain (e.g. ami.iblai.org)"),
+    hosted_zone_id: str = typer.Option(..., "--hosted-zone-id", help="Route53 hosted zone ID"),
+    aws_key_id: str = typer.Option(..., "--aws-key-id", help="AWS access key ID"),
+    aws_secret_key: str = typer.Option(..., "--aws-secret-key", help="AWS secret access key"),
+    ssh_public_key: str = typer.Option(..., "--ssh-public-key", help="SSH public key material"),
+    ssh_key: Path = typer.Option(..., "--ssh-key", help="Path to SSH private key"),
+    git_token: str = typer.Option(..., "--git-token", help="GitHub Personal Access Token"),
+    admin_email: str = typer.Option(..., "--admin-email", help="Admin email address"),
+    admin_password: str = typer.Option(..., "--admin-password", help="Admin password (min 8 chars)"),
+    vpn_ip: str = typer.Option(..., "--vpn-ip", help="IP address allowed SSH access"),
+    name: str | None = typer.Option(None, "--name", help="Project name (auto-generated from domain if omitted)"),
+    ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH user"),
+    aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region"),
+    instance_type: str = typer.Option("t3.2xlarge", "--instance-type", help="EC2 instance type"),
+    volume_size: int = typer.Option(200, "--volume-size", help="Root volume size in GB"),
+    environment: str = typer.Option("staging", "--environment", help="Environment (dev, staging, prod)"),
+    cli_tag: str = typer.Option("3.19.0", "--cli-tag", help="iblai-cli-ops release tag"),
+    admin_username: str = typer.Option("ibl_admin", "--admin-username", help="Admin username"),
+    openai_key: str = typer.Option("", "--openai-key", help="OpenAI API key (optional)"),
+    enable_ai: bool = typer.Option(True, "--enable-ai/--no-ai", help="Enable AI features"),
+) -> None:
+    """Launch IBL platform from a pre-built AMI. Non-interactive, CI/CD-friendly.
+
+    Provisions AWS infrastructure (VPC, ALB, ACM certs, Route53, EC2) via Terraform,
+    then configures the platform (domain, secrets, service restarts) via Ansible.
+    """
+    _run_launch(
+        ami_id=ami_id, domain=domain, hosted_zone_id=hosted_zone_id,
+        aws_key_id=aws_key_id, aws_secret_key=aws_secret_key,
+        ssh_public_key=ssh_public_key, ssh_key=ssh_key,
+        git_token=git_token, admin_email=admin_email,
+        admin_password=admin_password, vpn_ip=vpn_ip, name=name,
+        ssh_user=ssh_user, aws_region=aws_region,
+        instance_type=instance_type, volume_size=volume_size,
+        environment=environment, cli_tag=cli_tag,
+        admin_username=admin_username, openai_key=openai_key,
+        enable_ai=enable_ai,
+    )
+
+
+def _run_launch(
+    *,
+    ami_id: str,
+    domain: str,
+    hosted_zone_id: str,
+    aws_key_id: str,
+    aws_secret_key: str,
+    ssh_public_key: str,
+    ssh_key: Path,
+    git_token: str,
+    admin_email: str,
+    admin_password: str,
+    vpn_ip: str,
+    name: str | None,
+    ssh_user: str,
+    aws_region: str,
+    instance_type: str,
+    volume_size: int,
+    environment: str,
+    cli_tag: str,
+    admin_username: str,
+    openai_key: str,
+    enable_ai: bool,
+) -> None:
+    """Provision infrastructure from AMI and configure platform. Non-interactive."""
+    import os
+    import shutil
+    from datetime import datetime, timezone
+
+    from iblai_infra.ansible.runner import AnsibleRunner, LAUNCH_ROLE_LABELS
+    from iblai_infra.models import (
+        AWSCredentials,
+        AuthMethod,
+        CertificateConfig,
+        CertMethod,
+        ComputeConfig,
+        DNSConfig,
+        Environment,
+        InfraConfig,
+        NetworkConfig,
+        ProjectState,
+        SetupConfig,
+        SSHConfig,
+        SSHKeyMethod,
+    )
+    from iblai_infra.terraform.runner import TerraformRunner
+    from iblai_infra.terraform.state import WORKSPACE_ROOT
+
+    # Derive project name
+    project_name = name or domain.replace(".", "-")
+    if len(project_name) > 32:
+        project_name = project_name[:32]
+
+    # Validate SSH key
+    ssh_key = Path(ssh_key).expanduser()
+    if not ssh_key.exists():
+        ui.error(f"SSH key not found: {ssh_key}")
+        raise typer.Exit(1)
+    mode = ssh_key.stat().st_mode & 0o777
+    if mode > 0o600:
+        os.chmod(ssh_key, 0o600)
+
+    # Map environment string
+    env_map = {"dev": Environment.DEV, "staging": Environment.STAGING, "prod": Environment.PROD}
+    env = env_map.get(environment, Environment.STAGING)
+
+    # Check prerequisites
+    if shutil.which("terraform") is None:
+        ui.error("terraform not found. Install from https://www.terraform.io/downloads")
+        raise typer.Exit(1)
+    if shutil.which("ansible-playbook") is None:
+        ui.error("ansible-playbook not found. Install with: pip install ansible-core")
+        raise typer.Exit(1)
+
+    # Build InfraConfig
+    infra_config = InfraConfig(
+        project_name=project_name,
+        environment=env,
+        credentials=AWSCredentials(
+            method=AuthMethod.ACCESS_KEY,
+            access_key_id=aws_key_id,
+            secret_access_key=aws_secret_key,
+            region=aws_region,
+        ),
+        network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip=vpn_ip),
+        compute=ComputeConfig(
+            instance_type=instance_type,
+            volume_size=volume_size,
+            ami_id=ami_id,
+        ),
+        ssh=SSHConfig(
+            method=SSHKeyMethod.GENERATE,
+            key_name=f"{project_name}-{environment}",
+            public_key=ssh_public_key,
+            private_key_path=ssh_key,
+        ),
+        certificates=CertificateConfig(
+            method=CertMethod.ACM,
+            hosted_zone_id=hosted_zone_id,
+        ),
+        dns=DNSConfig(
+            base_domain=domain,
+            use_route53=True,
+            hosted_zone_id=hosted_zone_id,
+        ),
+    )
+
+    ui.info(f"Launching platform from AMI [highlight]{ami_id}[/highlight]")
+    ui.info(f"Domain: [highlight]{domain}[/highlight]")
+    ui.info(f"Project: [highlight]{project_name}[/highlight]")
+    ui.newline()
+
+    # ---- Phase 1: Terraform ----
+    ui.info("Phase 1: Provisioning infrastructure...")
+    ui.newline()
+
+    tf_runner = TerraformRunner(infra_config)
+    tf_runner.setup()
+    tf_runner.init()
+    count = tf_runner.plan()
+    if count == 0:
+        ui.warning("No resources to create.")
+    outputs = tf_runner.apply()
+
+    state = tf_runner.state
+    state.provider = "launch"
+
+    instance_ip = outputs.get("instance_public_ip", "")
+    if not instance_ip:
+        ui.error("No instance IP found in Terraform outputs.")
+        raise typer.Exit(1)
+
+    ui.newline()
+    ui.success(f"Infrastructure provisioned. Instance IP: [highlight]{instance_ip}[/highlight]")
+    ui.newline()
+
+    # ---- Phase 2: Ansible ----
+    ui.info("Phase 2: Configuring platform...")
+    ui.newline()
+
+    setup_config = SetupConfig(
+        ssh_private_key_path=ssh_key,
+        ssh_user=ssh_user,
+        target_host=instance_ip,
+        base_domain=domain,
+        cli_ops_release_tag=cli_tag,
+        enable_ai=enable_ai,
+        aws_access_key_id=aws_key_id,
+        aws_secret_access_key=aws_secret_key,
+        aws_default_region=aws_region,
+        git_access_token=git_token,
+        openai_api_key=openai_key,
+        admin_username=admin_username,
+        admin_email=admin_email,
+        admin_password=admin_password,
+    )
+
+    ansible_runner = AnsibleRunner(
+        state, setup_config,
+        playbook="launch_playbook.yml",
+        role_labels=LAUNCH_ROLE_LABELS,
+    )
+
+    if not ansible_runner.preflight():
+        raise typer.Exit(1)
+
+    ansible_runner.setup()
+
+    try:
+        success = ansible_runner.run()
+    except KeyboardInterrupt:
+        ui.newline()
+        state.setup_status = "failed"
+        state.updated_at = datetime.now(timezone.utc)
+        save_state(state)
+        ui.abort("Interrupted.")
+
+    if success:
+        ui.newline()
+        app_url = outputs.get("application_url", f"https://{domain}")
+        ui.success(f"Platform launched successfully!")
+        ui.info(f"URL: [highlight]{app_url}[/highlight]")
+        ui.info(f"SSH: [highlight]ssh -i {ssh_key} {ssh_user}@{instance_ip}[/highlight]")
+        ui.newline()
+        ui.muted(f"To destroy: [brand]iblai infra destroy {project_name}[/brand]")
+        ui.newline()
+    else:
+        raise typer.Exit(1)
 
 
 def _interactive_setup() -> None:
@@ -703,7 +937,7 @@ def destroy(
         ui.warning(f"Infrastructure '{name}' is already destroyed.")
         raise typer.Exit(0)
 
-    # Bootstrap projects have no Terraform infrastructure to destroy
+    # Bootstrap and launch projects — destroy via Terraform if launch, otherwise just mark
     if state.provider == "bootstrap":
         confirm_remove = questionary.confirm(
             f"Remove bootstrap project '{name}' from tracked environments?",

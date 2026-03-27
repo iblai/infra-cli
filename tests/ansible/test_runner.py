@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from iblai_infra.ansible.runner import ROLE_LABELS, TOTAL_ROLES, AnsibleRunner
+from iblai_infra.ansible.runner import LAUNCH_ROLE_LABELS, ROLE_LABELS, TOTAL_ROLES, AnsibleRunner
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +22,8 @@ class TestExtractRoleFromLine:
         r.state = project_state
         r.config = setup_config
         r.ws = Path("/tmp/ansible-test")
+        r.playbook = "playbook.yml"
+        r.role_labels = ROLE_LABELS
         return r
 
     def test_task_with_role(self, runner):
@@ -79,6 +81,52 @@ class TestExtractRoleFromLine:
             assert runner._extract_role_from_line(line) == role_name
 
 
+class TestExtractRoleFromLineLaunch:
+    @pytest.fixture
+    def runner(self, project_state, setup_config):
+        r = AnsibleRunner.__new__(AnsibleRunner)
+        r.state = project_state
+        r.config = setup_config
+        r.ws = Path("/tmp/ansible-test")
+        r.playbook = "launch_playbook.yml"
+        r.role_labels = LAUNCH_ROLE_LABELS
+        return r
+
+    def test_launch_role(self, runner):
+        line = "TASK [ibl_launch : Configure base domain] ***"
+        assert runner._extract_role_from_line(line) == "ibl_launch"
+
+    def test_launch_services_role(self, runner):
+        line = "TASK [ibl_launch_services : Update DM services] ***"
+        assert runner._extract_role_from_line(line) == "ibl_launch_services"
+
+    def test_all_launch_roles(self, runner):
+        for role_name in LAUNCH_ROLE_LABELS:
+            line = f"TASK [{role_name} : Some task] ***"
+            assert runner._extract_role_from_line(line) == role_name
+
+    def test_setup_only_role_not_recognized(self, runner):
+        """Roles from the setup playbook aren't recognized in launch context."""
+        line = "TASK [docker : Install Docker CE] ***"
+        assert runner._extract_role_from_line(line) is None
+
+
+class TestRunnerInit:
+    def test_default_playbook_and_labels(self, project_state, setup_config):
+        runner = AnsibleRunner(project_state, setup_config)
+        assert runner.playbook == "playbook.yml"
+        assert runner.role_labels is ROLE_LABELS
+
+    def test_custom_playbook_and_labels(self, project_state, setup_config):
+        runner = AnsibleRunner(
+            project_state, setup_config,
+            playbook="launch_playbook.yml",
+            role_labels=LAUNCH_ROLE_LABELS,
+        )
+        assert runner.playbook == "launch_playbook.yml"
+        assert runner.role_labels is LAUNCH_ROLE_LABELS
+
+
 # ---------------------------------------------------------------------------
 # Inventory generation
 # ---------------------------------------------------------------------------
@@ -112,6 +160,7 @@ class TestBuildExtraVars:
         runner = AnsibleRunner.__new__(AnsibleRunner)
         runner.state = project_state
         runner.config = setup_config
+        runner.role_labels = ROLE_LABELS
 
         extra = runner._build_extra_vars()
         assert extra["git_access_token"] == "ghp_testtoken123"
@@ -130,6 +179,7 @@ class TestBuildExtraVars:
         runner = AnsibleRunner.__new__(AnsibleRunner)
         runner.state = project_state
         runner.config = setup_config
+        runner.role_labels = ROLE_LABELS
 
         extra = runner._build_extra_vars()
         assert "dm_image_tag" in extra
@@ -142,6 +192,7 @@ class TestBuildExtraVars:
         runner = AnsibleRunner.__new__(AnsibleRunner)
         runner.state = project_state
         runner.config = resetup_config
+        runner.role_labels = ROLE_LABELS
 
         extra = runner._build_extra_vars()
         assert extra["is_resetup"] is True
@@ -212,6 +263,13 @@ class TestConstants:
     def test_expected_roles(self):
         expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform", "ibl_dm", "ibl_edx", "ibl_spa", "final_steps"}
         assert set(ROLE_LABELS.keys()) == expected
+
+    def test_launch_role_labels(self):
+        expected = {"ibl_cli_ops", "ibl_launch", "ibl_launch_services", "final_steps"}
+        assert set(LAUNCH_ROLE_LABELS.keys()) == expected
+
+    def test_launch_role_labels_count(self):
+        assert len(LAUNCH_ROLE_LABELS) == 4
 
 
 # ---------------------------------------------------------------------------

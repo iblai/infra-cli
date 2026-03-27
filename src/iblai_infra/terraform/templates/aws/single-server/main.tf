@@ -206,13 +206,13 @@ resource "aws_key_pair" "main" {
 # ---------------------------------------------------------------------------
 
 resource "aws_instance" "main" {
-  ami                    = data.aws_ami.ubuntu.id
+  ami                    = var.ami_id != "" ? var.ami_id : data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   key_name               = var.create_key_pair ? aws_key_pair.main[0].key_name : var.existing_key_pair_name
   vpc_security_group_ids = [aws_security_group.ec2.id]
   subnet_id              = aws_subnet.public[0].id
 
-  user_data = file("${path.module}/user_data.sh")
+  user_data = var.skip_user_data ? null : file("${path.module}/user_data.sh")
 
   root_block_device {
     volume_type = var.root_volume_type

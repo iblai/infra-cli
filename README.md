@@ -13,6 +13,8 @@ Interactive CLI for provisioning and configuring the [ibl.ai](https://ibl.ai) pl
 
 </div>
 
+> **Note:** This repository contains the installation and infrastructure provisioning guide. Access to the ibl.ai Docker images and platform codebase requires a license. To get started, reach out to our team at [ibl.ai/contact](https://ibl.ai/contact).
+
 ---
 
 ## Prerequisites

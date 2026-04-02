@@ -204,72 +204,15 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
 
-- name: Configure DM image
+- name: Set edX feature flags
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save --set IBL_DM.IBL_DM_IMAGE='765174860755.dkr.ecr.us-east-1.amazonaws.com/ibl-dm-pro:{{ dm_image_tag }}'
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-  when: dm_image_tag is defined
-
-- name: Configure edX image
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save --set IBL_EDX.IBL_EDX_IMAGE='765174860755.dkr.ecr.us-east-1.amazonaws.com/ibl-edx-pro:{{ edx_image_tag }}'
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-  when: edx_image_tag is defined
-
-- name: Set edX supporting service image defaults
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save --set 'IBL_EDX.DOCKER_IMAGE_CADDY=docker.io/caddy:2.11.1'
-    ibl config save --set 'IBL_EDX.DOCKER_IMAGE_SMTP=docker.io/devture/exim-relay:4.96-r1-1'
-    ibl config save --set 'IBL_EDX.DOCKER_IMAGE_REDIS=docker.io/redis:7.2.4'
-    ibl config save --set 'IBL_EDX.DOCKER_IMAGE_MONGODB=docker.io/mongo:7.0.7'
-    ibl config save --set 'IBL_EDX.DOCKER_IMAGE_ELASTICSEARCH=docker.io/elasticsearch:7.17.9'
-    ibl config save --set 'IBL_EDX.DOCKER_IMAGE_FORUM=docker.io/overhangio/openedx-forum:19.0.0'
-    ibl config save --set 'IBL_EDX.NOTES_DOCKER_IMAGE=docker.io/overhangio/openedx-notes:19.0.0'
-    ibl config save --set 'IBL_EDX.MEILISEARCH_DOCKER_IMAGE=docker.io/getmeili/meilisearch:v1.8.4'
-    ibl config save --set 'IBL_EDX.PERMISSIONS_DOCKER_IMAGE=docker.io/overhangio/openedx-permissions:18.1.3'
-    ibl config save --set 'IBL_EDX.MFE_DOCKER_IMAGE=765174860755.dkr.ecr.us-east-1.amazonaws.com/ibl-edx-mfe-pro:sumac.0.3.2'
     ibl config save --set 'IBL_EDX.IBL_EDX_MAGIC_LINK_LOGIN.ENABLE_JWT_AUTH=True'
     ibl config save --set 'IBL_EDX.IBL_EDX_CORS_HEADER.CORS_ORIGIN_ALLOW_ALL=true'
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-
-- name: Set DM postgres image with pgvector support
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save --set 'IBL_POSTGRES_IMAGE=public.ecr.aws/ibleducation/ibl-postgres-ce:1.1.5'
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"

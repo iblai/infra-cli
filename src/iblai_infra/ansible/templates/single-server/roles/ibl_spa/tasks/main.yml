@@ -90,24 +90,6 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
 
-- name: Set SPA image versions
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save --set 'IBL_SPA.AUTH.DOCKER_IMAGE_VERSION={{ spa_auth_image_tag }}'
-    ibl config save --set 'IBL_SPA.MENTOR.DOCKER_IMAGE_VERSION={{ spa_mentor_image_tag }}'
-    ibl config save --set 'IBL_SPA.SKILLS.DOCKER_IMAGE_VERSION={{ spa_skills_image_tag }}'
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-  when: spa_auth_image_tag is defined
-
 - name: Set SPA quoted boolean values in config.yml
   become: false
   shell: |

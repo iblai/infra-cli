@@ -192,19 +192,14 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
-            mock_text.return_value.ask.side_effect = ["3.19.0", "4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
         assert config.cli_ops_release_tag == "3.19.0"
-        assert config.dm_image_tag == "4.189.1-ai"
-        assert config.edx_image_tag == "sumac.2.4.13"
         assert config.enable_ai is True
-        assert config.spa_auth_image_tag == "1.13.15"
-        assert config.spa_mentor_image_tag == "0.35.14"
-        assert config.spa_skills_image_tag == "0.9.8"
         assert config.aws_access_key_id == "AKIA"
         assert config.aws_secret_access_key == "SECRET"
         assert config.git_access_token == "ghp_testtoken"
@@ -228,19 +223,14 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key", "Admin1234"]
             # First confirm: enable AI, second confirm: don't reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False]
-            mock_text.return_value.ask.side_effect = ["3.19.0", "4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "NEW_ACCESS_KEY", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "NEW_ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
         assert config.cli_ops_release_tag == "3.19.0"
-        assert config.dm_image_tag == "4.189.1-ai"
-        assert config.edx_image_tag == "sumac.2.4.13"
         assert config.enable_ai is True
-        assert config.spa_auth_image_tag == "1.13.15"
-        assert config.spa_mentor_image_tag == "0.35.14"
-        assert config.spa_skills_image_tag == "0.9.8"
         assert config.aws_access_key_id == "NEW_ACCESS_KEY"
         assert config.aws_secret_access_key == "NEW_SECRET"
         assert config.git_access_token == "ghp_testtoken"
@@ -259,15 +249,13 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", "", "Admin1234"]
             # Only one confirm: enable AI (no reuse prompt when no access keys)
             mock_confirm.return_value.ask.return_value = True
-            mock_text.return_value.ask.side_effect = ["3.19.0", "4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ACCESS_KEY", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
         assert config.cli_ops_release_tag == "3.19.0"
-        assert config.dm_image_tag == "4.189.1-ai"
-        assert config.edx_image_tag == "sumac.2.4.13"
         assert config.git_access_token == "ghp_testtoken"
 
     def test_ssh_key_not_found_prompts(self, tmp_path):
@@ -291,7 +279,7 @@ class TestPromptSetup:
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
             mock_path.return_value.ask.return_value = str(new_key)
-            mock_text.return_value.ask.side_effect = ["3.19.0", "4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -317,7 +305,7 @@ class TestPromptSetup:
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["3.19.0", "4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -343,7 +331,7 @@ class TestPromptSetup:
             # First confirm: enable AI, second confirm: reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["3.19.0", "4.189.1-ai", "sumac.2.4.13", "1.13.15", "0.35.14", "0.9.8", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -397,6 +385,7 @@ class TestPromptResetup:
             patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
+            patch("iblai_infra.terraform.state.load_ingress", return_value=[]),
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # Only one confirm: reuse credentials
@@ -410,11 +399,6 @@ class TestPromptResetup:
         assert config.base_domain == "new.example.com"
         assert config.cli_ops_release_tag == "3.19.0"
         assert config.target_host == "54.1.2.3"
-        assert config.dm_image_tag is None
-        assert config.edx_image_tag is None
-        assert config.spa_auth_image_tag is None
-        assert config.spa_mentor_image_tag is None
-        assert config.spa_skills_image_tag is None
         assert config.aws_access_key_id == "AKIA"
         assert config.aws_secret_access_key == "SECRET"
         assert config.git_access_token == "ghp_testtoken"
@@ -432,6 +416,7 @@ class TestPromptResetup:
             patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
+            patch("iblai_infra.terraform.state.load_ingress", return_value=[]),
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
@@ -453,6 +438,7 @@ class TestPromptResetup:
             patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
+            patch("iblai_infra.terraform.state.load_ingress", return_value=[]),
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
@@ -472,6 +458,7 @@ class TestPromptResetup:
             patch("questionary.password") as mock_password,
             patch("questionary.confirm") as mock_confirm,
             patch("questionary.text") as mock_text,
+            patch("iblai_infra.terraform.state.load_ingress", return_value=[]),
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "", "Admin1234"]
             # Decline reusing credentials
@@ -484,3 +471,60 @@ class TestPromptResetup:
         assert config.aws_access_key_id == "NEW_KEY"
         assert config.aws_secret_access_key == "NEW_SECRET"
         assert config.aws_default_region == "us-east-1"  # from state
+
+    def test_resetup_with_ingress_selection(self, tmp_path):
+        """When ingress entries exist, resetup shows a select prompt."""
+        from iblai_infra.prompts.setup import prompt_resetup
+
+        state = self._make_state(tmp_path)
+
+        with (
+            patch("questionary.password") as mock_password,
+            patch("questionary.confirm") as mock_confirm,
+            patch("questionary.text") as mock_text,
+            patch("questionary.select") as mock_select,
+            patch("iblai_infra.terraform.state.load_ingress") as mock_load,
+        ):
+            from iblai_infra.models import IngressEntry
+            mock_load.return_value = [
+                IngressEntry(name="stg1", domain="stg1.example.com"),
+                IngressEntry(name="stg2", domain="stg2.example.com"),
+            ]
+            # First select call is the ingress picker
+            mock_select.return_value.ask.return_value = "stg2.example.com"
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
+            mock_confirm.return_value.ask.return_value = True
+            # text prompts: cli_ops_release_tag, admin_username, admin_email
+            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
+
+            config = prompt_resetup(state)
+
+        assert config.base_domain == "stg2.example.com"
+        assert config.is_resetup is True
+
+    def test_resetup_ingress_custom_fallback(self, tmp_path):
+        """Selecting 'Custom domain...' falls back to text input."""
+        from iblai_infra.prompts.setup import prompt_resetup
+
+        state = self._make_state(tmp_path)
+
+        with (
+            patch("questionary.password") as mock_password,
+            patch("questionary.confirm") as mock_confirm,
+            patch("questionary.text") as mock_text,
+            patch("questionary.select") as mock_select,
+            patch("iblai_infra.terraform.state.load_ingress") as mock_load,
+        ):
+            from iblai_infra.models import IngressEntry
+            mock_load.return_value = [
+                IngressEntry(name="stg1", domain="stg1.example.com"),
+            ]
+            mock_select.return_value.ask.return_value = "__custom__"
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
+            mock_confirm.return_value.ask.return_value = True
+            # text prompts: custom domain, cli_ops_release_tag, admin_username, admin_email
+            mock_text.return_value.ask.side_effect = ["custom.example.com", "3.19.0", "ibl_admin", "admin@example.com"]
+
+            config = prompt_resetup(state)
+
+        assert config.base_domain == "custom.example.com"

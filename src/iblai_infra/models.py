@@ -224,12 +224,7 @@ class SetupConfig(BaseModel):
     edx_version: str = "sumac"
     env_config: str = "single-server"
     cli_ops_release_tag: str = "3.19.0"
-    dm_image_tag: str | None = None
-    edx_image_tag: str | None = None
     enable_ai: bool = True
-    spa_auth_image_tag: str | None = None
-    spa_mentor_image_tag: str | None = None
-    spa_skills_image_tag: str | None = None
     is_resetup: bool = False
     aws_access_key_id: str
     aws_secret_access_key: str
@@ -239,6 +234,30 @@ class SetupConfig(BaseModel):
     admin_username: str = "ibl_admin"
     admin_email: str = ""
     admin_password: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Ingress — pre-provisioned domain endpoints
+# ---------------------------------------------------------------------------
+
+class IngressEntry(BaseModel):
+    """A pre-provisioned ingress endpoint (domain + certs + DNS)."""
+    name: str
+    domain: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class IngressLockConfig(BaseModel):
+    """Lock backend configuration for ingress slot management."""
+    backend: Literal["local", "s3"] = "local"
+    bucket: str = ""
+    prefix: str = "ingress-locks"
+
+
+class IngressRegistry(BaseModel):
+    """Ingress registry with entries and optional lock backend."""
+    entries: list[IngressEntry] = Field(default_factory=list)
+    lock: IngressLockConfig = Field(default_factory=IngressLockConfig)
 
 
 # ---------------------------------------------------------------------------

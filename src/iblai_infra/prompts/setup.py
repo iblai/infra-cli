@@ -114,28 +114,6 @@ def _prompt_platform_config(
     cli_ops_release_tag = cli_ops_release_tag.strip()
     ui.success(f"iblai-cli-ops release: [highlight]{cli_ops_release_tag}[/highlight]")
 
-    dm_image_tag = questionary.text(
-        "iblai-dm-pro release tag:",
-        default="4.189.1-ai",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if dm_image_tag is None:
-        ui.abort()
-    dm_image_tag = dm_image_tag.strip()
-    ui.success(f"iblai-dm-pro image tag: [highlight]{dm_image_tag}[/highlight]")
-
-    edx_image_tag = questionary.text(
-        "iblai-edx-pro release tag:",
-        default="sumac.2.4.13",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if edx_image_tag is None:
-        ui.abort()
-    edx_image_tag = edx_image_tag.strip()
-    ui.success(f"iblai-edx-pro image tag: [highlight]{edx_image_tag}[/highlight]")
-
     enable_ai = questionary.confirm(
         "Enable AI features for DM?",
         default=True,
@@ -149,50 +127,12 @@ def _prompt_platform_config(
     else:
         ui.success("AI features: [highlight]Disabled[/highlight]")
 
-    spa_auth_image_tag = questionary.text(
-        "Auth SPA release tag:",
-        default="1.13.15",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if spa_auth_image_tag is None:
-        ui.abort()
-    spa_auth_image_tag = spa_auth_image_tag.strip()
-    ui.success(f"Auth SPA image tag: [highlight]{spa_auth_image_tag}[/highlight]")
-
-    spa_mentor_image_tag = questionary.text(
-        "Mentor SPA release tag:",
-        default="0.35.14",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if spa_mentor_image_tag is None:
-        ui.abort()
-    spa_mentor_image_tag = spa_mentor_image_tag.strip()
-    ui.success(f"Mentor SPA image tag: [highlight]{spa_mentor_image_tag}[/highlight]")
-
-    spa_skills_image_tag = questionary.text(
-        "Skills SPA release tag:",
-        default="0.9.8",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if spa_skills_image_tag is None:
-        ui.abort()
-    spa_skills_image_tag = spa_skills_image_tag.strip()
-    ui.success(f"Skills SPA image tag: [highlight]{spa_skills_image_tag}[/highlight]")
-
     return {
         "base_domain": base_domain,
         "edx_version": edx_version,
         "env_config": env_config,
         "cli_ops_release_tag": cli_ops_release_tag,
-        "dm_image_tag": dm_image_tag,
-        "edx_image_tag": edx_image_tag,
         "enable_ai": enable_ai,
-        "spa_auth_image_tag": spa_auth_image_tag,
-        "spa_mentor_image_tag": spa_mentor_image_tag,
-        "spa_skills_image_tag": spa_skills_image_tag,
     }
 
 
@@ -393,6 +333,48 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
 
 
 # ---------------------------------------------------------------------------
+# Domain selection (ingress-aware)
+# ---------------------------------------------------------------------------
+
+
+def _select_domain(current_domain: str) -> str:
+    """Pick a domain from registered ingress endpoints or enter a custom one."""
+    from iblai_infra.terraform.state import load_ingress
+
+    entries = load_ingress()
+
+    if entries:
+        choices = [
+            questionary.Choice(f"{e.name} — {e.domain}", value=e.domain)
+            for e in entries
+        ]
+        choices.append(questionary.Choice("Custom domain...", value="__custom__"))
+
+        selected = questionary.select(
+            "Select ingress endpoint:",
+            choices=choices,
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if selected is None:
+            ui.abort()
+
+        if selected != "__custom__":
+            return selected
+
+    base_domain = questionary.text(
+        "New base domain:",
+        default=current_domain,
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if base_domain is None:
+        ui.abort()
+    return base_domain.strip()
+
+
+# ---------------------------------------------------------------------------
 # Re-setup flow (existing environment)
 # ---------------------------------------------------------------------------
 
@@ -436,16 +418,7 @@ def prompt_resetup(state: ProjectState) -> SetupConfig:
     current_domain = state.config.dns.base_domain
     ui.info(f"Current domain: [highlight]{current_domain}[/highlight]")
 
-    base_domain = questionary.text(
-        "New base domain:",
-        default=current_domain,
-        validate=lambda v: len(v.strip()) > 0 or "Required",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if base_domain is None:
-        ui.abort()
-    base_domain = base_domain.strip()
+    base_domain = _select_domain(current_domain)
     ui.success(f"Domain: [highlight]{base_domain}[/highlight]")
 
     cli_ops_release_tag = questionary.text(

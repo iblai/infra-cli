@@ -171,24 +171,9 @@ class TestBuildExtraVars:
         assert extra["env_config"] == "single-server"
         assert extra["cli_ops_release_tag"] == "3.19.0"
         assert extra["is_resetup"] is False
-        assert extra["dm_image_tag"] == "4.189.1-ai"
-        assert extra["edx_image_tag"] == "sumac.2.4.13"
         assert extra["enable_ai"] is True
 
-    def test_setup_includes_image_tags(self, project_state, setup_config):
-        runner = AnsibleRunner.__new__(AnsibleRunner)
-        runner.state = project_state
-        runner.config = setup_config
-        runner.role_labels = ROLE_LABELS
-
-        extra = runner._build_extra_vars()
-        assert "dm_image_tag" in extra
-        assert "edx_image_tag" in extra
-        assert "spa_auth_image_tag" in extra
-        assert "spa_mentor_image_tag" in extra
-        assert "spa_skills_image_tag" in extra
-
-    def test_resetup_omits_image_tags(self, project_state, resetup_config):
+    def test_resetup_extra_vars(self, project_state, resetup_config):
         runner = AnsibleRunner.__new__(AnsibleRunner)
         runner.state = project_state
         runner.config = resetup_config
@@ -197,11 +182,6 @@ class TestBuildExtraVars:
         extra = runner._build_extra_vars()
         assert extra["is_resetup"] is True
         assert extra["cli_ops_release_tag"] == "3.19.0"
-        assert "dm_image_tag" not in extra
-        assert "edx_image_tag" not in extra
-        assert "spa_auth_image_tag" not in extra
-        assert "spa_mentor_image_tag" not in extra
-        assert "spa_skills_image_tag" not in extra
 
 
 # ---------------------------------------------------------------------------

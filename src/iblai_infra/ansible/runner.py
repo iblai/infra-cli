@@ -344,17 +344,6 @@ class AnsibleRunner:
             "admin_email": self.config.admin_email,
             "admin_password": self.config.admin_password,
         }
-        # Image tags are optional — only passed for first-time setup
-        if self.config.dm_image_tag is not None:
-            extra["dm_image_tag"] = self.config.dm_image_tag
-        if self.config.edx_image_tag is not None:
-            extra["edx_image_tag"] = self.config.edx_image_tag
-        if self.config.spa_auth_image_tag is not None:
-            extra["spa_auth_image_tag"] = self.config.spa_auth_image_tag
-        if self.config.spa_mentor_image_tag is not None:
-            extra["spa_mentor_image_tag"] = self.config.spa_mentor_image_tag
-        if self.config.spa_skills_image_tag is not None:
-            extra["spa_skills_image_tag"] = self.config.spa_skills_image_tag
         return extra
 
     # ------------------------------------------------------------------

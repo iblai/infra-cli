@@ -17,6 +17,9 @@ from iblai_infra.models import (
     Environment,
     IBL_SUBDOMAINS,
     InfraConfig,
+    IngressEntry,
+    IngressLockConfig,
+    IngressRegistry,
     NetworkConfig,
     ProjectState,
     SSHConfig,
@@ -287,11 +290,6 @@ class TestSetupConfig:
             ssh_private_key_path=key,
             target_host="1.2.3.4",
             base_domain="example.com",
-            dm_image_tag="4.189.1-ai",
-            edx_image_tag="sumac.2.4.13",
-            spa_auth_image_tag="1.13.15",
-            spa_mentor_image_tag="0.35.14",
-            spa_skills_image_tag="0.9.8",
             git_access_token="ghp_abc",
             aws_access_key_id="AK",
             aws_secret_access_key="SK",
@@ -551,3 +549,61 @@ class TestNetworkIPEdgeCases:
     def test_zero_address(self):
         nc = NetworkConfig(vpn_ip="0.0.0.0")
         assert nc.vpn_ip == "0.0.0.0"
+
+
+# ---------------------------------------------------------------------------
+# IngressEntry
+# ---------------------------------------------------------------------------
+
+
+class TestIngressEntry:
+    def test_create_basic(self):
+        entry = IngressEntry(name="stg1", domain="stg1.example.com")
+        assert entry.name == "stg1"
+        assert entry.domain == "stg1.example.com"
+        assert entry.created_at is not None
+
+    def test_roundtrip_json(self):
+        entry = IngressEntry(name="stg2", domain="stg2.example.com")
+        data = entry.model_dump(mode="json")
+        restored = IngressEntry.model_validate(data)
+        assert restored.name == entry.name
+        assert restored.domain == entry.domain
+
+
+class TestIngressLockConfig:
+    def test_defaults(self):
+        cfg = IngressLockConfig()
+        assert cfg.backend == "local"
+        assert cfg.bucket == ""
+        assert cfg.prefix == "ingress-locks"
+
+    def test_s3_backend(self):
+        cfg = IngressLockConfig(backend="s3", bucket="my-bucket", prefix="locks")
+        assert cfg.backend == "s3"
+        assert cfg.bucket == "my-bucket"
+
+
+class TestIngressRegistry:
+    def test_empty_defaults(self):
+        reg = IngressRegistry()
+        assert reg.entries == []
+        assert reg.lock.backend == "local"
+
+    def test_with_entries_and_lock(self):
+        reg = IngressRegistry(
+            entries=[IngressEntry(name="a", domain="a.example.com")],
+            lock=IngressLockConfig(backend="s3", bucket="b"),
+        )
+        assert len(reg.entries) == 1
+        assert reg.lock.backend == "s3"
+
+    def test_roundtrip_json(self):
+        reg = IngressRegistry(
+            entries=[IngressEntry(name="a", domain="a.example.com")],
+            lock=IngressLockConfig(backend="s3", bucket="b", prefix="p"),
+        )
+        data = reg.model_dump(mode="json")
+        restored = IngressRegistry.model_validate(data)
+        assert restored.entries[0].name == "a"
+        assert restored.lock.bucket == "b"

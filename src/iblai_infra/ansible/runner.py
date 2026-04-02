@@ -180,7 +180,9 @@ class AnsibleRunner:
                 if line:
                     output_tail.append(line)
 
-                role_name = self._extract_role_from_line(line)
+                role_name, task_desc = self._extract_role_and_task(line)
+                if role_name and role_name in steps and task_desc:
+                    steps[role_name]["task"] = task_desc
                 if role_name and role_name != current_role:
                     if current_role and current_role in steps:
                         steps[current_role]["status"] = "complete"
@@ -382,7 +384,14 @@ class AnsibleRunner:
             if status == "complete":
                 status_display = "[bold #3ECF6E]\u2713 Done[/]"
             elif status == "in_progress":
-                status_display = f"[bold {ui.IBL_BLUE_LIGHT}]\u25cf Running[/]"
+                task_desc = info.get("task", "")
+                if task_desc:
+                    # Truncate long descriptions
+                    if len(task_desc) > 40:
+                        task_desc = task_desc[:37] + "..."
+                    status_display = f"[bold {ui.IBL_BLUE_LIGHT}]\u25cf {task_desc}[/]"
+                else:
+                    status_display = f"[bold {ui.IBL_BLUE_LIGHT}]\u25cf Running[/]"
             elif status == "error":
                 status_display = "[bold #E85454]\u2717 Failed[/]"
             else:
@@ -403,30 +412,39 @@ class AnsibleRunner:
     # Line-based output parsing (ansible default callback)
     # ------------------------------------------------------------------
 
-    def _extract_role_from_line(self, line: str) -> str | None:
-        """Extract role name from an Ansible TASK line.
+    def _extract_role_and_task(self, line: str) -> tuple[str | None, str | None]:
+        """Extract role name and task description from an Ansible TASK line.
 
         Ansible default output format:
             TASK [role_name : task description] ***
             TASK [task description] ***  (for pre_tasks without a role)
+
+        Returns (role_name, task_description) or (None, None).
         """
         match = _TASK_RE.match(line)
         if not match:
-            return None
+            return None, None
 
         task_label = match.group(1)
 
         if " : " in task_label:
-            role_part = task_label.split(" : ", 1)[0].strip()
+            role_part, task_desc = task_label.split(" : ", 1)
+            role_part = role_part.strip()
+            task_desc = task_desc.strip()
             if role_part in self.role_labels:
-                return role_part
+                return role_part, task_desc
 
         label_lower = task_label.lower()
         for role_name in self.role_labels:
             if role_name in label_lower:
-                return role_name
+                return role_name, task_label.strip()
 
-        return None
+        return None, None
+
+    def _extract_role_from_line(self, line: str) -> str | None:
+        """Extract role name from an Ansible TASK line."""
+        role, _ = self._extract_role_and_task(line)
+        return role
 
     # ------------------------------------------------------------------
     # Helpers

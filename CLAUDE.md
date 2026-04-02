@@ -14,9 +14,9 @@ iblai-infra/
 ├── src/iblai_infra/
 │   ├── __init__.py                         # __version__ = "1.2.3"
 │   ├── __main__.py                         # python -m iblai_infra support
-│   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup + landing screen menu
+│   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup + `ingress` subgroup + landing screen menu
 │   ├── app.py                              # Wizard orchestrator (5-step flow)
-│   ├── models.py                           # Pydantic models — contract between wizard & Terraform
+│   ├── models.py                           # Pydantic models — contract between wizard & Terraform, ingress registry
 │   ├── ui.py                               # Rich console, ibl.ai branding, progress helpers
 │   ├── prompts/
 │   │   ├── credentials.py                  # Step 1: AWS auth (profile/keys/env), show_step param
@@ -27,7 +27,7 @@ iblai-infra/
 │   │   └── aws.py                          # AWS helpers: STS validation, Route53, key pairs, IP detect, permission checks
 │   ├── terraform/
 │   │   ├── runner.py                       # TerraformRunner: setup/init/plan/apply/destroy with JSON streaming
-│   │   ├── state.py                        # ProjectState + session persistence (~/.iblai-infra/)
+│   │   ├── state.py                        # ProjectState + session + ingress registry + lock backends (~/.iblai-infra/)
 │   │   └── templates/aws/single-server/
 │   │       ├── main.tf                     # VPC, subnets, ALB, EC2, S3, certs, DNS
 │   │       ├── variables.tf                # All Terraform variables
@@ -58,7 +58,8 @@ iblai-infra/
 ### CLI Structure (Typer)
 
 - **Root app** (`iblai`): `--version`, `--help`
-- **Subgroup** (`iblai infra`): `provision`, `retry <name>`, `setup [name]`, `destroy <name>`, `status <name>`, `list`, `permissions`, `auth`
+- **Subgroup** (`iblai infra`): `provision`, `retry <name>`, `setup [name]`, `resetup <name>`, `launch`, `destroy <name>`, `status <name>`, `list`, `permissions`, `auth`
+- **Nested subgroup** (`iblai infra ingress`): `add`, `remove`, `list`, `configure`, `status`, `claim`, `release`
 - Running `iblai infra` with no arguments shows branded landing screen with interactive arrow-key menu
 - The landing screen menu uses `questionary.select()` to dispatch to commands directly
 - When launching provision from the menu, calls `run_provision_wizard(show_banner=False)` to avoid double banner
@@ -107,6 +108,94 @@ Both paths share `_confirm_and_run()` for the review summary → confirm → ans
 
 `run_provision_wizard(show_banner: bool = True)` — controls whether the ASCII banner is shown (set to `False` when launched from the landing screen menu).
 
+### Resetup Command
+
+`iblai infra resetup <name>` re-configures an existing environment with a new domain and fresh secrets. No Terraform runs — only Ansible.
+
+**Guards:** project must exist, status `"created"`, instance IP in outputs, `ansible-playbook` installed.
+
+**3-step interactive prompt** (`prompt_resetup` in `prompts/setup.py`):
+1. **SSH Access** — resolves private key from state or prompts
+2. **Platform Configuration** — domain selection (ingress picker if entries exist, otherwise free-text), CLI ops release tag
+3. **Credentials** — AWS keys + GitHub token
+
+Returns `SetupConfig` with `is_resetup=True`. Does **not** prompt for image tags, edX version, or admin credentials.
+
+**What `is_resetup=True` triggers in Ansible** (`ibl_platform/tasks/main.yml`):
+1. Restore postgres data dir ownership (uid 999) → restart postgres → wait for ready
+2. Capture current MySQL root password
+3. `ibl config rotate-secrets -f --include-auth` — regenerate all secrets
+4. Sync new postgres password (`ALTER USER` from config.yml)
+5. Sync new MySQL passwords (root + openedx users, using old→new password)
+
+All other tasks (domain config, proxy, ECR login, edX settings) run unconditionally.
+
+**Domain update flow** — when `resetup` changes the base domain:
+- `config.yml`: `BASE_DOMAIN` updated via `ibl config save`
+- `auth.yml`: OAuth/OIDC redirect URIs rewritten by `final_steps` role
+- Nginx proxy: `ibl global-proxy launch-without-security` regenerates all server_name directives
+- DB registrations: `final_steps` re-creates oauth/oidc clients with new domain URLs
+
+### Launch Command
+
+`iblai infra launch` — non-interactive, CI/CD-friendly command that provisions infrastructure from a pre-built AMI and configures the platform.
+
+Accepts `--domain <domain>` or `--ingress <name>` (resolved from the ingress registry) for domain specification. All other parameters passed via CLI flags.
+
+**Flow:** builds `InfraConfig` + `ProjectState` → `TerraformRunner` (provisions VPC/ALB/EC2/certs/DNS) → `AnsibleRunner` with `LAUNCH_ROLE_LABELS` (4 roles: cli_ops, launch config, service restart, final steps).
+
+Sets `state.provider = "launch"` to distinguish from interactive provisioning.
+
+### Ingress System
+
+Pre-provisioned domain endpoints (DNS + ACM certs + ALB listener) that environments can be assigned to. Eliminates cert validation and DNS propagation delays during resetup/launch.
+
+**Registry** (`~/.iblai-infra/ingress.json`):
+```json
+{
+  "entries": [{"name": "stg1", "domain": "stg1.example.com", "created_at": "..."}],
+  "lock": {"backend": "s3", "bucket": "my-bucket", "prefix": "ingress-locks"}
+}
+```
+
+Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrates to the registry format.
+
+**Models** (`models.py`):
+- `IngressEntry` — name, domain, created_at
+- `IngressLockConfig` — backend (`"local"` or `"s3"`), bucket, prefix
+- `IngressRegistry` — entries + lock config
+
+**State functions** (`terraform/state.py`):
+- Registry CRUD: `load_ingress_registry()`, `save_ingress_registry()`, `load_ingress()`, `add_ingress()`, `remove_ingress()`
+- Lock config: `configure_ingress_lock(bucket, prefix)`
+- Lock operations: `claim_ingress(name, claimed_by)`, `release_ingress_lock(name)`, `get_ingress_status()`
+- Two backends: **local** (files in `~/.iblai-infra/locks/`) and **S3** (objects at `s3://<bucket>/<prefix>/<name>.lock`)
+
+**CLI commands** (`iblai infra ingress <subcommand>`):
+
+| Command | Purpose |
+|---------|---------|
+| `add <name> <domain>` | Register an endpoint |
+| `remove <name>` | Unregister an endpoint |
+| `list` | List all registered endpoints |
+| `configure --bucket <bucket>` | Set S3 as lock backend |
+| `status` | Show free/claimed status for all endpoints |
+| `claim [name] --by <id> [--quiet]` | Claim a free slot (`--quiet` prints only domain for CI piping) |
+| `release <name>` | Free a claimed slot |
+
+**Resetup integration** (`_select_domain()` in `prompts/setup.py`):
+- If ingress entries exist: `questionary.select()` picker with entries + "Custom domain..." fallback
+- If no entries: standard free-text prompt
+
+**Launch integration**: `--ingress <name>` flag resolves to domain from registry, alternative to `--domain`.
+
+**CI/CD pattern** (GitHub Actions with ephemeral runners):
+1. Re-register endpoints at workflow start (4 `ingress add` commands)
+2. `ingress configure --bucket <bucket>` for persistent S3 locks
+3. `ingress claim --by "run-$ID" --quiet` → capture domain
+4. Run launch/resetup with claimed domain
+5. `ingress release <name>` on teardown or failure
+
 ### Prompt Patterns
 
 - **Short lists** (≤5 items): `questionary.select()` — arrow-key navigation
@@ -131,6 +220,8 @@ Both paths share `_confirm_and_run()` for the review summary → confirm → ans
 - `DNSConfig` (base_domain, use_route53, hosted_zone_id, 16 subdomains)
 
 `ProjectState` tracks lifecycle: initialized → created → failed → destroyed.
+
+`IngressEntry`, `IngressLockConfig`, `IngressRegistry` — ingress endpoint management (see Ingress System section).
 
 `SetupConfig` is the **contract** between setup prompts and `AnsibleRunner`:
 - SSH access (private_key_path, ssh_user, target_host)
@@ -175,6 +266,8 @@ Both paths share `_confirm_and_run()` for the review summary → confirm → ans
 
 - Workspace root: `~/.iblai-infra/projects/<name>/`
 - Session file: `~/.iblai-infra/session.json`
+- Ingress registry: `~/.iblai-infra/ingress.json`
+- Ingress locks (local backend): `~/.iblai-infra/locks/<name>.lock`
 - State file: `state.json` (Pydantic `ProjectState` serialized)
 - Terraform files copied to workspace from templates
 
@@ -208,7 +301,7 @@ Uses `locals` with `use_acm`, `use_upload`, `use_https` booleans and conditional
 
 ## Testing
 
-- **357 tests**, all via pytest: `uv run pytest tests/ -v`
+- **436 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

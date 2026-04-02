@@ -10,10 +10,21 @@ import pytest
 
 from iblai_infra.models import AWSCredentials, AuthMethod, InfraConfig, ProjectState
 from iblai_infra.terraform.state import (
+    _INGRESS_FILE,
+    _LOCKS_DIR,
+    add_ingress,
+    claim_ingress,
     clear_session,
+    configure_ingress_lock,
+    get_ingress_status,
     list_all_states,
     list_workspaces,
+    load_ingress,
+    load_ingress_registry,
     load_state,
+    release_ingress_lock,
+    remove_ingress,
+    save_ingress,
     save_session,
     save_state,
     workspace_dir,
@@ -339,3 +350,186 @@ class TestLoadStateEdgeCases:
         project_state.workspace_path = str(ws)
         save_state(project_state)
         assert load_state("different-name") is None
+
+
+# ---------------------------------------------------------------------------
+# Ingress registry
+# ---------------------------------------------------------------------------
+
+
+class TestIngress:
+    @pytest.fixture(autouse=True)
+    def _patch_ingress_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "iblai_infra.terraform.state._INGRESS_FILE", tmp_path / "ingress.json"
+        )
+
+    def test_load_empty(self):
+        assert load_ingress() == []
+
+    def test_add_and_load(self):
+        entry = add_ingress("stg1", "stg1.example.com")
+        assert entry.name == "stg1"
+        entries = load_ingress()
+        assert len(entries) == 1
+        assert entries[0].domain == "stg1.example.com"
+
+    def test_add_multiple(self):
+        add_ingress("stg1", "stg1.example.com")
+        add_ingress("stg2", "stg2.example.com")
+        assert len(load_ingress()) == 2
+
+    def test_add_duplicate_raises(self):
+        add_ingress("stg1", "stg1.example.com")
+        with pytest.raises(ValueError, match="already exists"):
+            add_ingress("stg1", "stg1-other.example.com")
+
+    def test_remove_existing(self):
+        add_ingress("stg1", "stg1.example.com")
+        add_ingress("stg2", "stg2.example.com")
+        assert remove_ingress("stg1") is True
+        entries = load_ingress()
+        assert len(entries) == 1
+        assert entries[0].name == "stg2"
+
+    def test_remove_nonexistent(self):
+        assert remove_ingress("nope") is False
+
+    def test_load_corrupt_file(self, tmp_path):
+        (tmp_path / "ingress.json").write_text("{bad json")
+        assert load_ingress() == []
+
+    def test_save_and_load_roundtrip(self):
+        from iblai_infra.models import IngressEntry
+        entries = [
+            IngressEntry(name="a", domain="a.example.com"),
+            IngressEntry(name="b", domain="b.example.com"),
+        ]
+        save_ingress(entries)
+        loaded = load_ingress()
+        assert len(loaded) == 2
+        assert loaded[0].name == "a"
+        assert loaded[1].name == "b"
+
+    def test_backward_compat_list_format(self, tmp_path):
+        """Old ingress.json format (bare list) is auto-migrated."""
+        import json
+        (tmp_path / "ingress.json").write_text(json.dumps([
+            {"name": "old1", "domain": "old1.example.com", "created_at": "2026-01-01T00:00:00Z"},
+        ]))
+        entries = load_ingress()
+        assert len(entries) == 1
+        assert entries[0].name == "old1"
+        # Lock config defaults to local
+        reg = load_ingress_registry()
+        assert reg.lock.backend == "local"
+
+    def test_configure_lock_backend(self):
+        add_ingress("stg1", "stg1.example.com")
+        configure_ingress_lock(bucket="my-bucket", prefix="my-prefix")
+        reg = load_ingress_registry()
+        assert reg.lock.backend == "s3"
+        assert reg.lock.bucket == "my-bucket"
+        assert reg.lock.prefix == "my-prefix"
+        # Entries preserved
+        assert len(reg.entries) == 1
+
+    def test_add_preserves_lock_config(self):
+        configure_ingress_lock(bucket="my-bucket")
+        add_ingress("stg1", "stg1.example.com")
+        reg = load_ingress_registry()
+        assert reg.lock.bucket == "my-bucket"
+        assert len(reg.entries) == 1
+
+    def test_remove_preserves_lock_config(self):
+        add_ingress("stg1", "stg1.example.com")
+        configure_ingress_lock(bucket="my-bucket")
+        remove_ingress("stg1")
+        reg = load_ingress_registry()
+        assert reg.lock.bucket == "my-bucket"
+        assert len(reg.entries) == 0
+
+
+# ---------------------------------------------------------------------------
+# Ingress locks (local backend)
+# ---------------------------------------------------------------------------
+
+
+class TestIngressLocks:
+    @pytest.fixture(autouse=True)
+    def _patch_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "iblai_infra.terraform.state._INGRESS_FILE", tmp_path / "ingress.json"
+        )
+        monkeypatch.setattr(
+            "iblai_infra.terraform.state._LOCKS_DIR", tmp_path / "locks"
+        )
+
+    def test_claim_first_free(self):
+        add_ingress("stg1", "stg1.example.com")
+        add_ingress("stg2", "stg2.example.com")
+        result = claim_ingress(claimed_by="test-run")
+        assert result == ("stg1", "stg1.example.com")
+
+    def test_claim_specific(self):
+        add_ingress("stg1", "stg1.example.com")
+        add_ingress("stg2", "stg2.example.com")
+        result = claim_ingress(name="stg2", claimed_by="test-run")
+        assert result == ("stg2", "stg2.example.com")
+
+    def test_claim_already_claimed(self):
+        add_ingress("stg1", "stg1.example.com")
+        claim_ingress(name="stg1", claimed_by="run-1")
+        result = claim_ingress(name="stg1", claimed_by="run-2")
+        assert result is None
+
+    def test_claim_skips_occupied(self):
+        add_ingress("stg1", "stg1.example.com")
+        add_ingress("stg2", "stg2.example.com")
+        claim_ingress(name="stg1", claimed_by="run-1")
+        result = claim_ingress(claimed_by="run-2")
+        assert result == ("stg2", "stg2.example.com")
+
+    def test_claim_all_occupied(self):
+        add_ingress("stg1", "stg1.example.com")
+        claim_ingress(name="stg1", claimed_by="run-1")
+        result = claim_ingress(claimed_by="run-2")
+        assert result is None
+
+    def test_claim_no_entries(self):
+        result = claim_ingress(claimed_by="test")
+        assert result is None
+
+    def test_claim_nonexistent_name(self):
+        add_ingress("stg1", "stg1.example.com")
+        result = claim_ingress(name="nope", claimed_by="test")
+        assert result is None
+
+    def test_release(self):
+        add_ingress("stg1", "stg1.example.com")
+        claim_ingress(name="stg1", claimed_by="run-1")
+        assert release_ingress_lock("stg1") is True
+        # Can claim again
+        result = claim_ingress(name="stg1", claimed_by="run-2")
+        assert result == ("stg1", "stg1.example.com")
+
+    def test_release_not_claimed(self):
+        assert release_ingress_lock("stg1") is False
+
+    def test_status(self):
+        add_ingress("stg1", "stg1.example.com")
+        add_ingress("stg2", "stg2.example.com")
+        claim_ingress(name="stg1", claimed_by="run-1")
+
+        statuses = get_ingress_status()
+        assert len(statuses) == 2
+        # stg1 is claimed
+        assert statuses[0][0].name == "stg1"
+        assert statuses[0][1] is not None
+        assert statuses[0][1]["claimed_by"] == "run-1"
+        # stg2 is free
+        assert statuses[1][0].name == "stg2"
+        assert statuses[1][1] is None
+
+    def test_status_empty(self):
+        assert get_ingress_status() == []

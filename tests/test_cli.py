@@ -591,6 +591,114 @@ class TestLaunchCommand:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# ingress commands
+# ---------------------------------------------------------------------------
+
+
+class TestIngressCommands:
+    @pytest.fixture(autouse=True)
+    def _patch_ingress(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "iblai_infra.terraform.state._INGRESS_FILE", tmp_path / "ingress.json"
+        )
+
+    def test_list_empty(self):
+        result = runner.invoke(app, ["infra", "ingress", "list"])
+        assert result.exit_code == 0
+        assert "No ingress" in result.stdout
+
+    def test_add_and_list(self):
+        result = runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        assert result.exit_code == 0
+        assert "stg1" in result.stdout
+
+        result = runner.invoke(app, ["infra", "ingress", "list"])
+        assert result.exit_code == 0
+        assert "stg1.example.com" in result.stdout
+
+    def test_add_duplicate(self):
+        runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        result = runner.invoke(app, ["infra", "ingress", "add", "stg1", "other.example.com"])
+        assert result.exit_code == 1
+        assert "already exists" in result.stdout
+
+    def test_remove(self):
+        runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        result = runner.invoke(app, ["infra", "ingress", "remove", "stg1"])
+        assert result.exit_code == 0
+        assert "Removed" in result.stdout
+
+    def test_remove_nonexistent(self):
+        result = runner.invoke(app, ["infra", "ingress", "remove", "nope"])
+        assert result.exit_code == 1
+        assert "No ingress" in result.stdout
+
+    def test_configure(self):
+        result = runner.invoke(app, ["infra", "ingress", "configure", "--bucket", "my-bucket"])
+        assert result.exit_code == 0
+        assert "s3://my-bucket" in result.stdout
+
+    def test_status_empty(self):
+        result = runner.invoke(app, ["infra", "ingress", "status"])
+        assert result.exit_code == 0
+        assert "No ingress" in result.stdout
+
+
+class TestIngressLockCommands:
+    @pytest.fixture(autouse=True)
+    def _patch_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "iblai_infra.terraform.state._INGRESS_FILE", tmp_path / "ingress.json"
+        )
+        monkeypatch.setattr(
+            "iblai_infra.terraform.state._LOCKS_DIR", tmp_path / "locks"
+        )
+
+    def test_claim_and_status(self):
+        runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        result = runner.invoke(app, ["infra", "ingress", "claim", "stg1", "--by", "run-1"])
+        assert result.exit_code == 0
+        assert "stg1" in result.stdout
+
+        result = runner.invoke(app, ["infra", "ingress", "status"])
+        assert result.exit_code == 0
+        assert "claimed" in result.stdout
+
+    def test_claim_quiet(self):
+        runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        result = runner.invoke(app, ["infra", "ingress", "claim", "--quiet"])
+        assert result.exit_code == 0
+        assert "stg1.example.com" in result.stdout
+
+    def test_claim_auto_picks_free(self):
+        runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        runner.invoke(app, ["infra", "ingress", "add", "stg2", "stg2.example.com"])
+        runner.invoke(app, ["infra", "ingress", "claim", "stg1", "--by", "run-1"])
+        result = runner.invoke(app, ["infra", "ingress", "claim", "--quiet"])
+        assert result.exit_code == 0
+        assert "stg2.example.com" in result.stdout
+
+    def test_claim_all_occupied(self):
+        runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        runner.invoke(app, ["infra", "ingress", "claim", "stg1"])
+        result = runner.invoke(app, ["infra", "ingress", "claim"])
+        assert result.exit_code == 1
+        assert "No free" in result.stdout
+
+    def test_release(self):
+        runner.invoke(app, ["infra", "ingress", "add", "stg1", "stg1.example.com"])
+        runner.invoke(app, ["infra", "ingress", "claim", "stg1"])
+        result = runner.invoke(app, ["infra", "ingress", "release", "stg1"])
+        assert result.exit_code == 0
+        assert "Released" in result.stdout
+
+    def test_release_not_claimed(self):
+        result = runner.invoke(app, ["infra", "ingress", "release", "stg1"])
+        assert result.exit_code == 1
+        assert "not currently claimed" in result.stdout
+
+
 class TestPermissionsCommand:
     def test_show_policy_no_check(self):
         result = runner.invoke(app, ["infra", "permissions"])

@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.3.0] — 2026-04-02
+
+### Added
+- **`resetup` command** — `iblai infra resetup <name>` re-configures an existing environment with a new base domain and fresh secrets. Rotates all secrets (`ibl config rotate-secrets -f --include-auth`), syncs PostgreSQL and MySQL passwords, then restarts all services
+- **`launch` command** — `iblai infra launch` provisions AWS infrastructure from a pre-built AMI via Terraform (VPC, ALB, ACM certs, Route53, EC2) and configures the platform via Ansible in a single non-interactive command. All input via CLI flags for CI/CD workflows
+- **`launch-env` command** — `iblai infra launch-env` reads a `.env` file from the current directory, shows a summary with masked secrets, confirms, then launches. Simplest path for local use
+- **`.env.example`** — template with all launch variables using safe placeholder values (RFC 5737 IPs, AWS example keys)
+- **AMI support in Terraform** — new `ami_id` and `skip_user_data` variables allow launching EC2 from a custom AMI instead of vanilla Ubuntu
+- **Launch Ansible playbook** — `launch_playbook.yml` with 4 lean roles (ibl_cli_ops, ibl_launch, ibl_launch_services, final_steps) for AMI-based deployments
+- **`ibl_launch` role** — starts databases, sets domain, rotates secrets, syncs PostgreSQL and MySQL passwords after rotation
+- **`ibl_launch_services` role** — ECR login, DM update, edX stop/start, SPA restart with health checks, proxy reload
+- **SPA health checks** — all SPA launches/restarts now verify HTTP 200 on Auth (5000), Mentor (5001), Skills (5002) with 10 retries at 15s intervals
+- **Ansible progress display** — shows current task description (e.g. "Wait for DM web to be ready") instead of just "Running"
+- **CLI ops release tag prompt** — both setup and resetup now prompt for iblai-cli-ops release tag
+- **iblai-prod-images installation** — ibl_cli_ops role installs via `uv pip install iblai-images[sumac]` from `iblai/iblai-prod-images`, which pins both CLI ops and all container image versions
+- **AnsibleRunner parameterization** — supports multiple playbooks and role label sets (setup vs launch)
+
+### Changed
+- **Image versions controlled by iblai-prod-images** — removed all hardcoded image tags from Ansible roles (DM, edX, MFE, postgres, SPA, supporting services). The CLI now rejects overrides; versions are pinned by the `iblai-images` package
+- **Removed image tag prompts** — setup no longer asks for DM, edX, or SPA image tags. `SetupConfig` model no longer has image tag fields
+- **Removed hardcoded MySQL 8.0.40** — was causing version mismatch crashes when AMI data was created with MySQL 8.4.0. The CLI's `default.yml` now provides the correct version
+
+### Fixed
+- **PostgreSQL password sync after secret rotation** — resetup and launch capture the current password before rotation and use it to ALTER USER after rotation
+- **MySQL password sync after secret rotation** — same capture-before-rotate pattern for both root and openedx MySQL users
+- **PostgreSQL data directory ownership** — resetup restores postgres data dir to uid 999 before restarting, preventing "Permission denied" errors after the recursive chown on /ibl
+- **State base_domain update on resetup** — `iblai infra list` now shows the new domain after resetup
+- **`destroy` command handles `provider="launch"`** — launch-created projects can be properly destroyed
+
 ## [1.2.3] — 2026-03-26
 
 ### Added

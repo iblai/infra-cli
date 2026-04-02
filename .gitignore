@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Environment files (never commit real credentials)
+.env
+.env.local
+.env.*.local

@@ -138,7 +138,7 @@ The playbook runs 9 sequential roles:
 | `docker` | Installs Docker Engine, docker compose, and apache2-utils |
 | `awscli` | Installs AWS CLI v2 for ECR and S3 access |
 | `python` | Installs pyenv and Python 3.11.8 |
-| `ibl_cli_ops` | Clones and installs [iblai-cli-ops](https://github.com/iblai/ibl-cli-ops) in a virtualenv |
+| `ibl_cli_ops` | Installs [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (which includes iblai-cli-ops and pinned image versions) via `uv pip install` |
 | `ibl_platform` | Configures base domain, environment, image tags, CORS, RBAC, unified API gateway, and service defaults |
 | `ibl_dm` | Launches iblai-dm-pro (PostgreSQL with pgvector, Redis, Django, Celery, Langfuse, Minio) |
 | `ibl_edx` | Launches iblai-edx-pro (LMS, CMS, MySQL, MongoDB, Redis, Elasticsearch, MFE) |
@@ -148,14 +148,74 @@ The playbook runs 9 sequential roles:
 The setup wizard prompts for:
 - Target host IP and SSH key path
 - Base domain and environment config
-- DM and edX Docker image tags
-- SPA image tags (Auth, Mentor, Skills)
+- iblai-cli-ops release tag (image versions are pinned by [iblai-prod-images](https://github.com/iblai/iblai-prod-images))
 - Whether to enable AI features
 - OpenAI API key (optional)
 - Super admin credentials (username, email, password)
 - GitHub PAT and AWS credentials for the VM
 
-### 4. Manage environments
+### 4. Re-setup an existing environment
+
+```bash
+iblai infra resetup <name>
+```
+
+Re-configures a previously set up environment with a new domain and fresh secrets. Prompts for the new base domain, CLI ops release tag, and credentials. Runs `ibl config rotate-secrets` to regenerate all secrets, syncs database passwords (PostgreSQL and MySQL), then restarts all services.
+
+Use this when you need to change the domain or rotate credentials on a running environment without reprovisioning the infrastructure.
+
+### 5. Launch from AMI (non-interactive, CI/CD)
+
+```bash
+iblai infra launch \
+  --ami-id $AMI_ID \
+  --domain $DOMAIN \
+  --hosted-zone-id $HOSTED_ZONE_ID \
+  --aws-key-id $AWS_ACCESS_KEY_ID \
+  --aws-secret-key $AWS_SECRET_ACCESS_KEY \
+  --ssh-public-key "$SSH_PUBLIC_KEY" \
+  --ssh-key $SSH_KEY_PATH \
+  --git-token $GIT_TOKEN \
+  --admin-email $ADMIN_EMAIL \
+  --admin-password $ADMIN_PASSWORD \
+  --vpn-ip $VPN_IP
+```
+
+Fully non-interactive command for CI/CD pipelines (e.g. GitHub Actions). Provisions AWS infrastructure from a pre-built AMI via Terraform, then configures the platform via Ansible — all in one step.
+
+**What it does:**
+1. **Terraform** -- creates VPC, ALB, ACM certificates, Route53 DNS records, and launches EC2 from the specified AMI
+2. **Ansible** -- sets domain, rotates secrets, syncs database passwords, restarts all services (DM, edX, SPAs), runs final setup (OAuth, admin creation, data seeding)
+
+**Cleanup:**
+
+```bash
+iblai infra destroy <name>    # Tears down all Terraform resources
+```
+
+**Using a `.env` file:**
+
+Copy `.env.example` to `.env`, fill in real values, then:
+
+```bash
+source .env
+iblai infra launch \
+  --ami-id $AMI_ID \
+  --domain $DOMAIN \
+  --hosted-zone-id $HOSTED_ZONE_ID \
+  --aws-key-id $AWS_ACCESS_KEY_ID \
+  --aws-secret-key $AWS_SECRET_ACCESS_KEY \
+  --ssh-public-key "$SSH_PUBLIC_KEY" \
+  --ssh-key $SSH_KEY_PATH \
+  --git-token $GIT_TOKEN \
+  --admin-email $ADMIN_EMAIL \
+  --admin-password $ADMIN_PASSWORD \
+  --vpn-ip $VPN_IP
+```
+
+See `iblai infra launch --help` for all optional flags (instance type, volume size, region, AI features, etc.).
+
+### 6. Manage environments
 
 ```bash
 iblai infra list                # List all managed environments

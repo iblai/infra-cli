@@ -1,20 +1,5 @@
 ---
-- name: Ensure venv pip is up-to-date
-  become: false
-  pip:
-    name: pip
-    state: latest
-    executable: "/home/{{ ansible_user }}/.pyenv/versions/{{ venv_name }}/bin/pip"
-
-- name: Clone ibl-cli-ops repository
-  become: false
-  git:
-    repo: "https://{{ git_access_token }}@github.com/{{ repo_slug }}.git"
-    dest: "{{ repo_dir }}"
-    version: "{{ cli_ops_release_tag }}"
-    force: true
-
-- name: Install requirements from sumac.in
+- name: Ensure venv pip and uv are up-to-date
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
@@ -22,14 +7,19 @@
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    cd "{{ repo_dir }}"
-    pip install -r requirements/sumac.in
+    pip install --upgrade pip uv
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
 
-- name: Install ibl-cli in editable mode
+- name: Ensure working directory exists
+  become: false
+  file:
+    path: "{{ repo_dir }}"
+    state: directory
+
+- name: Install iblai-prod-images (ibl-cli-ops + image definitions)
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
@@ -37,12 +27,14 @@
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    cd "{{ repo_dir }}"
-    pip install -e .
+    uv pip install "iblai-images[sumac] @ git+https://{{ git_access_token }}@github.com/iblai/iblai-prod-images@main#egg=iblai-images" --reinstall
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+    GIT_CONFIG_COUNT: "1"
+    GIT_CONFIG_KEY_0: "url.https://{{ git_access_token }}@github.com/.insteadOf"
+    GIT_CONFIG_VALUE_0: "https://github.com/"
 
 - name: Verify ibl CLI is available
   become: false

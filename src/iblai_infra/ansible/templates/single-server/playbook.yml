@@ -44,4 +44,6 @@
     - ibl_dm
     - ibl_edx
     - ibl_spa
-    - final_steps
+    - integrations
+    - admin_setup
+    - data_seeding

@@ -35,14 +35,18 @@ ROLE_LABELS: dict[str, str] = {
     "ibl_dm": "iblai-dm-pro",
     "ibl_edx": "iblai-edx-pro",
     "ibl_spa": "SPA Services",
-    "final_steps": "Final Steps",
+    "integrations": "OAuth & Integrations",
+    "admin_setup": "Admin & CORS Setup",
+    "data_seeding": "Data Seeding",
 }
 
 LAUNCH_ROLE_LABELS: dict[str, str] = {
     "ibl_cli_ops": "iblai-cli-ops",
     "ibl_launch": "AMI Launch Config",
     "ibl_launch_services": "Service Restart",
-    "final_steps": "Final Steps",
+    "integrations": "OAuth & Integrations",
+    "admin_setup": "Admin & CORS Setup",
+    "data_seeding": "Data Seeding",
 }
 
 TOTAL_ROLES = len(ROLE_LABELS)

@@ -241,15 +241,15 @@ class TestConstants:
         assert TOTAL_ROLES == len(ROLE_LABELS)
 
     def test_expected_roles(self):
-        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform", "ibl_dm", "ibl_edx", "ibl_spa", "final_steps"}
+        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform", "ibl_dm", "ibl_edx", "ibl_spa", "integrations", "admin_setup", "data_seeding"}
         assert set(ROLE_LABELS.keys()) == expected
 
     def test_launch_role_labels(self):
-        expected = {"ibl_cli_ops", "ibl_launch", "ibl_launch_services", "final_steps"}
+        expected = {"ibl_cli_ops", "ibl_launch", "ibl_launch_services", "integrations", "admin_setup", "data_seeding"}
         assert set(LAUNCH_ROLE_LABELS.keys()) == expected
 
     def test_launch_role_labels_count(self):
-        assert len(LAUNCH_ROLE_LABELS) == 4
+        assert len(LAUNCH_ROLE_LABELS) == 6
 
 
 # ---------------------------------------------------------------------------

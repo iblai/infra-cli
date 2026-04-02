@@ -1,0 +1,120 @@
+---
+- name: Configure OpenAI API key
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
+    from ibl_ai_mentor.models import GlobalCredential
+    GlobalCredential.objects.update_or_create(
+        name='openai',
+        defaults={'value': {'key': '{{ openai_api_key }}'}, 'is_preferred': True},
+    )
+    print('OpenAI credential configured')
+    "
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  when: openai_api_key | length > 0
+
+- name: Create DM super admin
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
+    from django.contrib.auth.models import User
+    if not User.objects.filter(username='{{ admin_username }}').exists():
+        User.objects.create_superuser('{{ admin_username }}', '{{ admin_email }}', '{{ admin_password }}')
+        print('DM superuser created')
+    else:
+        u = User.objects.get(username='{{ admin_username }}')
+        u.email = '{{ admin_email }}'
+        u.set_password('{{ admin_password }}')
+        u.is_superuser = True
+        u.is_staff = True
+        u.save()
+        print('DM superuser updated')
+    "
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  no_log: true
+
+- name: Create LMS super admin
+  become: false
+  shell: |
+    docker exec ibl_prod_lms ./manage.py lms shell -c "
+    from django.contrib.auth.models import User
+    if not User.objects.filter(username='{{ admin_username }}').exists():
+        User.objects.create_superuser('{{ admin_username }}', '{{ admin_email }}', '{{ admin_password }}')
+        print('LMS superuser created')
+    else:
+        u = User.objects.get(username='{{ admin_username }}')
+        u.email = '{{ admin_email }}'
+        u.set_password('{{ admin_password }}')
+        u.is_superuser = True
+        u.is_staff = True
+        u.save()
+        print('LMS superuser updated')
+    "
+  args:
+    executable: /bin/bash
+  no_log: true
+
+- name: Seed CSRF exempt domains for CORS
+  become: false
+  shell: |
+    docker exec ibl_prod_lms ./manage.py lms shell -c "
+    from ibl_ai_edx_sso_backend.models import CsrfExemptDomain
+    domains = [
+        'learn.{{ base_domain }}',
+        'preview.learn.{{ base_domain }}',
+        'studio.learn.{{ base_domain }}',
+        'apps.learn.{{ base_domain }}',
+        'meilisearch.learn.{{ base_domain }}',
+        'api.data.{{ base_domain }}',
+        'api.{{ base_domain }}',
+        'asgi.data.{{ base_domain }}',
+        'llm.data.{{ base_domain }}',
+        'mentor.data.{{ base_domain }}',
+        'web.data.{{ base_domain }}',
+        'base.manager.{{ base_domain }}',
+        'auth.{{ base_domain }}',
+        'mentorai.{{ base_domain }}',
+        'monitor.{{ base_domain }}',
+        'flowise.{{ base_domain }}',
+        'skillsai.{{ base_domain }}',
+        'platform.{{ base_domain }}',
+        'prometheus.{{ base_domain }}',
+        'web.{{ base_domain }}',
+        'discovery.{{ base_domain }}',
+        'notes.{{ base_domain }}',
+        'mfe.{{ base_domain }}',
+        'status.{{ base_domain }}',
+    ]
+    created = 0
+    for d in domains:
+        _, was_created = CsrfExemptDomain.objects.get_or_create(domain=d)
+        if was_created:
+            created += 1
+    print(f'CSRF exempt domains: {created} created, {len(domains) - created} already existed')
+    "
+  args:
+    executable: /bin/bash
+
+- name: Enable main platform to use main LLM key
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
+    from ibl_ai_mentor.models import UseMainLLMKey
+    from core.models import Platform
+    platform = Platform.objects.get(key='main')
+    UseMainLLMKey.objects.update_or_create(
+        platform=platform,
+        defaults={'use_main_key': True},
+    )
+    print('UseMainLLMKey configured for main platform')
+    "
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"

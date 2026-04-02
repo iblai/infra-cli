@@ -26,4 +26,6 @@
     - ibl_cli_ops
     - ibl_launch
     - ibl_launch_services
-    - final_steps
+    - integrations
+    - admin_setup
+    - data_seeding

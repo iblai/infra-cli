@@ -140,8 +140,8 @@
     executable: /bin/bash
   register: auth_health
   until: auth_health.rc == 0
-  retries: 5
-  delay: 10
+  retries: 10
+  delay: 15
 
 - name: Restart Mentor SPA
   become: false
@@ -162,8 +162,8 @@
     executable: /bin/bash
   register: mentor_health
   until: mentor_health.rc == 0
-  retries: 5
-  delay: 10
+  retries: 10
+  delay: 15
 
 - name: Restart Skills SPA
   become: false
@@ -184,8 +184,8 @@
     executable: /bin/bash
   register: skills_health
   until: skills_health.rc == 0
-  retries: 5
-  delay: 10
+  retries: 10
+  delay: 15
 
 # ---------------------------------------------------------------------------
 # Proxy reload

@@ -58,8 +58,8 @@
     executable: /bin/bash
   register: ibl_web_app_result
   until: ibl_web_app_result.rc == 0
-  retries: 5
-  delay: 10
+  retries: 10
+  delay: 15
 
 - name: Capture ibl_web client ID
   set_fact:
@@ -169,8 +169,8 @@
     executable: /bin/bash
   register: auth_health
   until: auth_health.rc == 0
-  retries: 5
-  delay: 10
+  retries: 10
+  delay: 15
 
 - name: Launch Mentor SPA
   become: false
@@ -192,8 +192,8 @@
     executable: /bin/bash
   register: mentor_health
   until: mentor_health.rc == 0
-  retries: 5
-  delay: 10
+  retries: 10
+  delay: 15
 
 - name: Launch Skills SPA
   become: false
@@ -215,8 +215,8 @@
     executable: /bin/bash
   register: skills_health
   until: skills_health.rc == 0
-  retries: 5
-  delay: 10
+  retries: 10
+  delay: 15
 
 - name: Save config and reload proxy after SPA launch
   become: false

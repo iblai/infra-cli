@@ -878,17 +878,62 @@ def _run_launch(
 
 @infra_app.command(name="service-update")
 def service_update(
-    host: str = typer.Option(..., "--host", help="Target server IP address"),
+    host: str | None = typer.Option(None, "--host", help="Target server IP (for existing servers)"),
     ssh_key: Path = typer.Option(..., "--ssh-key", help="Path to SSH private key"),
     git_token: str = typer.Option(..., "--git-token", help="GitHub Personal Access Token"),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH user"),
-    name: str | None = typer.Option(None, "--name", help="Project name (auto-generated from host if omitted)"),
+    name: str | None = typer.Option(None, "--name", help="Project name (auto-generated if omitted)"),
+    ami_id: str | None = typer.Option(None, "--ami-id", help="Launch EC2 from this AMI before updating"),
+    subnet_id: str | None = typer.Option(None, "--subnet-id", help="Subnet to launch into (with --ami-id)"),
+    security_group_id: str | None = typer.Option(None, "--security-group-id", help="Security group for EC2 (with --ami-id)"),
+    target_group_arn: str | None = typer.Option(None, "--target-group-arn", help="ALB target group to register instance (with --ami-id)"),
+    key_pair_name: str | None = typer.Option(None, "--key-pair-name", help="AWS key pair name for EC2 (with --ami-id)"),
+    instance_type: str = typer.Option("t3.2xlarge", "--instance-type", help="EC2 instance type (with --ami-id)"),
+    volume_size: int = typer.Option(200, "--volume-size", help="Root volume size in GB (with --ami-id)"),
+    aws_key_id: str | None = typer.Option(None, "--aws-key-id", help="AWS access key ID (with --ami-id)"),
+    aws_secret_key: str | None = typer.Option(None, "--aws-secret-key", help="AWS secret access key (with --ami-id)"),
+    aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region (with --ami-id)"),
 ) -> None:
-    """Update container images and restart services. No infra changes, no secret rotation."""
-    _run_service_update(
-        host=host, ssh_key=ssh_key, git_token=git_token,
-        ssh_user=ssh_user, name=name,
-    )
+    """Update container images and restart services.
+
+    Two modes:
+      --host: update an existing server directly
+      --ami-id: launch EC2 from AMI, update services, register in target group
+    """
+    if ami_id:
+        missing = []
+        if not subnet_id:
+            missing.append("--subnet-id")
+        if not security_group_id:
+            missing.append("--security-group-id")
+        if not target_group_arn:
+            missing.append("--target-group-arn")
+        if not key_pair_name:
+            missing.append("--key-pair-name")
+        if not aws_key_id:
+            missing.append("--aws-key-id")
+        if not aws_secret_key:
+            missing.append("--aws-secret-key")
+        if missing:
+            ui.error(f"Missing required flags for AMI launch: {', '.join(missing)}")
+            raise typer.Exit(1)
+
+        _run_service_update_from_ami(
+            ami_id=ami_id, subnet_id=subnet_id, security_group_id=security_group_id,
+            target_group_arn=target_group_arn, key_pair_name=key_pair_name,
+            instance_type=instance_type, volume_size=volume_size,
+            aws_key_id=aws_key_id, aws_secret_key=aws_secret_key,
+            aws_region=aws_region, ssh_key=ssh_key, git_token=git_token,
+            ssh_user=ssh_user, name=name,
+        )
+    elif host:
+        _run_service_update(
+            host=host, ssh_key=ssh_key, git_token=git_token,
+            ssh_user=ssh_user, name=name,
+        )
+    else:
+        ui.error("Either --host or --ami-id is required.")
+        raise typer.Exit(1)
 
 
 def _run_service_update(
@@ -1018,6 +1063,190 @@ def _run_service_update(
         ui.newline()
     else:
         raise typer.Exit(1)
+
+
+def _run_service_update_from_ami(
+    *,
+    ami_id: str,
+    subnet_id: str,
+    security_group_id: str,
+    target_group_arn: str,
+    key_pair_name: str,
+    instance_type: str,
+    volume_size: int,
+    aws_key_id: str,
+    aws_secret_key: str,
+    aws_region: str,
+    ssh_key: Path,
+    git_token: str,
+    ssh_user: str,
+    name: str | None,
+) -> None:
+    """Launch EC2 from AMI, run service update, register in target group."""
+    import os
+    import shutil
+    from datetime import datetime, timezone
+
+    from iblai_infra.ansible.runner import AnsibleRunner, SERVICE_UPDATE_ROLE_LABELS
+    from iblai_infra.models import (
+        AWSCredentials,
+        AuthMethod,
+        CertificateConfig,
+        CertMethod,
+        ComputeConfig,
+        DNSConfig,
+        Environment,
+        InfraConfig,
+        NetworkConfig,
+        ProjectState,
+        SetupConfig,
+        SSHConfig,
+        SSHKeyMethod,
+    )
+    from iblai_infra.providers.aws import (
+        launch_instance,
+        register_target,
+        terminate_instance,
+        wait_for_instance_running,
+    )
+    from iblai_infra.terraform.state import WORKSPACE_ROOT
+
+    # Derive project name
+    project_name = name or f"su-{ami_id[-8:]}"
+    if len(project_name) > 32:
+        project_name = project_name[:32]
+
+    # Validate SSH key
+    ssh_key = Path(ssh_key).expanduser()
+    if not ssh_key.exists():
+        ui.error(f"SSH key not found: {ssh_key}")
+        raise typer.Exit(1)
+    mode = ssh_key.stat().st_mode & 0o777
+    if mode > 0o600:
+        os.chmod(ssh_key, 0o600)
+
+    # Check ansible
+    if shutil.which("ansible-playbook") is None:
+        ui.error("ansible-playbook not found. Install with: pip install ansible-core")
+        raise typer.Exit(1)
+
+    # Create boto3 session
+    import boto3
+    session = boto3.Session(
+        aws_access_key_id=aws_key_id,
+        aws_secret_access_key=aws_secret_key,
+        region_name=aws_region,
+    )
+
+    # ---- Phase 1: Launch EC2 ----
+    ui.info(f"Launching EC2 from AMI [highlight]{ami_id}[/highlight]")
+
+    instance_id = launch_instance(
+        session=session,
+        ami_id=ami_id,
+        instance_type=instance_type,
+        key_pair_name=key_pair_name,
+        subnet_id=subnet_id,
+        security_group_id=security_group_id,
+        volume_size=volume_size,
+        name_tag=f"{project_name}-server",
+    )
+    ui.info(f"Instance launched: [highlight]{instance_id}[/highlight]")
+    ui.info("Waiting for instance to be running...")
+
+    host = wait_for_instance_running(session, instance_id)
+    if not host:
+        ui.error("Instance has no public IP. Check subnet settings (map_public_ip_on_launch).")
+        terminate_instance(session, instance_id)
+        raise typer.Exit(1)
+
+    ui.success(f"Instance running: [highlight]{host}[/highlight]")
+    ui.newline()
+
+    # ---- Phase 2: Service Update (Ansible) ----
+    ui.info("Running service update...")
+    ui.newline()
+
+    setup_config = SetupConfig(
+        ssh_private_key_path=ssh_key,
+        ssh_user=ssh_user,
+        target_host=host,
+        base_domain="service-update",
+        aws_access_key_id="",
+        aws_secret_access_key="",
+        aws_default_region=aws_region,
+        git_access_token=git_token,
+    )
+
+    workspace_path = str(WORKSPACE_ROOT / f"{project_name}-service-update")
+    state = ProjectState(
+        name=project_name,
+        provider="service-update",
+        status="created",
+        config=InfraConfig(
+            project_name=project_name,
+            environment=Environment.DEV,
+            credentials=AWSCredentials(
+                method=AuthMethod.ACCESS_KEY,
+                access_key_id="",
+                secret_access_key="",
+                region=aws_region,
+            ),
+            network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip="0.0.0.0"),
+            compute=ComputeConfig(),
+            ssh=SSHConfig(
+                method=SSHKeyMethod.EXISTING_FILE,
+                key_name=key_pair_name,
+                private_key_path=ssh_key,
+            ),
+            certificates=CertificateConfig(method=CertMethod.NONE),
+            dns=DNSConfig(base_domain="service-update"),
+        ),
+        outputs={"instance_public_ip": host, "instance_id": instance_id},
+        workspace_path=workspace_path,
+    )
+    save_state(state)
+
+    runner = AnsibleRunner(
+        state, setup_config,
+        playbook="service_update_playbook.yml",
+        role_labels=SERVICE_UPDATE_ROLE_LABELS,
+    )
+
+    if not runner.preflight():
+        ui.error("Pre-flight failed. Terminating instance.")
+        terminate_instance(session, instance_id)
+        raise typer.Exit(1)
+
+    runner.setup()
+
+    try:
+        success = runner.run()
+    except KeyboardInterrupt:
+        ui.newline()
+        state.setup_status = "failed"
+        state.updated_at = datetime.now(timezone.utc)
+        save_state(state)
+        ui.warning(f"Interrupted. Instance [highlight]{instance_id}[/highlight] is still running.")
+        ui.muted(f"Terminate manually: aws ec2 terminate-instances --instance-ids {instance_id}")
+        ui.abort("Interrupted.")
+
+    if not success:
+        ui.error(f"Service update failed. Instance [highlight]{instance_id}[/highlight] is still running.")
+        ui.muted(f"Terminate manually: aws ec2 terminate-instances --instance-ids {instance_id}")
+        raise typer.Exit(1)
+
+    # ---- Phase 3: Register in target group ----
+    ui.newline()
+    ui.info(f"Registering instance in target group...")
+    register_target(session, target_group_arn, instance_id)
+    ui.success(f"Instance [highlight]{instance_id}[/highlight] registered in target group")
+    ui.newline()
+
+    ui.success(f"Service update complete!")
+    ui.info(f"Instance: [highlight]{instance_id}[/highlight] ({host})")
+    ui.info(f"SSH: [highlight]ssh -i {ssh_key} {ssh_user}@{host}[/highlight]")
+    ui.newline()
 
 
 def _interactive_setup() -> None:

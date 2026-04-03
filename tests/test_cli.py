@@ -602,6 +602,30 @@ class TestServiceUpdateCommand:
         assert "--host" in result.stdout
         assert "--ssh-key" in result.stdout
         assert "--git-token" in result.stdout
+        assert "--ami-id" in result.stdout
+
+    def test_no_host_or_ami(self, tmp_path):
+        key = tmp_path / "key.pem"
+        key.write_text("fake")
+        key.chmod(0o600)
+        result = runner.invoke(app, [
+            "infra", "service-update",
+            "--ssh-key", str(key),
+            "--git-token", "ghp_test",
+        ])
+        assert result.exit_code != 0
+
+    def test_ami_missing_infra_flags(self, tmp_path):
+        key = tmp_path / "key.pem"
+        key.write_text("fake")
+        key.chmod(0o600)
+        result = runner.invoke(app, [
+            "infra", "service-update",
+            "--ami-id", "ami-test123",
+            "--ssh-key", str(key),
+            "--git-token", "ghp_test",
+        ])
+        assert result.exit_code != 0
 
     def test_ssh_key_not_found(self, tmp_path):
         args = [

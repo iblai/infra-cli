@@ -16,31 +16,6 @@
 # edX update
 # ---------------------------------------------------------------------------
 
-- name: Stop edX services
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl edx stop
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-  timeout: 600
-  ignore_errors: true
-
-- name: Prune stopped containers
-  become: false
-  shell: docker system prune -f
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-
 - name: Save edX config
   become: false
   shell: |
@@ -56,7 +31,7 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
 
-- name: Start edX services
+- name: Ensure edX services are running
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
@@ -70,7 +45,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
-  timeout: 3600
+  timeout: 600
 
 - name: Wait for LMS to be ready
   become: false
@@ -87,21 +62,30 @@
 # DM update
 # ---------------------------------------------------------------------------
 
-- name: Update DM services
+- name: Save DM config
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl dm update
+    ibl config save
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
-  timeout: 3600
+
+- name: Ensure DM containers are running
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose up -d
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  timeout: 120
 
 - name: Wait for DM web to be ready
   become: false
@@ -125,13 +109,13 @@
   timeout: 600
 
 # ---------------------------------------------------------------------------
-# SPA restart
+# Ensure SPAs are running
 # ---------------------------------------------------------------------------
 
-- name: Restart Auth SPA
+- name: Ensure Auth SPA is running
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose up -d
   args:
     executable: /bin/bash
   environment:
@@ -150,10 +134,10 @@
   retries: 10
   delay: 15
 
-- name: Restart Mentor SPA
+- name: Ensure Mentor SPA is running
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose down && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose up -d
   args:
     executable: /bin/bash
   environment:
@@ -172,10 +156,10 @@
   retries: 10
   delay: 15
 
-- name: Restart Skills SPA
+- name: Ensure Skills SPA is running
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose down && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose up -d
   args:
     executable: /bin/bash
   environment:

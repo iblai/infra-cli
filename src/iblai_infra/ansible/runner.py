@@ -179,15 +179,10 @@ class AnsibleRunner:
 
         is_ci = os.environ.get("CI", "").lower() in ("true", "1")
 
-        with Live(
-            self._build_display(steps, progress),
-            console=ui.console,
-            refresh_per_second=1 if is_ci else 4,
-            transient=not is_ci,
-        ) as live:
+        if is_ci:
+            # CI mode: plain text output, no Rich Live display
             for line in proc.stdout:
                 line = line.rstrip()
-
                 if line:
                     output_tail.append(line)
 
@@ -196,27 +191,75 @@ class AnsibleRunner:
                     steps[role_name]["task"] = task_desc
                 if role_name and role_name != current_role:
                     if current_role and current_role in steps:
+                        elapsed = int(time.time() - role_start_time)
                         steps[current_role]["status"] = "complete"
-                        steps[current_role]["elapsed"] = int(time.time() - role_start_time)
+                        steps[current_role]["elapsed"] = elapsed
                         completed += 1
                         progress.update(task_id, completed=completed)
+                        label = self.role_labels.get(current_role, current_role)
+                        print(f"  ✓ {label} — done ({elapsed}s)", flush=True)
 
                     current_role = role_name
                     role_start_time = time.time()
                     if role_name in steps:
                         steps[role_name]["status"] = "in_progress"
+                        label = self.role_labels.get(role_name, role_name)
+                        task_info = f" — {task_desc}" if task_desc else ""
+                        print(f"  ● {label}{task_info}...", flush=True)
+                elif role_name and role_name == current_role and task_desc:
+                    label = self.role_labels.get(role_name, role_name)
+                    print(f"    ↳ {task_desc}", flush=True)
 
                 if _FATAL_RE.match(line):
                     errors.append(line.strip())
                     if current_role and current_role in steps:
                         steps[current_role]["status"] = "error"
+                    print(f"  ✗ {line.strip()}", flush=True)
 
                 if current_role and current_role in steps and steps[current_role]["status"] == "in_progress":
                     steps[current_role]["elapsed"] = int(time.time() - role_start_time)
 
-                live.update(self._build_display(steps, progress))
-
             proc.wait()
+        else:
+            # Interactive mode: Rich Live display
+            with Live(
+                self._build_display(steps, progress),
+                console=ui.console,
+                refresh_per_second=4,
+                transient=True,
+            ) as live:
+                for line in proc.stdout:
+                    line = line.rstrip()
+
+                    if line:
+                        output_tail.append(line)
+
+                    role_name, task_desc = self._extract_role_and_task(line)
+                    if role_name and role_name in steps and task_desc:
+                        steps[role_name]["task"] = task_desc
+                    if role_name and role_name != current_role:
+                        if current_role and current_role in steps:
+                            steps[current_role]["status"] = "complete"
+                            steps[current_role]["elapsed"] = int(time.time() - role_start_time)
+                            completed += 1
+                            progress.update(task_id, completed=completed)
+
+                        current_role = role_name
+                        role_start_time = time.time()
+                        if role_name in steps:
+                            steps[role_name]["status"] = "in_progress"
+
+                    if _FATAL_RE.match(line):
+                        errors.append(line.strip())
+                        if current_role and current_role in steps:
+                            steps[current_role]["status"] = "error"
+
+                    if current_role and current_role in steps and steps[current_role]["status"] == "in_progress":
+                        steps[current_role]["elapsed"] = int(time.time() - role_start_time)
+
+                    live.update(self._build_display(steps, progress))
+
+                proc.wait()
 
         # Mark last role complete
         if current_role and current_role in steps and steps[current_role]["status"] == "in_progress":

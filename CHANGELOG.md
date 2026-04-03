@@ -1,21 +1,28 @@
 # Changelog
 
-## [1.3.0] — 2026-04-02
+## [1.3.0] — 2026-04-03
 
 ### Added
 - **`resetup` command** — `iblai infra resetup <name>` re-configures an existing environment with a new base domain and fresh secrets. Rotates all secrets (`ibl config rotate-secrets -f --include-auth`), syncs PostgreSQL and MySQL passwords, then restarts all services
 - **`launch` command** — `iblai infra launch` provisions AWS infrastructure from a pre-built AMI via Terraform (VPC, ALB, ACM certs, Route53, EC2) and configures the platform via Ansible in a single non-interactive command. All input via CLI flags for CI/CD workflows
 - **`launch-env` command** — `iblai infra launch-env` reads a `.env` file from the current directory, shows a summary with masked secrets, confirms, then launches. Simplest path for local use
+- **`service-update` command** — `iblai infra service-update` updates container images and restarts services without infrastructure changes or secret rotation. Two modes: `--host` for existing servers, `--ami-id` to launch EC2 from AMI + update + register in ALB target group. Designed for CI/CD image update workflows
 - **`.env.example`** — template with all launch variables using safe placeholder values (RFC 5737 IPs, AWS example keys)
 - **AMI support in Terraform** — new `ami_id` and `skip_user_data` variables allow launching EC2 from a custom AMI instead of vanilla Ubuntu
-- **Launch Ansible playbook** — `launch_playbook.yml` with 4 lean roles (ibl_cli_ops, ibl_launch, ibl_launch_services, final_steps) for AMI-based deployments
+- **Launch Ansible playbook** — `launch_playbook.yml` with lean roles for AMI-based deployments
+- **Service update Ansible playbook** — `service_update_playbook.yml` with 2 roles (ibl_cli_ops, ibl_service_update) for day-2 image updates
 - **`ibl_launch` role** — starts databases, sets domain, rotates secrets, syncs PostgreSQL and MySQL passwords after rotation
 - **`ibl_launch_services` role** — ECR login, DM update, edX stop/start, SPA restart with health checks, proxy reload
+- **`ibl_service_update` role** — ECR login, edX stop/prune/config save/start, DM config save/update, DM migrations, SPA restart with health checks, nginx restart
 - **SPA health checks** — all SPA launches/restarts now verify HTTP 200 on Auth (5000), Mentor (5001), Skills (5002) with 10 retries at 15s intervals
 - **Ansible progress display** — shows current task description (e.g. "Wait for DM web to be ready") instead of just "Running"
+- **Split `final_steps` role** into 3 focused roles: `integrations` (OAuth/OIDC, edX-manager, DM auth-setup, edX sync), `admin_setup` (OpenAI key, super admins, CSRF domains, LLM key), `data_seeding` (flows, LLM registry, mentors, RBAC, TimescaleDB views, analytics views)
+- **TimescaleDB support** — `ENABLE_TIMESCALEDB=true` set in platform config, `setup_timescale_views --full-setup` and `refresh_analytics_views` run during data seeding
+- **`HIDE_ANALYTICS='false'`** — set as quoted string in SPA mentor config
 - **CLI ops release tag prompt** — both setup and resetup now prompt for iblai-cli-ops release tag
 - **iblai-prod-images installation** — ibl_cli_ops role installs via `uv pip install iblai-images[sumac]` from `iblai/iblai-prod-images`, which pins both CLI ops and all container image versions
-- **AnsibleRunner parameterization** — supports multiple playbooks and role label sets (setup vs launch)
+- **AnsibleRunner parameterization** — supports multiple playbooks and role label sets (setup, launch, service-update)
+- **EC2 launch + target group helpers** — `launch_instance`, `wait_for_instance_running`, `register_target`, `terminate_instance` in `providers/aws.py`
 
 ### Changed
 - **Image versions controlled by iblai-prod-images** — removed all hardcoded image tags from Ansible roles (DM, edX, MFE, postgres, SPA, supporting services). The CLI now rejects overrides; versions are pinned by the `iblai-images` package

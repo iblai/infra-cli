@@ -227,7 +227,37 @@ iblai infra launch \
 
 See `iblai infra launch --help` for all optional flags (instance type, volume size, region, AI features, etc.).
 
-### 6. Manage environments
+### 6. Service update (image updates, CI/CD)
+
+Update container images and restart services on an existing server or a freshly launched AMI. No infrastructure provisioning, no secret rotation.
+
+**Update an existing server:**
+
+```bash
+iblai infra service-update \
+  --host 10.0.1.50 \
+  --ssh-key ~/.ssh/key.pem \
+  --git-token $GIT_TOKEN
+```
+
+**Launch from AMI + update + register in ALB target group:**
+
+```bash
+iblai infra service-update \
+  --ami-id $AMI_ID \
+  --subnet-id $SUBNET_ID \
+  --security-group-id $SECURITY_GROUP_ID \
+  --target-group-arn $TARGET_GROUP_ARN \
+  --key-pair-name $KEY_PAIR_NAME \
+  --ssh-key ~/.ssh/key.pem \
+  --git-token $GIT_TOKEN \
+  --aws-key-id $AWS_ACCESS_KEY_ID \
+  --aws-secret-key $AWS_SECRET_ACCESS_KEY
+```
+
+What it does: installs latest `iblai-prod-images` (new image versions) → edX stop/start → DM update → DM migrations → SPA restart → nginx restart.
+
+### 7. Manage environments
 
 ```bash
 iblai infra list                # List all managed environments

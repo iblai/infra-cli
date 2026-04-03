@@ -1,0 +1,202 @@
+---
+# ---------------------------------------------------------------------------
+# ECR login
+# ---------------------------------------------------------------------------
+
+- name: Login to ECR
+  become: false
+  shell: |
+    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 765174860755.dkr.ecr.us-east-1.amazonaws.com
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+# ---------------------------------------------------------------------------
+# edX update
+# ---------------------------------------------------------------------------
+
+- name: Stop edX services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl edx stop
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  timeout: 600
+  ignore_errors: true
+
+- name: Prune stopped containers
+  become: false
+  shell: docker system prune -f
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Save edX config
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save && ibl tutor config save
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Start edX services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl edx start -d
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  timeout: 3600
+
+- name: Wait for LMS to be ready
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:8600/heartbeat 2>/dev/null | grep -qE '^(200|301|302|404)$'
+  args:
+    executable: /bin/bash
+  register: lms_health
+  until: lms_health.rc == 0
+  retries: 40
+  delay: 15
+
+# ---------------------------------------------------------------------------
+# DM update
+# ---------------------------------------------------------------------------
+
+- name: Update DM services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save && ibl dm update
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  timeout: 1800
+
+- name: Wait for DM web to be ready
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:8400/ 2>/dev/null | grep -qE '^(200|301|302|404)$'
+  args:
+    executable: /bin/bash
+  register: dm_health
+  until: dm_health.rc == 0
+  retries: 40
+  delay: 15
+
+- name: Run DM migrations
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py migrate --noinput
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  timeout: 600
+
+# ---------------------------------------------------------------------------
+# SPA restart
+# ---------------------------------------------------------------------------
+
+- name: Restart Auth SPA
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down && docker compose up -d
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  retries: 2
+  delay: 5
+
+- name: Wait for Auth SPA to be ready
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ 2>/dev/null | grep -qE '^(200|301|302)$'
+  args:
+    executable: /bin/bash
+  register: auth_health
+  until: auth_health.rc == 0
+  retries: 10
+  delay: 15
+
+- name: Restart Mentor SPA
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose down && docker compose up -d
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  retries: 2
+  delay: 5
+
+- name: Wait for Mentor SPA to be ready
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null | grep -qE '^(200|301|302)$'
+  args:
+    executable: /bin/bash
+  register: mentor_health
+  until: mentor_health.rc == 0
+  retries: 10
+  delay: 15
+
+- name: Restart Skills SPA
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose down && docker compose up -d
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  retries: 2
+  delay: 5
+
+- name: Wait for Skills SPA to be ready
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/ 2>/dev/null | grep -qE '^(200|301|302)$'
+  args:
+    executable: /bin/bash
+  register: skills_health
+  until: skills_health.rc == 0
+  retries: 10
+  delay: 15
+
+# ---------------------------------------------------------------------------
+# Nginx
+# ---------------------------------------------------------------------------
+
+- name: Restart nginx
+  shell: systemctl restart nginx

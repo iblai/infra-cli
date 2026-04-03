@@ -49,6 +49,11 @@ LAUNCH_ROLE_LABELS: dict[str, str] = {
     "data_seeding": "Data Seeding",
 }
 
+SERVICE_UPDATE_ROLE_LABELS: dict[str, str] = {
+    "ibl_cli_ops": "iblai-cli-ops",
+    "ibl_service_update": "Service Update",
+}
+
 TOTAL_ROLES = len(ROLE_LABELS)
 
 # Regex to match TASK lines: "TASK [role_name : task description]"

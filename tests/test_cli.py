@@ -587,6 +587,58 @@ class TestLaunchCommand:
 
 
 # ---------------------------------------------------------------------------
+# service-update command
+# ---------------------------------------------------------------------------
+
+
+class TestServiceUpdateCommand:
+    def test_missing_required_flags(self):
+        result = runner.invoke(app, ["infra", "service-update"])
+        assert result.exit_code != 0
+
+    def test_help_shows_service_update(self):
+        result = runner.invoke(app, ["infra", "service-update", "--help"])
+        assert result.exit_code == 0
+        assert "--host" in result.stdout
+        assert "--ssh-key" in result.stdout
+        assert "--git-token" in result.stdout
+        assert "--ami-id" in result.stdout
+
+    def test_no_host_or_ami(self, tmp_path):
+        key = tmp_path / "key.pem"
+        key.write_text("fake")
+        key.chmod(0o600)
+        result = runner.invoke(app, [
+            "infra", "service-update",
+            "--ssh-key", str(key),
+            "--git-token", "ghp_test",
+        ])
+        assert result.exit_code != 0
+
+    def test_ami_missing_infra_flags(self, tmp_path):
+        key = tmp_path / "key.pem"
+        key.write_text("fake")
+        key.chmod(0o600)
+        result = runner.invoke(app, [
+            "infra", "service-update",
+            "--ami-id", "ami-test123",
+            "--ssh-key", str(key),
+            "--git-token", "ghp_test",
+        ])
+        assert result.exit_code != 0
+
+    def test_ssh_key_not_found(self, tmp_path):
+        args = [
+            "infra", "service-update",
+            "--host", "10.0.1.50",
+            "--ssh-key", "/nonexistent/key.pem",
+            "--git-token", "ghp_test",
+        ]
+        result = runner.invoke(app, args)
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # permissions command
 # ---------------------------------------------------------------------------
 

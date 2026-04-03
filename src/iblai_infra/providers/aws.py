@@ -320,3 +320,74 @@ def check_permissions(session: boto3.Session) -> list[PermissionCheckResult]:
             ))
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# EC2 instance launch & target group registration
+# ---------------------------------------------------------------------------
+
+
+def launch_instance(
+    session: boto3.Session,
+    ami_id: str,
+    instance_type: str,
+    key_pair_name: str,
+    subnet_id: str,
+    security_group_id: str,
+    volume_size: int = 200,
+    name_tag: str = "service-update",
+) -> str:
+    """Launch an EC2 instance from an AMI. Returns the instance ID."""
+    ec2 = session.client("ec2")
+    response = ec2.run_instances(
+        ImageId=ami_id,
+        InstanceType=instance_type,
+        KeyName=key_pair_name,
+        SubnetId=subnet_id,
+        SecurityGroupIds=[security_group_id],
+        MinCount=1,
+        MaxCount=1,
+        BlockDeviceMappings=[{
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+                "VolumeSize": volume_size,
+                "VolumeType": "gp3",
+                "Encrypted": True,
+            },
+        }],
+        TagSpecifications=[{
+            "ResourceType": "instance",
+            "Tags": [{"Key": "Name", "Value": name_tag}],
+        }],
+    )
+    return response["Instances"][0]["InstanceId"]
+
+
+def wait_for_instance_running(session: boto3.Session, instance_id: str) -> str:
+    """Wait for an instance to be running and return its public IP."""
+    ec2 = session.client("ec2")
+    waiter = ec2.get_waiter("instance_running")
+    waiter.wait(InstanceIds=[instance_id])
+
+    response = ec2.describe_instances(InstanceIds=[instance_id])
+    return response["Reservations"][0]["Instances"][0].get("PublicIpAddress", "")
+
+
+def register_target(
+    session: boto3.Session,
+    target_group_arn: str,
+    instance_id: str,
+    port: int = 80,
+) -> None:
+    """Register an instance in an ALB target group."""
+    elbv2 = session.client("elbv2")
+    elbv2.register_targets(
+        TargetGroupArn=target_group_arn,
+        Targets=[{"Id": instance_id, "Port": port}],
+    )
+
+
+def terminate_instance(session: boto3.Session, instance_id: str) -> None:
+    """Terminate an EC2 instance."""
+    ec2 = session.client("ec2")
+    ec2.terminate_instances(InstanceIds=[instance_id])

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from iblai_infra.ansible.runner import LAUNCH_ROLE_LABELS, ROLE_LABELS, TOTAL_ROLES, AnsibleRunner
+from iblai_infra.ansible.runner import LAUNCH_ROLE_LABELS, ROLE_LABELS, SERVICE_UPDATE_ROLE_LABELS, TOTAL_ROLES, AnsibleRunner
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +250,13 @@ class TestConstants:
 
     def test_launch_role_labels_count(self):
         assert len(LAUNCH_ROLE_LABELS) == 6
+
+    def test_service_update_role_labels(self):
+        expected = {"ibl_cli_ops", "ibl_service_update"}
+        assert set(SERVICE_UPDATE_ROLE_LABELS.keys()) == expected
+
+    def test_service_update_role_labels_count(self):
+        assert len(SERVICE_UPDATE_ROLE_LABELS) == 2
 
 
 # ---------------------------------------------------------------------------

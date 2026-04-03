@@ -34,3 +34,31 @@
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+
+- name: Setup TimescaleDB views
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && echo "y" | docker compose exec -T web ./manage.py setup_timescale_views --full-setup
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  ignore_errors: true
+
+- name: Recreate analytics views
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py refresh_analytics_views --recreate
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Refresh analytics views
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py refresh_analytics_views
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"

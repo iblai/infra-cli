@@ -101,7 +101,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
-  timeout: 1800
+  timeout: 3600
 
 - name: Wait for DM web to be ready
   become: false

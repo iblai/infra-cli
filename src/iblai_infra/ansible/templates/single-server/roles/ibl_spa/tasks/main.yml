@@ -109,6 +109,7 @@
     mentor['SKIP_TEST'] = 'true'
     mentor['ENABLE_APP_SITE_ASSOCIATION'] = 'true'
     mentor['CANVAS_ADMIN_ONLY'] = 'false'
+    mentor['HIDE_ANALYTICS'] = 'false'
     skills = spa.setdefault('SKILLS', {})
     skills['ENABLE_RBAC'] = 'true'
     with open(config_path, 'w') as f:

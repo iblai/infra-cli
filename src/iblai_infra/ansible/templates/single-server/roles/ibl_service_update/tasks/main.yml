@@ -187,6 +187,7 @@
   until: mentor_health_final.rc == 0
   retries: 10
   delay: 15
+  ignore_errors: true
 
 - name: Restart Skills SPA
   become: false

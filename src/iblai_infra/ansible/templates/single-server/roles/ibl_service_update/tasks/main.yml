@@ -220,6 +220,42 @@
   delay: 15
 
 # ---------------------------------------------------------------------------
+# Integrations (OAuth/OIDC — prevents 409 auth errors)
+# ---------------------------------------------------------------------------
+
+- name: Run OAuth and OIDC integrations
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl launch --ibl-oauth --ibl-oidc --ibl-edx-manager
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  timeout: 300
+
+- name: Run DM auth setup
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl dm auth-setup
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  timeout: 120
+
+# ---------------------------------------------------------------------------
 # Nginx + proxy reload
 # ---------------------------------------------------------------------------
 

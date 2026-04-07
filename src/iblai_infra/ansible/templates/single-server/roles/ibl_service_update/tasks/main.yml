@@ -85,7 +85,7 @@
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
-  timeout: 120
+  timeout: 600
 
 - name: Wait for DM web to be ready
   become: false

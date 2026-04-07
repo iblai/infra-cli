@@ -406,6 +406,7 @@ class AnsibleRunner:
             "edx_version": self.config.edx_version,
             "env_config": self.config.env_config,
             "cli_ops_release_tag": self.config.cli_ops_release_tag,
+            "prod_images_tag": self.config.prod_images_tag,
             "is_resetup": self.config.is_resetup,
             "enable_ai": self.config.enable_ai,
             "openai_api_key": self.config.openai_api_key,

@@ -224,6 +224,7 @@ class SetupConfig(BaseModel):
     edx_version: str = "sumac"
     env_config: str = "single-server"
     cli_ops_release_tag: str = "3.19.0"
+    prod_images_tag: str = "main"
     enable_ai: bool = True
     is_resetup: bool = False
     aws_access_key_id: str

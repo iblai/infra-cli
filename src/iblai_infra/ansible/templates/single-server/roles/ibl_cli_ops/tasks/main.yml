@@ -27,7 +27,7 @@
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    uv pip install "iblai-images[sumac] @ git+https://{{ git_access_token }}@github.com/iblai/iblai-prod-images@main#egg=iblai-images" --reinstall
+    uv pip install "iblai-images[sumac] @ git+https://{{ git_access_token }}@github.com/iblai/iblai-prod-images@{{ prod_images_tag | default('main') }}#egg=iblai-images" --reinstall
   args:
     executable: /bin/bash
   environment:

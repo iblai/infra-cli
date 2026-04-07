@@ -893,6 +893,7 @@ def service_update(
     aws_key_id: str | None = typer.Option(None, "--aws-key-id", help="AWS access key ID (with --ami-id)"),
     aws_secret_key: str | None = typer.Option(None, "--aws-secret-key", help="AWS secret access key (with --ami-id)"),
     aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region (with --ami-id)"),
+    prod_images_tag: str = typer.Option("main", "--prod-images-tag", help="iblai-prod-images git tag or branch"),
 ) -> None:
     """Update container images and restart services.
 
@@ -924,12 +925,12 @@ def service_update(
             instance_type=instance_type, volume_size=volume_size,
             aws_key_id=aws_key_id, aws_secret_key=aws_secret_key,
             aws_region=aws_region, ssh_key=ssh_key, git_token=git_token,
-            ssh_user=ssh_user, name=name,
+            ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
         )
     elif host:
         _run_service_update(
             host=host, ssh_key=ssh_key, git_token=git_token,
-            ssh_user=ssh_user, name=name,
+            ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
         )
     else:
         ui.error("Either --host or --ami-id is required.")
@@ -943,6 +944,7 @@ def _run_service_update(
     git_token: str,
     ssh_user: str,
     name: str | None,
+    prod_images_tag: str = "main",
 ) -> None:
     """Install latest images and restart all services."""
     import os
@@ -992,6 +994,7 @@ def _run_service_update(
         ssh_user=ssh_user,
         target_host=host,
         base_domain="service-update",
+        prod_images_tag=prod_images_tag,
         aws_access_key_id="",
         aws_secret_access_key="",
         aws_default_region="us-east-1",
@@ -1081,6 +1084,7 @@ def _run_service_update_from_ami(
     git_token: str,
     ssh_user: str,
     name: str | None,
+    prod_images_tag: str = "main",
 ) -> None:
     """Launch EC2 from AMI, run service update, register in target group."""
     import os
@@ -1172,6 +1176,7 @@ def _run_service_update_from_ami(
         ssh_user=ssh_user,
         target_host=host,
         base_domain="service-update",
+        prod_images_tag=prod_images_tag,
         aws_access_key_id="",
         aws_secret_access_key="",
         aws_default_region=aws_region,

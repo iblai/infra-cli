@@ -1,7 +1,16 @@
 ---
 # ---------------------------------------------------------------------------
-# ECR login
+# Pre-flight: fix ownership + ECR login
 # ---------------------------------------------------------------------------
+
+- name: Restore postgres data directory ownership
+  file:
+    path: "{{ ibl_root }}/app/ibl-dm/ibl-dm-pro/data/postgres"
+    state: directory
+    owner: "999"
+    group: "999"
+    recurse: true
+  ignore_errors: true
 
 - name: Login to ECR
   become: false
@@ -13,23 +22,42 @@
     HOME: "/home/{{ ansible_user }}"
 
 # ---------------------------------------------------------------------------
-# edX update
+# Config save (regenerate all compose files with latest prod-images)
 # ---------------------------------------------------------------------------
 
-- name: Save edX config
+- name: Save platform config
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl tutor config save
+    ibl config save
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Save edX tutor config
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl tutor config save
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+# ---------------------------------------------------------------------------
+# edX: ensure running + health check
+# ---------------------------------------------------------------------------
 
 - name: Ensure edX services are running
   become: false
@@ -59,23 +87,8 @@
   delay: 15
 
 # ---------------------------------------------------------------------------
-# DM update
+# DM: ensure running + wait for collectstatic + health check
 # ---------------------------------------------------------------------------
-
-- name: Save DM config
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
 
 - name: Ensure DM containers are running
   become: false
@@ -95,7 +108,7 @@
     executable: /bin/bash
   register: dm_health
   until: dm_health.rc == 0
-  retries: 40
+  retries: 60
   delay: 15
 
 - name: Run DM migrations
@@ -109,19 +122,17 @@
   timeout: 600
 
 # ---------------------------------------------------------------------------
-# Ensure SPAs are running
+# SPAs: force restart (containers may have exited from AMI shutdown)
 # ---------------------------------------------------------------------------
 
-- name: Ensure Auth SPA is running
+- name: Restart Auth SPA
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down 2>/dev/null; docker compose up -d
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
-  retries: 2
-  delay: 5
 
 - name: Wait for Auth SPA to be ready
   become: false
@@ -134,16 +145,14 @@
   retries: 10
   delay: 15
 
-- name: Ensure Mentor SPA is running
+- name: Restart Mentor SPA
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose down 2>/dev/null; docker compose up -d
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
-  retries: 2
-  delay: 5
 
 - name: Wait for Mentor SPA to be ready
   become: false
@@ -156,16 +165,14 @@
   retries: 10
   delay: 15
 
-- name: Ensure Skills SPA is running
+- name: Restart Skills SPA
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose down 2>/dev/null; docker compose up -d
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
-  retries: 2
-  delay: 5
 
 - name: Wait for Skills SPA to be ready
   become: false
@@ -179,8 +186,23 @@
   delay: 15
 
 # ---------------------------------------------------------------------------
-# Nginx
+# Nginx + proxy reload
 # ---------------------------------------------------------------------------
+
+- name: Reload proxy and restart nginx
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl global-proxy reload 2>/dev/null || true
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
 
 - name: Restart nginx
   shell: systemctl restart nginx

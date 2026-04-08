@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1] — 2026-04-07
+
+### Added
+- **Smoke tests in service-update** — after nginx restart, verifies SSO login for all 4 browser test users, DM API accessibility, and Mentor chat endpoint. Reports a clear pass/fail summary in CI logs before handing off to Playwright tests. Advisory only (does not fail the pipeline)
+
+### Fixed
+- **Target group registration order** — `register_target()` now registers the new instance FIRST, then deregisters old targets. Prevents empty target group (ALB 503) if the pipeline fails between deregister and register
+
 ## [1.3.0] — 2026-04-03
 
 ### Added

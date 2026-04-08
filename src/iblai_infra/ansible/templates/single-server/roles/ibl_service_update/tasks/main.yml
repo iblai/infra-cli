@@ -351,3 +351,193 @@
 
 - name: Restart nginx
   shell: systemctl restart nginx
+
+# ---------------------------------------------------------------------------
+# Smoke test: verify SSO login + DM API + Mentor chat before handing off
+# ---------------------------------------------------------------------------
+
+- name: "Smoke test: get base domain from config"
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    python3 -c "
+import yaml
+with open('{{ ibl_root }}/app/ibl-dm/ibl-dm-pro/config.yml') as f:
+    cfg = yaml.safe_load(f)
+print('DOMAIN_RESULT:' + cfg.get('BASE_DOMAIN', ''))
+" 2>/dev/null | grep '^DOMAIN_RESULT:' | sed 's/^DOMAIN_RESULT://'
+  args:
+    executable: /bin/bash
+  register: base_domain_result
+
+- name: "Smoke test: set domain fact"
+  set_fact:
+    smoke_base_domain: "{{ base_domain_result.stdout | trim }}"
+
+- name: "Smoke test: get SSO credentials from LMS"
+  become: false
+  shell: |
+    SSO_CREDS=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
+    from oauth2_provider.models import Application
+    try:
+        app = Application.objects.get(name='spa-sso')
+        print('SSO_RESULT:' + app.client_id + '|' + app.client_secret)
+    except Application.DoesNotExist:
+        print('SSO_RESULT:MISSING')
+    " 2>/dev/null | grep '^SSO_RESULT:' | sed 's/^SSO_RESULT://')
+
+    if [ -z "$SSO_CREDS" ] || [ "$SSO_CREDS" = "MISSING" ]; then
+      echo "SMOKE_SSO:FAIL|No spa-sso OAuth application found in LMS"
+      exit 1
+    fi
+    echo "SMOKE_SSO:$SSO_CREDS"
+  args:
+    executable: /bin/bash
+  register: sso_creds_result
+
+- name: "Smoke test: set SSO credential facts"
+  set_fact:
+    smoke_sso_client_id: "{{ sso_creds_result.stdout | regex_search('SMOKE_SSO:([^|]+)', '\\1') | first }}"
+    smoke_sso_client_secret: "{{ sso_creds_result.stdout | regex_search('SMOKE_SSO:[^|]+\\|(.+)', '\\1') | first }}"
+
+- name: "Smoke test: verify SSO token for all browser test users"
+  become: false
+  shell: |
+    AUTH_URL="https://auth.{{ smoke_base_domain }}"
+    LMS_URL="https://{{ smoke_base_domain }}:8600"
+    USERS=("iblaiuserchromenew@ibleducation.com" "iblaiuserfirefoxnew@ibleducation.com" "iblaiusersafarinew@ibleducation.com" "iblaiuseredgenew@ibleducation.com")
+    PASSWORD="ibledu_2024"
+    CLIENT_ID="{{ smoke_sso_client_id }}"
+    CLIENT_SECRET="{{ smoke_sso_client_secret }}"
+    FAILED=0
+
+    echo "=== SSO Login Smoke Test ==="
+    echo "Auth URL: $AUTH_URL"
+    echo "LMS URL (internal): http://localhost:8600"
+    echo ""
+
+    for USER in "${USERS[@]}"; do
+      # Request token from LMS OAuth endpoint (internal, bypasses ALB)
+      RESPONSE=$(curl -sk -X POST "http://localhost:8600/oauth2/access_token/" \
+        -d "grant_type=password" \
+        -d "client_id=$CLIENT_ID" \
+        -d "client_secret=$CLIENT_SECRET" \
+        -d "username=$USER" \
+        -d "password=$PASSWORD" \
+        -w "\nHTTP_CODE:%{http_code}" \
+        2>/dev/null)
+
+      HTTP_CODE=$(echo "$RESPONSE" | grep "^HTTP_CODE:" | sed 's/^HTTP_CODE://')
+      BODY=$(echo "$RESPONSE" | grep -v "^HTTP_CODE:")
+
+      if echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'access_token' in d" 2>/dev/null; then
+        echo "PASS: $USER (HTTP $HTTP_CODE)"
+      else
+        echo "FAIL: $USER (HTTP $HTTP_CODE)"
+        echo "  Response: $(echo "$BODY" | head -1)"
+        FAILED=$((FAILED + 1))
+      fi
+    done
+
+    echo ""
+    if [ $FAILED -gt 0 ]; then
+      echo "SMOKE_LOGIN: $FAILED/4 users FAILED"
+      exit 1
+    else
+      echo "SMOKE_LOGIN: All 4 users authenticated successfully"
+    fi
+  args:
+    executable: /bin/bash
+  register: smoke_login
+  ignore_errors: true
+
+- name: "Smoke test: verify DM API responds"
+  become: false
+  shell: |
+    echo "=== DM API Smoke Test ==="
+    HTTP=$(curl -sk -o /dev/null -w '%{http_code}' http://localhost:8400/api/ibl/v1/health/ 2>/dev/null)
+    if echo "$HTTP" | grep -qE '^(200|301|302|404)$'; then
+      echo "PASS: DM API responded (HTTP $HTTP)"
+    else
+      # Fallback: try root
+      HTTP2=$(curl -sk -o /dev/null -w '%{http_code}' http://localhost:8400/ 2>/dev/null)
+      if echo "$HTTP2" | grep -qE '^(200|301|302|404)$'; then
+        echo "PASS: DM root responded (HTTP $HTTP2)"
+      else
+        echo "FAIL: DM not reachable (HTTP $HTTP / $HTTP2)"
+        exit 1
+      fi
+    fi
+  args:
+    executable: /bin/bash
+  register: smoke_dm
+  ignore_errors: true
+
+- name: "Smoke test: verify Mentor chat endpoint"
+  become: false
+  shell: |
+    echo "=== Mentor Chat Smoke Test ==="
+    # Check mentor SPA is serving
+    HTTP=$(curl -sk -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null)
+    echo "Mentor SPA HTTP: $HTTP"
+
+    if ! echo "$HTTP" | grep -qE '^(200|301|302)$'; then
+      echo "FAIL: Mentor SPA not responding (HTTP $HTTP)"
+      exit 1
+    fi
+
+    # Check DM mentor/chat API endpoint exists (unauthenticated → 401/403 is OK)
+    CHAT_HTTP=$(curl -sk -o /dev/null -w '%{http_code}' http://localhost:8400/api/ibl/manage/v1/mentor/ 2>/dev/null)
+    echo "DM Mentor API HTTP: $CHAT_HTTP"
+
+    if echo "$CHAT_HTTP" | grep -qE '^(200|301|302|401|403|404)$'; then
+      echo "PASS: Mentor API reachable (HTTP $CHAT_HTTP)"
+    else
+      echo "FAIL: Mentor API unreachable (HTTP $CHAT_HTTP)"
+      exit 1
+    fi
+  args:
+    executable: /bin/bash
+  register: smoke_mentor
+  ignore_errors: true
+
+- name: "Smoke test: summary"
+  become: false
+  shell: |
+    echo ""
+    echo "╔══════════════════════════════════════════╗"
+    echo "║         SMOKE TEST RESULTS               ║"
+    echo "╠══════════════════════════════════════════╣"
+    echo "║ SSO Login:    {{ 'PASS ✓' if smoke_login.rc == 0 else 'FAIL ✗' }}                       ║"
+    echo "║ DM API:       {{ 'PASS ✓' if smoke_dm.rc == 0 else 'FAIL ✗' }}                       ║"
+    echo "║ Mentor Chat:  {{ 'PASS ✓' if smoke_mentor.rc == 0 else 'FAIL ✗' }}                       ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+    {% if smoke_login.rc != 0 %}
+    echo "SSO Login details:"
+    echo "{{ smoke_login.stdout | default('no output') }}"
+    echo ""
+    {% endif %}
+    {% if smoke_dm.rc != 0 %}
+    echo "DM API details:"
+    echo "{{ smoke_dm.stdout | default('no output') }}"
+    echo ""
+    {% endif %}
+    {% if smoke_mentor.rc != 0 %}
+    echo "Mentor Chat details:"
+    echo "{{ smoke_mentor.stdout | default('no output') }}"
+    echo ""
+    {% endif %}
+    {% if smoke_login.rc != 0 or smoke_dm.rc != 0 or smoke_mentor.rc != 0 %}
+    echo "WARNING: Some smoke tests failed. The environment may not be fully functional."
+    echo "Proceeding — full Playwright tests will catch remaining issues."
+    {% else %}
+    echo "All smoke tests passed. Environment is ready for Playwright tests."
+    {% endif %}
+  args:
+    executable: /bin/bash
+  # Smoke tests are advisory — don't fail the entire service-update
+  ignore_errors: true

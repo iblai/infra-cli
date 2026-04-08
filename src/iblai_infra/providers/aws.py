@@ -379,10 +379,16 @@ def register_target(
     instance_id: str,
     port: int = 80,
 ) -> None:
-    """Deregister existing targets, then register the new instance."""
+    """Register the new instance, then deregister old targets to prevent empty TG."""
     elbv2 = session.client("elbv2")
 
-    # Deregister any existing targets to prevent split-brain routing
+    # Register new instance FIRST (prevents empty target group if pipeline fails)
+    elbv2.register_targets(
+        TargetGroupArn=target_group_arn,
+        Targets=[{"Id": instance_id, "Port": port}],
+    )
+
+    # Then deregister old targets to prevent split-brain routing
     try:
         existing = elbv2.describe_target_health(TargetGroupArn=target_group_arn)
         old_targets = [
@@ -398,10 +404,6 @@ def register_target(
     except Exception:
         pass  # Best-effort cleanup
 
-    elbv2.register_targets(
-        TargetGroupArn=target_group_arn,
-        Targets=[{"Id": instance_id, "Port": port}],
-    )
 
 
 def terminate_instance(session: boto3.Session, instance_id: str) -> None:

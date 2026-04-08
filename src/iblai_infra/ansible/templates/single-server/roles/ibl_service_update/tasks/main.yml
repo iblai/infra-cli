@@ -272,54 +272,54 @@
   timeout: 600
   ignore_errors: true
 
-- name: Recreate SPA SSO OAuth app in LMS
+- name: Sync SPA SSO credentials from LMS to Auth SPA config
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    # Read SSO client ID from auth.yml
-    SSO_CLIENT_ID=$(python3 -c "
-    import yaml
-    with open('{{ ibl_root }}/auth.yml') as f:
-        auth = yaml.safe_load(f) or {}
-    print(auth.get('IBL_SPA', {}).get('EDX_SSO_CLIENT_ID', ''))
-    ")
-    SSO_CLIENT_SECRET=$(python3 -c "
-    import yaml
-    with open('{{ ibl_root }}/auth.yml') as f:
-        auth = yaml.safe_load(f) or {}
-    print(auth.get('IBL_SPA', {}).get('EDX_SSO_CLIENT_SECRET', ''))
-    ")
-    BASE_DOMAIN=$(python3 -c "
-    import yaml
-    with open('{{ ibl_root }}/config.yml') as f:
-        cfg = yaml.safe_load(f) or {}
-    print(cfg.get('BASE_DOMAIN', ''))
-    ")
-    if [ -n "$SSO_CLIENT_ID" ] && [ -n "$BASE_DOMAIN" ]; then
-      docker exec ibl_prod_lms ./manage.py lms shell -c "
+
+    # Read the actual SSO client credentials from LMS database (source of truth)
+    SSO_CREDS=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
     from oauth2_provider.models import Application
-    from django.contrib.auth.models import User
-    usr = User.objects.filter(is_superuser=True).first()
-    app, created = Application.objects.update_or_create(
-        name='spa-sso',
-        defaults={
-            'user': usr,
-            'client_id': '$SSO_CLIENT_ID',
-            'client_secret': '$SSO_CLIENT_SECRET',
-            'client_type': 'confidential',
-            'authorization_grant_type': 'password',
-            'redirect_uris': 'https://web.$BASE_DOMAIN',
-            'skip_authorization': True,
-        }
-    )
-    print(f'spa-sso: {\"created\" if created else \"updated\"} client_id={app.client_id[:10]}...')
-    "
-      echo "SPA SSO OAuth app synced"
+    try:
+        app = Application.objects.get(name='spa-sso')
+        print(f'{app.client_id}|{app.client_secret}')
+    except Application.DoesNotExist:
+        print('MISSING')
+    " 2>/dev/null | tail -1)
+
+    IFS='|' read SSO_CLIENT_ID SSO_CLIENT_SECRET <<< "$SSO_CREDS"
+
+    if [ "$SSO_CREDS" = "MISSING" ] || [ -z "$SSO_CLIENT_ID" ]; then
+      echo "No spa-sso app in LMS, skipping"
     else
-      echo "Skipping SPA SSO - missing config"
+      echo "SSO client_id: ${SSO_CLIENT_ID:0:15}..."
+
+      # Write back to config so Auth SPA env.js picks it up
+      ibl config save --set "IBL_SPA.EDX_SSO_CLIENT_ID=$SSO_CLIENT_ID" 2>/dev/null
+      ibl config save --set "IBL_SPA.EDX_SSO_CLIENT_SECRET=$SSO_CLIENT_SECRET" 2>/dev/null
+
+      # Also read ibl_web client ID
+      IBL_WEB_ID=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
+      from oauth2_provider.models import Application
+      try:
+          app = Application.objects.get(name='ibl_web')
+          print(app.client_id)
+      except Application.DoesNotExist:
+          print('')
+      " 2>/dev/null | tail -1)
+
+      if [ -n "$IBL_WEB_ID" ]; then
+        ibl config save --set "IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID=$IBL_WEB_ID" 2>/dev/null
+        echo "ibl_web client_id: ${IBL_WEB_ID:0:15}..."
+      fi
+
+      # Regenerate config with SSO creds and restart Auth SPA
+      ibl config save 2>/dev/null
+      cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down 2>/dev/null; docker compose up -d
+      echo "Auth SPA restarted with synced SSO credentials"
     fi
   args:
     executable: /bin/bash

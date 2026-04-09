@@ -341,7 +341,7 @@
     FAILED=0
     for EMAIL in iblaiuserchromenew@ibleducation.com iblaiuserfirefoxnew@ibleducation.com iblaiusersafarinew@ibleducation.com iblaiuseredgenew@ibleducation.com; do
       USERNAME=$(echo "$EMAIL" | cut -d@ -f1)
-      MARKER=$(docker exec ibl_prod_lms ./manage.py lms shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, c = User.objects.update_or_create(email='$EMAIL', defaults={'username': '$USERNAME', 'is_active': True}); u.set_password('$PASSWORD'); u.save(); print('USER_OK=CREATED' if c else 'USER_OK=UPDATED')" 2>/dev/null | grep '^USER_OK=' | tail -1)
+      MARKER=$(docker exec ibl_prod_lms ./manage.py lms shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, c = User.objects.update_or_create(username='$USERNAME', defaults={'email': '$EMAIL', 'is_active': True}); u.set_password('$PASSWORD'); u.save(); print('USER_OK=CREATED' if c else 'USER_OK=UPDATED')" 2>/dev/null | grep '^USER_OK=' | tail -1)
       if [ -n "$MARKER" ]; then
         echo "$MARKER - $EMAIL"
       else

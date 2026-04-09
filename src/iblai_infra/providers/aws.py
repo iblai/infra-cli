@@ -241,6 +241,7 @@ REQUIRED_IAM_POLICY = {
                 "iam:DeleteServerCertificate",
                 "iam:GetServerCertificate",
                 "iam:ListServerCertificates",
+                "iam:CreateServiceLinkedRole",
                 "sts:GetCallerIdentity",
             ],
             "Resource": "*",

@@ -337,41 +337,37 @@
 - name: Ensure all browser test users exist in LMS
   become: false
   shell: |
-    USERS="iblaiuserchromenew@ibleducation.com iblaiuserfirefoxnew@ibleducation.com iblaiusersafarinew@ibleducation.com iblaiuseredgenew@ibleducation.com"
     PASSWORD="ibledu_2024"
-    CREATED=0
-    UPDATED=0
-    for EMAIL in $USERS; do
+    FAILED=0
+    for EMAIL in iblaiuserchromenew@ibleducation.com iblaiuserfirefoxnew@ibleducation.com iblaiusersafarinew@ibleducation.com iblaiuseredgenew@ibleducation.com; do
       USERNAME=$(echo "$EMAIL" | cut -d@ -f1)
-      RESULT=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
-    from django.contrib.auth import get_user_model
-    User = get_user_model()
-    try:
-        u = User.objects.get(email='${EMAIL}')
-        u.set_password('${PASSWORD}')
-        u.is_active = True
-        u.save()
-        print('USER_RESULT=UPDATED')
-    except User.DoesNotExist:
-        u = User.objects.create_user(username='${USERNAME}', email='${EMAIL}', password='${PASSWORD}', is_active=True)
-        print('USER_RESULT=CREATED')
-    " 2>/dev/null | grep '^USER_RESULT=' | sed 's/^USER_RESULT=//')
-      if [ "$RESULT" = "CREATED" ]; then
-        echo "Created $EMAIL"
-        CREATED=$((CREATED + 1))
-      elif [ "$RESULT" = "UPDATED" ]; then
-        echo "Password reset for $EMAIL"
-        UPDATED=$((UPDATED + 1))
+      echo "Processing $EMAIL (username=$USERNAME)..."
+      OUTPUT=$(docker exec ibl_prod_lms ./manage.py lms shell -c "from django.contrib.auth import get_user_model; User = get_user_model(); u, created = User.objects.update_or_create(email='$EMAIL', defaults={'username': '$USERNAME', 'is_active': True}); u.set_password('$PASSWORD'); u.save(); print('USER_OK=CREATED' if created else 'USER_OK=UPDATED')" 2>&1)
+      echo "$OUTPUT"
+      if echo "$OUTPUT" | grep -q 'USER_OK='; then
+        STATUS=$(echo "$OUTPUT" | grep 'USER_OK=' | sed 's/.*USER_OK=//')
+        echo "  $STATUS $EMAIL"
       else
-        echo "Warning - could not process $EMAIL"
+        echo "  ERROR processing $EMAIL"
+        FAILED=$((FAILED + 1))
       fi
     done
-    echo "Test users - created=$CREATED updated=$UPDATED"
+    if [ $FAILED -gt 0 ]; then
+      echo "WARNING - $FAILED users could not be processed"
+      exit 1
+    fi
+    echo "All test users ready"
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+  register: user_creation_result
   ignore_errors: true
+
+- name: Show user creation result
+  ansible.builtin.debug:
+    msg: "{{ user_creation_result.stdout_lines | default(['no output']) }}"
+  when: user_creation_result is defined
 
 # ---------------------------------------------------------------------------
 # Nginx + proxy reload

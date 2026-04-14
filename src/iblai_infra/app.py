@@ -32,7 +32,9 @@ def run_provision_wizard(show_banner: bool = True) -> None:
         save_session(credentials)
 
     # Step 2 — Project & compute
-    project_name, environment, compute = prompt_project_and_compute()
+    project_name, environment, deployment_type, compute, multi_server = (
+        prompt_project_and_compute()
+    )
 
     # Step 3 — Network & SSH
     network, ssh = prompt_network_and_ssh(credentials, project_name, environment)
@@ -44,9 +46,11 @@ def run_provision_wizard(show_banner: bool = True) -> None:
     config = InfraConfig(
         project_name=project_name,
         environment=environment,
+        deployment_type=deployment_type,
         credentials=credentials,
         network=network,
         compute=compute,
+        multi_server=multi_server,
         ssh=ssh,
         certificates=certificates,
         dns=dns,

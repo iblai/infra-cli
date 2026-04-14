@@ -5,7 +5,7 @@ from __future__ import annotations
 import questionary
 
 from iblai_infra import ui
-from iblai_infra.models import CertMethod, InfraConfig, SSHKeyMethod
+from iblai_infra.models import CertMethod, DeploymentType, InfraConfig, SSHKeyMethod
 
 TOTAL_STEPS = 5
 
@@ -31,20 +31,47 @@ def prompt_review(config: InfraConfig) -> bool:
     rows.append(("Account", config.credentials.account_id or "—"))
     rows.append(("Auth method", config.credentials.method.value))
 
+    # Deployment type
+    rows.append(("", ""))
+    rows.append(("", "[bold]Deployment[/bold]"))
+    rows.append(("Type", config.deployment_type.value.replace("-", " ").title()))
+
     # Compute
     rows.append(("", ""))
     rows.append(("", "[bold]Compute[/bold]"))
-    rows.append(("Instance type", config.compute.instance_type))
-    rows.append(("Volume", f"{config.compute.volume_size} GB {config.compute.volume_type}"))
+    if config.deployment_type == DeploymentType.MULTI and config.multi_server:
+        ms = config.multi_server
+        rows.append(("App servers", f"{ms.app_server_count} x {ms.app_server_instance_type}"))
+        rows.append(("App volume", f"{ms.app_server_volume_size} GB gp3"))
+        rows.append(("Services server", f"1 x {ms.services_instance_type}"))
+        rows.append(("Services volume", f"{ms.services_volume_size} GB gp3"))
+    else:
+        rows.append(("Instance type", config.compute.instance_type))
+        rows.append(("Volume", f"{config.compute.volume_size} GB {config.compute.volume_type}"))
     rows.append(("OS", "Ubuntu 22.04 LTS"))
+
+    # Managed services (multi-server only)
+    if config.deployment_type == DeploymentType.MULTI and config.multi_server:
+        ms = config.multi_server
+        rows.append(("", ""))
+        rows.append(("", "[bold]Managed Services[/bold]"))
+        rows.append(("MySQL (RDS)", "Enabled (Multi-AZ)" if ms.enable_mysql else "Disabled"))
+        rows.append(("PostgreSQL (RDS)", "Enabled (Multi-AZ)" if ms.enable_postgres else "Disabled"))
+        rows.append(("Redis (ElastiCache)", "Enabled (Multi-AZ)" if ms.enable_redis else "Disabled"))
 
     # Network
     rows.append(("", ""))
     rows.append(("", "[bold]Network[/bold]"))
     rows.append(("VPC CIDR", config.network.vpc_cidr))
-    rows.append(("Subnets", "2 public (multi-AZ)"))
+    if config.deployment_type == DeploymentType.MULTI:
+        rows.append(("Subnets", "Public + Private + DB + Cache (multi-AZ)"))
+    else:
+        rows.append(("Subnets", "2 public (multi-AZ)"))
     rows.append(("SSH access", f"{config.network.vpn_ip}/32 only"))
-    rows.append(("Load balancer", "Application LB (internet-facing)"))
+    if config.deployment_type == DeploymentType.MULTI and config.multi_server:
+        rows.append(("Load balancer", f"ALB ({config.multi_server.app_server_count} targets)"))
+    else:
+        rows.append(("Load balancer", "Application LB (internet-facing)"))
 
     # SSH
     rows.append(("", ""))

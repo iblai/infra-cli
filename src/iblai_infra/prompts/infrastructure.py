@@ -13,11 +13,14 @@ from iblai_infra import ui
 from iblai_infra.models import (
     AWSCredentials,
     ComputeConfig,
+    DeploymentType,
     Environment,
     INSTANCE_TYPES,
+    MultiServerConfig,
     NetworkConfig,
     SSHConfig,
     SSHKeyMethod,
+    generate_password,
 )
 from iblai_infra.providers.aws import (
     detect_current_ip,
@@ -34,8 +37,10 @@ WORKSPACE_DIR = Path.home() / ".iblai-infra"
 # Step 2 — Project & Compute
 # ---------------------------------------------------------------------------
 
-def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
-    """Prompt for project identity and compute settings."""
+def prompt_project_and_compute() -> (
+    tuple[str, Environment, DeploymentType, ComputeConfig, MultiServerConfig | None]
+):
+    """Prompt for project identity, deployment type, and compute settings."""
 
     ui.step_header(2, TOTAL_STEPS, "Project & Compute")
 
@@ -67,7 +72,34 @@ def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
     if env is None:
         ui.abort()
 
-    # ----- instance type -----
+    # ----- deployment type -----
+    deployment_type = questionary.select(
+        "Deployment type:",
+        choices=[
+            questionary.Choice(
+                "Single server  — all services on one instance",
+                value=DeploymentType.SINGLE,
+            ),
+            questionary.Choice(
+                "Multi-server   — app servers + services server + optional managed DBs",
+                value=DeploymentType.MULTI,
+            ),
+        ],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if deployment_type is None:
+        ui.abort()
+
+    multi_server = None
+
+    if deployment_type == DeploymentType.MULTI:
+        multi_server = _prompt_multi_server_config()
+        # For multi-server, compute is a placeholder (not used by the template)
+        compute = ComputeConfig()
+        return project_name, env, deployment_type, compute, multi_server
+
+    # ----- single-server: instance type -----
     instance_labels = {
         f"{itype}  — {desc}": itype for itype, desc in INSTANCE_TYPES.items()
     }
@@ -95,7 +127,7 @@ def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
         if instance_type is None:
             ui.abort()
 
-    # ----- volume -----
+    # ----- single-server: volume -----
     volume_size = questionary.text(
         "Root volume size in GB:",
         default="50",
@@ -125,7 +157,149 @@ def prompt_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
         volume_size=int(volume_size),
         volume_type=volume_type,
     )
-    return project_name, env, compute
+    return project_name, env, deployment_type, compute, multi_server
+
+
+def _prompt_multi_server_config() -> MultiServerConfig:
+    """Prompt for multi-server configuration (app servers, services, managed DBs)."""
+
+    ui.newline()
+    ui.info("[bold]App Servers[/bold] (behind the ALB)")
+
+    app_count = questionary.text(
+        "Number of app servers:",
+        default="2",
+        validate=lambda v: (v.isdigit() and 2 <= int(v) <= 10) or "Must be 2-10",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if app_count is None:
+        ui.abort()
+
+    app_instance_labels = {
+        f"{itype}  — {desc}": itype for itype, desc in INSTANCE_TYPES.items()
+    }
+    app_instance_labels["Custom (enter manually)"] = "_custom"
+
+    app_selection = questionary.autocomplete(
+        "App server instance type:",
+        choices=list(app_instance_labels.keys()),
+        default=f"t3.2xlarge  — {INSTANCE_TYPES['t3.2xlarge']}",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+        validate=lambda v: v in app_instance_labels or "Select from the list",
+    ).ask()
+    if app_selection is None:
+        ui.abort()
+    app_instance_type = app_instance_labels[app_selection]
+    if app_instance_type == "_custom":
+        app_instance_type = questionary.text(
+            "Enter instance type:",
+            validate=lambda v: bool(v.strip()) or "Required",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if app_instance_type is None:
+            ui.abort()
+
+    app_volume = questionary.text(
+        "App server volume size (GB):",
+        default="250",
+        validate=lambda v: (v.isdigit() and int(v) >= 20) or "Must be >= 20",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if app_volume is None:
+        ui.abort()
+
+    ui.newline()
+    ui.info("[bold]Services Server[/bold] (private subnet)")
+
+    svc_instance_labels = {
+        f"{itype}  — {desc}": itype for itype, desc in INSTANCE_TYPES.items()
+    }
+    svc_instance_labels["Custom (enter manually)"] = "_custom"
+
+    svc_selection = questionary.autocomplete(
+        "Services server instance type:",
+        choices=list(svc_instance_labels.keys()),
+        default=f"t3.2xlarge  — {INSTANCE_TYPES['t3.2xlarge']}",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+        validate=lambda v: v in svc_instance_labels or "Select from the list",
+    ).ask()
+    if svc_selection is None:
+        ui.abort()
+    svc_instance_type = svc_instance_labels[svc_selection]
+    if svc_instance_type == "_custom":
+        svc_instance_type = questionary.text(
+            "Enter instance type:",
+            validate=lambda v: bool(v.strip()) or "Required",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if svc_instance_type is None:
+            ui.abort()
+
+    svc_volume = questionary.text(
+        "Services server volume size (GB):",
+        default="500",
+        validate=lambda v: (v.isdigit() and int(v) >= 20) or "Must be >= 20",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if svc_volume is None:
+        ui.abort()
+
+    # ----- managed databases -----
+    ui.newline()
+    ui.info("[bold]Managed Services[/bold] (optional)")
+
+    enable_mysql = questionary.confirm(
+        "Enable managed MySQL (RDS)?",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enable_mysql is None:
+        ui.abort()
+
+    enable_postgres = questionary.confirm(
+        "Enable managed PostgreSQL (RDS)?",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enable_postgres is None:
+        ui.abort()
+
+    enable_redis = questionary.confirm(
+        "Enable managed Redis (ElastiCache)?",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enable_redis is None:
+        ui.abort()
+
+    # Generate secrets for managed services at runtime
+    mysql_password = generate_password() if enable_mysql else None
+    postgres_password = generate_password() if enable_postgres else None
+    redis_auth_token = generate_password(32) if enable_redis else None
+
+    return MultiServerConfig(
+        app_server_count=int(app_count),
+        app_server_instance_type=app_instance_type,
+        app_server_volume_size=int(app_volume),
+        services_instance_type=svc_instance_type,
+        services_volume_size=int(svc_volume),
+        enable_mysql=enable_mysql,
+        enable_postgres=enable_postgres,
+        enable_redis=enable_redis,
+        mysql_password=mysql_password,
+        postgres_password=postgres_password,
+        redis_auth_token=redis_auth_token,
+    )
 
 
 # ---------------------------------------------------------------------------

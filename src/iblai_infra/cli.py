@@ -516,6 +516,13 @@ def launch(
     admin_username: str = typer.Option("ibl_admin", "--admin-username", help="Admin username"),
     openai_key: str = typer.Option("", "--openai-key", help="OpenAI API key (optional)"),
     enable_ai: bool = typer.Option(True, "--enable-ai/--no-ai", help="Enable AI features"),
+    deployment_type: str = typer.Option("single-server", "--deployment-type", help="single-server or multi-server"),
+    app_server_count: int = typer.Option(2, "--app-server-count", help="Number of app servers (multi-server only)"),
+    services_instance_type: str = typer.Option("t3.2xlarge", "--services-instance-type", help="Services server instance type (multi-server only)"),
+    services_volume_size: int = typer.Option(500, "--services-volume-size", help="Services server volume in GB (multi-server only)"),
+    enable_mysql: bool = typer.Option(False, "--enable-mysql/--no-mysql", help="Enable managed MySQL RDS (multi-server only)"),
+    enable_postgres: bool = typer.Option(False, "--enable-postgres/--no-postgres", help="Enable managed PostgreSQL RDS (multi-server only)"),
+    enable_redis: bool = typer.Option(False, "--enable-redis/--no-redis", help="Enable managed Redis ElastiCache (multi-server only)"),
 ) -> None:
     """Launch IBL platform from a pre-built AMI. Non-interactive, CI/CD-friendly.
 
@@ -546,6 +553,13 @@ def launch(
         environment=environment, cli_tag=cli_tag,
         admin_username=admin_username, openai_key=openai_key,
         enable_ai=enable_ai,
+        deployment_type=deployment_type,
+        app_server_count=app_server_count,
+        services_instance_type=services_instance_type,
+        services_volume_size=services_volume_size,
+        enable_mysql=enable_mysql,
+        enable_postgres=enable_postgres,
+        enable_redis=enable_redis,
     )
 
 
@@ -709,6 +723,13 @@ def _run_launch(
     admin_username: str,
     openai_key: str,
     enable_ai: bool,
+    deployment_type: str = "single-server",
+    app_server_count: int = 2,
+    services_instance_type: str = "t3.2xlarge",
+    services_volume_size: int = 500,
+    enable_mysql: bool = False,
+    enable_postgres: bool = False,
+    enable_redis: bool = False,
 ) -> None:
     """Provision infrastructure from AMI and configure platform. Non-interactive."""
     import os
@@ -722,14 +743,17 @@ def _run_launch(
         CertificateConfig,
         CertMethod,
         ComputeConfig,
+        DeploymentType,
         DNSConfig,
         Environment,
         InfraConfig,
+        MultiServerConfig,
         NetworkConfig,
         ProjectState,
         SetupConfig,
         SSHConfig,
         SSHKeyMethod,
+        generate_password,
     )
     from iblai_infra.terraform.runner import TerraformRunner
     from iblai_infra.terraform.state import WORKSPACE_ROOT
@@ -752,6 +776,28 @@ def _run_launch(
     env_map = {"dev": Environment.DEV, "staging": Environment.STAGING, "prod": Environment.PROD}
     env = env_map.get(environment, Environment.STAGING)
 
+    # Map deployment type string
+    deploy_type = (
+        DeploymentType.MULTI if deployment_type == "multi-server" else DeploymentType.SINGLE
+    )
+
+    # Build multi-server config if applicable
+    multi_server = None
+    if deploy_type == DeploymentType.MULTI:
+        multi_server = MultiServerConfig(
+            app_server_count=app_server_count,
+            app_server_instance_type=instance_type,
+            app_server_volume_size=volume_size,
+            services_instance_type=services_instance_type,
+            services_volume_size=services_volume_size,
+            enable_mysql=enable_mysql,
+            enable_postgres=enable_postgres,
+            enable_redis=enable_redis,
+            mysql_password=generate_password() if enable_mysql else None,
+            postgres_password=generate_password() if enable_postgres else None,
+            redis_auth_token=generate_password(32) if enable_redis else None,
+        )
+
     # Check prerequisites
     if shutil.which("terraform") is None:
         ui.error("terraform not found. Install from https://www.terraform.io/downloads")
@@ -764,6 +810,7 @@ def _run_launch(
     infra_config = InfraConfig(
         project_name=project_name,
         environment=env,
+        deployment_type=deploy_type,
         credentials=AWSCredentials(
             method=AuthMethod.ACCESS_KEY,
             access_key_id=aws_key_id,
@@ -776,6 +823,7 @@ def _run_launch(
             volume_size=volume_size,
             ami_id=ami_id,
         ),
+        multi_server=multi_server,
         ssh=SSHConfig(
             method=SSHKeyMethod.GENERATE,
             key_name=f"{project_name}-{environment}",
@@ -1929,6 +1977,7 @@ def list_cmd() -> None:
         padding=(0, 1),
     )
     table.add_column("Name", style="bold white", min_width=16)
+    table.add_column("Type", min_width=8, justify="center")
     table.add_column("Environment", min_width=12)
     table.add_column("Region", min_width=14)
     table.add_column("Domain", min_width=16)
@@ -1959,8 +2008,17 @@ def list_cmd() -> None:
         else:
             setup_display = "[dim]\u2014[/dim]"
 
+        deploy_label = getattr(s.config, "deployment_type", None)
+        if deploy_label and deploy_label.value == "multi-server":
+            ms = getattr(s.config, "multi_server", None)
+            count = ms.app_server_count if ms else "?"
+            type_display = f"multi ({count})"
+        else:
+            type_display = "single"
+
         table.add_row(
             s.name,
+            type_display,
             s.config.environment.value.capitalize(),
             s.config.credentials.region,
             s.config.dns.base_domain,

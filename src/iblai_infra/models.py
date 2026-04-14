@@ -40,6 +40,11 @@ class Environment(str, Enum):
     PROD = "prod"
 
 
+class DeploymentType(str, Enum):
+    SINGLE = "single-server"
+    MULTI = "multi-server"
+
+
 # ---------------------------------------------------------------------------
 # AWS Region metadata
 # ---------------------------------------------------------------------------
@@ -165,6 +170,46 @@ class DNSConfig(BaseModel):
         return [s.format(domain=self.base_domain) for s in IBL_SUBDOMAINS]
 
 
+class MultiServerConfig(BaseModel):
+    """Configuration for multi-server deployments (app servers + services server)."""
+    app_server_count: int = 2
+    app_server_instance_type: str = "t3.2xlarge"
+    app_server_volume_size: int = 250
+    services_instance_type: str = "t3.2xlarge"
+    services_volume_size: int = 500
+
+    # Optional managed services
+    enable_mysql: bool = False
+    mysql_instance_class: str = "db.r6g.large"
+    mysql_storage_size: int = 300
+    enable_postgres: bool = False
+    postgres_instance_class: str = "db.r6g.large"
+    postgres_storage_size: int = 300
+    enable_redis: bool = False
+    redis_instance_type: str = "cache.r6g.xlarge"
+
+    # Secrets — generated at runtime, never serialized to state.json
+    mysql_password: str | None = Field(default=None, exclude=True)
+    postgres_password: str | None = Field(default=None, exclude=True)
+    redis_auth_token: str | None = Field(default=None, exclude=True)
+
+    @field_validator("app_server_count")
+    @classmethod
+    def validate_app_server_count(cls, v: int) -> int:
+        if v < 2:
+            raise ValueError("App server count must be at least 2")
+        if v > 10:
+            raise ValueError("App server count must be 10 or fewer")
+        return v
+
+    @field_validator("app_server_volume_size", "services_volume_size")
+    @classmethod
+    def validate_volume_sizes(cls, v: int) -> int:
+        if v < 20:
+            raise ValueError("Volume size must be at least 20 GB")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Top-level config — the single contract
 # ---------------------------------------------------------------------------
@@ -172,9 +217,11 @@ class DNSConfig(BaseModel):
 class InfraConfig(BaseModel):
     project_name: str
     environment: Environment
+    deployment_type: DeploymentType = DeploymentType.SINGLE
     credentials: AWSCredentials
     network: NetworkConfig
     compute: ComputeConfig
+    multi_server: MultiServerConfig | None = None
     ssh: SSHConfig
     certificates: CertificateConfig
     dns: DNSConfig

@@ -20,6 +20,7 @@ from rich.status import Status
 from iblai_infra import ui
 from iblai_infra.models import (
     CertMethod,
+    DeploymentType,
     InfraConfig,
     ProjectState,
     SSHKeyMethod,
@@ -52,6 +53,14 @@ RESOURCE_LABELS: dict[str, str] = {
     "aws_route53_record": "DNS Record",
     "aws_lb_listener_certificate": "ALB Certificate",
     "aws_iam_server_certificate": "IAM Certificate",
+    "aws_nat_gateway": "NAT Gateway",
+    "aws_eip": "Elastic IP",
+    "aws_db_instance": "RDS Database",
+    "aws_db_subnet_group": "DB Subnet Group",
+    "aws_elasticache_replication_group": "Redis Cluster",
+    "aws_elasticache_subnet_group": "Cache Subnet Group",
+    "aws_efs_file_system": "EFS File System",
+    "aws_efs_mount_target": "EFS Mount Target",
 }
 
 
@@ -412,7 +421,8 @@ class TerraformRunner:
     def _copy_templates(self) -> None:
         """Copy Terraform template files to workspace."""
         self.ws.mkdir(parents=True, exist_ok=True)
-        template_dir = Path(__file__).parent / "templates" / "aws" / "single-server"
+        topology = self.config.deployment_type.value  # "single-server" or "multi-server"
+        template_dir = Path(__file__).parent / "templates" / "aws" / topology
         if not template_dir.exists():
             ui.abort(f"Template directory not found: {template_dir}")
         for f in template_dir.iterdir():
@@ -499,6 +509,29 @@ class TerraformRunner:
                 tf("certificate_chain_file", "cert-chain.pem")
         else:
             tf("certificate_method", "none")
+
+        # Multi-server specific variables
+        if c.deployment_type == DeploymentType.MULTI and c.multi_server:
+            ms = c.multi_server
+            tf("app_server_count", ms.app_server_count)
+            tf("app_server_instance_type", ms.app_server_instance_type)
+            tf("app_server_volume_size", ms.app_server_volume_size)
+            tf("services_instance_type", ms.services_instance_type)
+            tf("services_volume_size", ms.services_volume_size)
+            tf("enable_mysql", ms.enable_mysql)
+            tf("enable_postgres", ms.enable_postgres)
+            tf("enable_redis", ms.enable_redis)
+            if ms.enable_mysql:
+                tf("rds_mysql_instance_class", ms.mysql_instance_class)
+                tf("rds_mysql_storage_size", ms.mysql_storage_size)
+                tf("mysql_password", ms.mysql_password or "")
+            if ms.enable_postgres:
+                tf("rds_postgres_instance_class", ms.postgres_instance_class)
+                tf("rds_postgres_storage_size", ms.postgres_storage_size)
+                tf("postgres_password", ms.postgres_password or "")
+            if ms.enable_redis:
+                tf("redis_instance_type", ms.redis_instance_type)
+                tf("redis_auth_token", ms.redis_auth_token or "")
 
         (self.ws / "terraform.tfvars").write_text("\n".join(lines) + "\n")
 

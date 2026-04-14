@@ -28,11 +28,17 @@ iblai-infra/
 │   ├── terraform/
 │   │   ├── runner.py                       # TerraformRunner: setup/init/plan/apply/destroy with JSON streaming
 │   │   ├── state.py                        # ProjectState + session + ingress registry + lock backends (~/.iblai-infra/)
-│   │   └── templates/aws/single-server/
-│   │       ├── main.tf                     # VPC, subnets, ALB, EC2, S3, certs, DNS
-│   │       ├── variables.tf                # All Terraform variables
-│   │       ├── outputs.tf                  # IPs, ALB DNS, S3 buckets, SSH command
-│   │       └── user_data.sh               # Docker, AWS CLI, UFW, systemd setup
+│   │   ├── templates/aws/single-server/
+│   │   │   ├── main.tf                     # VPC, subnets, ALB, EC2, S3, certs, DNS
+│   │   │   ├── variables.tf                # All Terraform variables
+│   │   │   ├── outputs.tf                  # IPs, ALB DNS, S3 buckets, SSH command
+│   │   │   └── user_data.sh               # Docker, AWS CLI, UFW, systemd setup
+│   │   └── templates/aws/multi-server/
+│   │       ├── main.tf                     # VPC (4 subnet tiers), NAT, ALB, N×app EC2, 1×services EC2, optional RDS/Redis, EFS, S3, certs, DNS
+│   │       ├── variables.tf                # All multi-server variables (compute, managed services, secrets marked sensitive)
+│   │       ├── outputs.tf                  # App server IPs (list), services IP, RDS/Redis endpoints, backward-compat singular outputs
+│   │       ├── user_data_app.sh            # App server bootstrap (Docker, AWS CLI, NFS, UFW)
+│   │       └── user_data_services.sh       # Services server bootstrap (Docker, AWS CLI, internal UFW)
 │   └── ansible/
 │       ├── __init__.py
 │       ├── runner.py                       # AnsibleRunner: preflight, SSH test, inventory, playbook execution
@@ -87,10 +93,10 @@ No silent auto-detection from `~/.aws/` or environment variables. The user alway
 
 5 interactive steps, each in its own prompt module:
 1. **Credentials** — AWS profile / access keys / env vars, validated via STS (`show_step=True`)
-2. **Project & Compute** — name, environment (dev/staging/prod), instance type, volume
+2. **Project & Compute** — name, environment (dev/staging/prod), deployment type (single/multi-server), then either single-server compute or multi-server config
 3. **Network & SSH** — VPC CIDR, VPN IP (auto-detected), SSH key (generate/import/AWS keypair)
 4. **DNS & Certs** — domain, Route53 zone detection, cert method (ACM/upload/none)
-5. **Review** — full summary panel, confirm
+5. **Review** — full summary panel (multi-server shows server counts, managed services, subnet tiers), confirm
 
 After confirmation: `TerraformRunner.setup()` → `init()` → `plan()` → `apply()` → show results.
 
@@ -141,6 +147,8 @@ All other tasks (domain config, proxy, ECR login, edX settings) run unconditiona
 `iblai infra launch` — non-interactive, CI/CD-friendly command that provisions infrastructure from a pre-built AMI and configures the platform.
 
 Accepts `--domain <domain>` or `--ingress <name>` (resolved from the ingress registry) for domain specification. All other parameters passed via CLI flags.
+
+**Multi-server flags:** `--deployment-type multi-server`, `--app-server-count N`, `--services-instance-type`, `--services-volume-size`, `--enable-mysql`, `--enable-postgres`, `--enable-redis`. When `--deployment-type multi-server`, builds `MultiServerConfig` with auto-generated DB/Redis passwords.
 
 **Flow:** builds `InfraConfig` + `ProjectState` → `TerraformRunner` (provisions VPC/ALB/EC2/certs/DNS) → `AnsibleRunner` with `LAUNCH_ROLE_LABELS` (4 roles: cli_ops, launch config, service restart, final steps).
 
@@ -241,12 +249,20 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 ### Models (Pydantic)
 
 `InfraConfig` is the **single contract** between the wizard prompts and Terraform execution:
+- `deployment_type` (`DeploymentType`: `SINGLE` or `MULTI`, defaults to `SINGLE`)
 - `AWSCredentials` (method, profile, keys, region, account_id)
 - `NetworkConfig` (vpc_cidr, vpn_ip with IP validation)
-- `ComputeConfig` (instance_type, volume_size ≥20GB, volume_type)
+- `ComputeConfig` (instance_type, volume_size ≥20GB, volume_type) — used for single-server
+- `MultiServerConfig` (optional, used for multi-server — see below)
 - `SSHConfig` (method, key_name, public_key, private_key_path)
 - `CertificateConfig` (method: acm/upload/none, zone_id, cert files)
 - `DNSConfig` (base_domain, use_route53, hosted_zone_id, 16 subdomains)
+
+`MultiServerConfig` — multi-server compute and managed services:
+- `app_server_count` (2-10), `app_server_instance_type`, `app_server_volume_size`
+- `services_instance_type`, `services_volume_size`
+- `enable_mysql`, `enable_postgres`, `enable_redis` (all default `False`)
+- DB/Redis passwords use `Field(exclude=True)` — generated at runtime, never serialized to `state.json`
 
 `ProjectState` tracks lifecycle: initialized → created → failed → destroyed.
 
@@ -264,8 +280,9 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - Parses `apply_start`, `apply_progress`, `apply_complete`, `apply_errored` events
 - `terraform show -json tfplan` for accurate resource count before apply
 - Rich Live display: resource status table + progress bar, `transient=True`
-- `_generate_tfvars()` converts InfraConfig → terraform.tfvars
-- `RESOURCE_LABELS` maps AWS resource types to human-friendly names
+- `_copy_templates()` selects template directory based on `config.deployment_type.value` (`single-server` or `multi-server`)
+- `_generate_tfvars()` converts InfraConfig → terraform.tfvars; emits multi-server variables (app_server_count, services config, enable_mysql/postgres/redis, DB passwords) when `deployment_type == MULTI`
+- `RESOURCE_LABELS` maps AWS resource types to human-friendly names (includes NAT Gateway, RDS, ElastiCache, EFS for multi-server)
 
 ### Ansible Runner
 
@@ -310,6 +327,30 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 
 Uses `locals` with `use_acm`, `use_upload`, `use_https` booleans and conditional `count`.
 
+### Deployment Types
+
+Two Terraform topologies selected via `DeploymentType` enum:
+
+**Single-server** (`templates/aws/single-server/`):
+- 1 EC2 instance (public subnet) behind ALB
+- VPC with 2 public subnets (multi-AZ)
+- All services on one machine
+
+**Multi-server** (`templates/aws/multi-server/`):
+- N app servers (2-10, public subnets, behind ALB) — run edX/LMS/CMS
+- 1 services server (private subnet) — runs DM, SPAs, databases
+- VPC with 4 subnet tiers: public, private, database, cache (2-3 AZs)
+- NAT gateways (one per AZ) for private subnet outbound
+- EFS for shared OpenEdX media across app servers
+- Optional managed MySQL 8.4 (RDS, multi-AZ, encrypted)
+- Optional managed PostgreSQL 15 (RDS, multi-AZ, encrypted)
+- Optional Redis ElastiCache (multi-AZ, encrypted, auth token)
+- 6 security groups: ALB, app servers, services, RDS, Redis, EFS
+
+**Open source safety:** Templates contain zero hardcoded IPs, SSH keys, account IDs, or secrets. DB passwords and Redis auth tokens are generated at runtime via `generate_password()`, passed through `terraform.tfvars` (in `~/.iblai-infra/` workspace, not in the repo), and excluded from `state.json` serialization via `Field(exclude=True)`.
+
+**Backward compatibility:** `deployment_type` defaults to `SINGLE`, `multi_server` defaults to `None`. Existing `state.json` files deserialize correctly. Multi-server outputs include backward-compat singular outputs (`instance_id`, `instance_public_ip`, `ssh_command` pointing at first app server).
+
 ## Brand & UI
 
 - **Primary color:** `#2175C5` (ibl.ai blue)
@@ -330,7 +371,7 @@ Uses `locals` with `use_acm`, `use_upload`, `use_https` booleans and conditional
 
 ## Testing
 
-- **436 tests**, all via pytest: `uv run pytest tests/ -v`
+- **442 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

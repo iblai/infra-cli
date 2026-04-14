@@ -13,3 +13,10 @@ wheels/
 .env
 .env.local
 .env.*.local
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfvars
+*.tfstate
+*.tfstate.backup

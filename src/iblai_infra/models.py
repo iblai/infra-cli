@@ -283,6 +283,25 @@ class SetupConfig(BaseModel):
     admin_email: str = ""
     admin_password: str = ""
 
+    # ECR registry (parameterized — no hardcoded account IDs)
+    ecr_account_id: str = ""
+    ecr_region: str = "us-east-1"
+
+    # Multi-server fields (populated from Terraform state + tfvars)
+    deployment_type: str = "single-server"
+    services_server_ip: str | None = None
+    app_server_ips: list[str] = Field(default_factory=list)
+    proxy_jump_host: str | None = None
+    postgres_endpoint: str | None = None
+    postgres_password: str | None = Field(default=None, exclude=True)
+    mysql_endpoint: str | None = None
+    mysql_password: str | None = Field(default=None, exclude=True)
+    redis_endpoint: str | None = None
+    redis_port: str | None = None
+    redis_auth_token: str | None = Field(default=None, exclude=True)
+    efs_dns_name: str | None = None
+    mongo_password: str | None = Field(default=None, exclude=True)
+
 
 # ---------------------------------------------------------------------------
 # Ingress — pre-provisioned domain endpoints

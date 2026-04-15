@@ -22,6 +22,7 @@ from iblai_infra.terraform.state import (
     load_ingress,
     load_ingress_registry,
     load_state,
+    read_tfvar,
     release_ingress_lock,
     remove_ingress,
     save_ingress,
@@ -533,3 +534,45 @@ class TestIngressLocks:
 
     def test_status_empty(self):
         assert get_ingress_status() == []
+
+
+# ---------------------------------------------------------------------------
+# read_tfvar
+# ---------------------------------------------------------------------------
+
+
+class TestReadTfvar:
+    def test_reads_existing_key(self, tmp_path):
+        tfvars = tmp_path / "terraform.tfvars"
+        tfvars.write_text(
+            'project_name = "myproject"\n'
+            'postgres_password = "s3cret"\n'
+            'region = "us-east-1"\n'
+        )
+        assert read_tfvar(tmp_path, "postgres_password") == "s3cret"
+        assert read_tfvar(tmp_path, "project_name") == "myproject"
+        assert read_tfvar(tmp_path, "region") == "us-east-1"
+
+    def test_returns_none_for_missing_key(self, tmp_path):
+        tfvars = tmp_path / "terraform.tfvars"
+        tfvars.write_text('project_name = "myproject"\n')
+        assert read_tfvar(tmp_path, "nonexistent") is None
+
+    def test_returns_none_for_missing_file(self, tmp_path):
+        assert read_tfvar(tmp_path, "anything") is None
+
+    def test_handles_spaces_around_equals(self, tmp_path):
+        tfvars = tmp_path / "terraform.tfvars"
+        tfvars.write_text('password   =   "abc123"\n')
+        assert read_tfvar(tmp_path, "password") == "abc123"
+
+    def test_handles_empty_value(self, tmp_path):
+        tfvars = tmp_path / "terraform.tfvars"
+        tfvars.write_text('redis_auth_token = ""\n')
+        assert read_tfvar(tmp_path, "redis_auth_token") == ""
+
+    def test_handles_boolean_values(self, tmp_path):
+        """Boolean values in tfvars are unquoted — read_tfvar only parses quoted strings."""
+        tfvars = tmp_path / "terraform.tfvars"
+        tfvars.write_text('enable_mysql = true\n')
+        assert read_tfvar(tmp_path, "enable_mysql") is None

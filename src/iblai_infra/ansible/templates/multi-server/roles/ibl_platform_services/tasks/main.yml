@@ -1,0 +1,91 @@
+---
+- name: Ensure /ibl/ is owned by the SSH user
+  file:
+    path: "{{ ibl_root }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    recurse: true
+
+- name: Configure base domain
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set BASE_DOMAIN='{{ base_domain }}'
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Configure environment as isolated-services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set ENVIRONMENT_CONFIG='isolated-services'
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Enable AI features for DM
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set IBL_DM.ENABLE_IBL_AI={{ enable_ai }}
+    ibl config save --set IBL_DM.ENABLE_IBL_AI_PLUS={{ enable_ai }}
+    ibl config save --set IBL_DM.ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS=true
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Enable DM RBAC and TimescaleDB
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set 'IBL_DM.ENABLE_RBAC=true'
+    ibl config save --set 'IBL_DM.ENABLE_RBAC_SEEDING=true'
+    ibl config save --set 'IBL_DM.ENABLE_TIMESCALEDB=true'
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+- name: Ensure ibl_local_default docker network exists
+  become: false
+  command: docker network create ibl_local_default
+  register: net_create
+  failed_when: net_create.rc != 0 and 'already exists' not in (net_create.stderr | default(''))
+  changed_when: net_create.rc == 0
+
+- name: Login to ECR
+  become: false
+  shell: |
+    aws ecr get-login-password --region {{ ecr_region }} | docker login --username AWS --password-stdin {{ ecr_account_id }}.dkr.ecr.{{ ecr_region }}.amazonaws.com
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+    AWS_DEFAULT_REGION: "{{ aws_default_region }}"

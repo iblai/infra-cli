@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from iblai_infra.ansible.runner import LAUNCH_ROLE_LABELS, ROLE_LABELS, SERVICE_UPDATE_ROLE_LABELS, TOTAL_ROLES, AnsibleRunner
+from iblai_infra.ansible.runner import LAUNCH_ROLE_LABELS, ROLE_LABELS, SERVICE_UPDATE_ROLE_LABELS, SERVICES_ROLE_LABELS, TOTAL_ROLES, AnsibleRunner
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +172,8 @@ class TestBuildExtraVars:
         assert extra["cli_ops_release_tag"] == "3.19.0"
         assert extra["is_resetup"] is False
         assert extra["enable_ai"] is True
+        assert extra["ecr_account_id"] == "123456789012"
+        assert extra["ecr_region"] == "us-east-1"
 
     def test_resetup_extra_vars(self, project_state, resetup_config):
         runner = AnsibleRunner.__new__(AnsibleRunner)
@@ -368,6 +370,168 @@ class TestPreflightCombined:
 # ---------------------------------------------------------------------------
 # Environment building
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Multi-server: services role extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractRoleFromLineServices:
+    @pytest.fixture
+    def runner(self, multi_server_project_state, multi_server_setup_config):
+        r = AnsibleRunner.__new__(AnsibleRunner)
+        r.state = multi_server_project_state
+        r.config = multi_server_setup_config
+        r.ws = Path("/tmp/ansible-test")
+        r.playbook = "services_playbook.yml"
+        r.role_labels = SERVICES_ROLE_LABELS
+        return r
+
+    def test_all_services_roles(self, runner):
+        for role_name in SERVICES_ROLE_LABELS:
+            line = f"TASK [{role_name} : Some task] ***"
+            assert runner._extract_role_from_line(line) == role_name
+
+    def test_single_server_role_not_recognized(self, runner):
+        """Roles from the single-server playbook are not recognized in services context."""
+        line = "TASK [ibl_edx : Launch Open edX] ***"
+        assert runner._extract_role_from_line(line) is None
+
+    def test_ibl_platform_services_role(self, runner):
+        line = "TASK [ibl_platform_services : Configure base domain] ***"
+        assert runner._extract_role_from_line(line) == "ibl_platform_services"
+
+    def test_mongodb_role(self, runner):
+        line = "TASK [mongodb : Start MongoDB container] ***"
+        assert runner._extract_role_from_line(line) == "mongodb"
+
+    def test_ibl_dm_services_role(self, runner):
+        line = "TASK [ibl_dm_services : Launch DM services] ***"
+        assert runner._extract_role_from_line(line) == "ibl_dm_services"
+
+
+# ---------------------------------------------------------------------------
+# Multi-server: inventory with ProxyJump
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateInventoryMultiServer:
+    def test_services_server_inventory(
+        self, multi_server_project_state, multi_server_setup_config, tmp_path,
+    ):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = multi_server_project_state
+        runner.config = multi_server_setup_config
+        runner.ws = tmp_path
+        runner.playbook = "services_playbook.yml"
+
+        runner._generate_inventory()
+
+        content = (tmp_path / "inventory.ini").read_text()
+        assert "[services_servers]" in content
+        assert "10.0.11.140" in content
+        assert "ProxyJump=ubuntu@13.212.74.207" in content
+        assert "ansible_python_interpreter=/usr/bin/python3" in content
+
+    def test_single_server_inventory_unchanged(
+        self, project_state, setup_config, tmp_path,
+    ):
+        """Single-server inventory still uses [ibl_servers] and no ProxyJump."""
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config
+        runner.ws = tmp_path
+        runner.playbook = "playbook.yml"
+
+        runner._generate_inventory()
+
+        content = (tmp_path / "inventory.ini").read_text()
+        assert "[ibl_servers]" in content
+        assert "ProxyJump" not in content
+
+
+# ---------------------------------------------------------------------------
+# Multi-server: extra vars with DB endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestBuildExtraVarsMultiServer:
+    def test_includes_db_endpoints(
+        self, multi_server_project_state, multi_server_setup_config,
+    ):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = multi_server_project_state
+        runner.config = multi_server_setup_config
+        runner.role_labels = SERVICES_ROLE_LABELS
+
+        extra = runner._build_extra_vars()
+        assert extra["postgres_host"] == "multi-test-postgres.abc123.rds.amazonaws.com"
+        assert extra["postgres_port"] == "5432"
+        assert extra["postgres_password"] == "pgpass123"
+        assert extra["mysql_host"] == "multi-test-mysql.abc123.rds.amazonaws.com"
+        assert extra["mysql_port"] == "3306"
+        assert extra["mysql_password"] == "mypass123"
+        assert extra["redis_endpoint"] == "master.multi-test-redis.abc123.cache.amazonaws.com"
+        assert extra["redis_port"] == "6379"
+        assert extra["redis_auth_token"] == "redistoken123"
+        assert extra["mongo_password"] == "mongopass123"
+        assert extra["efs_dns_name"] == "fs-12345.efs.us-east-1.amazonaws.com"
+
+    def test_single_server_no_db_endpoints(
+        self, project_state, setup_config,
+    ):
+        """Single-server config should NOT inject DB endpoint keys."""
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config
+        runner.role_labels = ROLE_LABELS
+
+        extra = runner._build_extra_vars()
+        assert "postgres_host" not in extra
+        assert "mysql_host" not in extra
+        assert "redis_endpoint" not in extra
+        assert "mongo_password" not in extra
+        assert "efs_dns_name" not in extra
+
+
+# ---------------------------------------------------------------------------
+# Multi-server: SSH test with ProxyJump
+# ---------------------------------------------------------------------------
+
+
+class TestSSHTestMultiServer:
+    @pytest.fixture
+    def runner(self, multi_server_project_state, multi_server_setup_config):
+        r = AnsibleRunner.__new__(AnsibleRunner)
+        r.state = multi_server_project_state
+        r.config = multi_server_setup_config
+        return r
+
+    def test_ssh_includes_proxy_jump(self, runner):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with patch("iblai_infra.ansible.runner.subprocess.run", return_value=mock_result) as mock_run:
+            assert runner._test_ssh() is True
+            call_args = mock_run.call_args[0][0]
+            assert "-o" in call_args
+            proxy_idx = call_args.index("ProxyJump=ubuntu@13.212.74.207")
+            assert call_args[proxy_idx - 1] == "-o"
+
+
+# ---------------------------------------------------------------------------
+# Multi-server: constants
+# ---------------------------------------------------------------------------
+
+
+class TestServicesRoleLabels:
+    def test_expected_roles(self):
+        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform_services", "mongodb", "ibl_dm_services"}
+        assert set(SERVICES_ROLE_LABELS.keys()) == expected
+
+    def test_count(self):
+        assert len(SERVICES_ROLE_LABELS) == 7
 
 
 class TestAnsibleEnv:

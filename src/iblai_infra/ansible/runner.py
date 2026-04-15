@@ -54,6 +54,16 @@ SERVICE_UPDATE_ROLE_LABELS: dict[str, str] = {
     "ibl_service_update": "Service Update",
 }
 
+SERVICES_ROLE_LABELS: dict[str, str] = {
+    "docker": "Docker Engine",
+    "awscli": "AWS CLI",
+    "python": "Python Environment",
+    "ibl_cli_ops": "iblai-cli-ops",
+    "ibl_platform_services": "Services Platform Config",
+    "mongodb": "MongoDB",
+    "ibl_dm_services": "DM Services",
+}
+
 TOTAL_ROLES = len(ROLE_LABELS)
 
 # Regex to match TASK lines: "TASK [role_name : task description]"
@@ -317,16 +327,22 @@ class AnsibleRunner:
 
         for attempt in range(1, max_retries + 1):
             ui.info(f"Testing SSH connection ({attempt}/{max_retries})...")
+            ssh_cmd = [
+                "ssh",
+                "-o", "ConnectTimeout=15",
+                "-o", "BatchMode=yes",
+                "-o", "StrictHostKeyChecking=no",
+                "-i", str(self.config.ssh_private_key_path),
+            ]
+            if self.config.proxy_jump_host:
+                jump = f"{self.config.ssh_user}@{self.config.proxy_jump_host}"
+                ssh_cmd.extend(["-o", f"ProxyJump={jump}"])
+            ssh_cmd.extend([
+                f"{self.config.ssh_user}@{self.config.target_host}",
+                "true",
+            ])
             result = subprocess.run(
-                [
-                    "ssh",
-                    "-o", "ConnectTimeout=15",
-                    "-o", "BatchMode=yes",
-                    "-o", "StrictHostKeyChecking=no",
-                    "-i", str(self.config.ssh_private_key_path),
-                    f"{self.config.ssh_user}@{self.config.target_host}",
-                    "true",
-                ],
+                ssh_cmd,
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -373,7 +389,11 @@ class AnsibleRunner:
 
     def _copy_templates(self) -> None:
         """Copy Ansible template files to workspace."""
-        template_dir = Path(__file__).parent / "templates" / "single-server"
+        if self.config.deployment_type == "multi-server":
+            topology = "multi-server"
+        else:
+            topology = "single-server"
+        template_dir = Path(__file__).parent / "templates" / topology
         if not template_dir.exists():
             ui.abort(f"Ansible template directory not found: {template_dir}")
 
@@ -384,13 +404,33 @@ class AnsibleRunner:
 
     def _generate_inventory(self) -> None:
         """Generate inventory.ini from SetupConfig."""
-        content = (
-            "[ibl_servers]\n"
+        # Determine the host group from the playbook name
+        if self.playbook == "services_playbook.yml":
+            group = "services_servers"
+        elif self.playbook == "app_playbook.yml":
+            group = "app_servers"
+        else:
+            group = "ibl_servers"
+
+        host_line = (
             f"{self.config.target_host}"
             f" ansible_user={self.config.ssh_user}"
-            f" ansible_ssh_private_key_file={self.config.ssh_private_key_path}\n"
+            f" ansible_ssh_private_key_file={self.config.ssh_private_key_path}"
+        )
+        # Add ProxyJump for hosts reachable only via a bastion (e.g. services
+        # server in a private subnet, accessed through an app server).
+        if self.config.proxy_jump_host:
+            jump = f"{self.config.ssh_user}@{self.config.proxy_jump_host}"
+            host_line += (
+                f" ansible_ssh_common_args="
+                f"'-o ProxyJump={jump} -o StrictHostKeyChecking=no'"
+            )
+
+        content = (
+            f"[{group}]\n"
+            f"{host_line}\n"
             "\n"
-            "[ibl_servers:vars]\n"
+            f"[{group}:vars]\n"
             "ansible_python_interpreter=/usr/bin/python3\n"
         )
         (self.ws / "inventory.ini").write_text(content)
@@ -413,7 +453,30 @@ class AnsibleRunner:
             "admin_username": self.config.admin_username,
             "admin_email": self.config.admin_email,
             "admin_password": self.config.admin_password,
+            "ecr_account_id": self.config.ecr_account_id,
+            "ecr_region": self.config.ecr_region,
         }
+
+        # Multi-server: database endpoints and secrets
+        if self.config.postgres_endpoint:
+            host, _, port = self.config.postgres_endpoint.rpartition(":")
+            extra["postgres_host"] = host
+            extra["postgres_port"] = port
+            extra["postgres_password"] = self.config.postgres_password or ""
+        if self.config.mysql_endpoint:
+            host, _, port = self.config.mysql_endpoint.rpartition(":")
+            extra["mysql_host"] = host
+            extra["mysql_port"] = port
+            extra["mysql_password"] = self.config.mysql_password or ""
+        if self.config.redis_endpoint:
+            extra["redis_endpoint"] = self.config.redis_endpoint
+            extra["redis_port"] = self.config.redis_port or "6379"
+            extra["redis_auth_token"] = self.config.redis_auth_token or ""
+        if self.config.mongo_password:
+            extra["mongo_password"] = self.config.mongo_password
+        if self.config.efs_dns_name:
+            extra["efs_dns_name"] = self.config.efs_dns_name
+
         return extra
 
     # ------------------------------------------------------------------

@@ -300,6 +300,48 @@ class TestSetupConfig:
         assert sc.env_config == "single-server"
         assert sc.enable_ai is True
 
+    def test_multi_server_defaults(self, tmp_path):
+        """Multi-server fields default to None/empty without breaking."""
+        key = tmp_path / "k.pem"
+        key.touch()
+        sc = SetupConfig(
+            ssh_private_key_path=key,
+            target_host="1.2.3.4",
+            base_domain="example.com",
+            git_access_token="ghp_abc",
+            aws_access_key_id="AK",
+            aws_secret_access_key="SK",
+            aws_default_region="us-east-1",
+        )
+        assert sc.deployment_type == "single-server"
+        assert sc.services_server_ip is None
+        assert sc.app_server_ips == []
+        assert sc.proxy_jump_host is None
+        assert sc.postgres_endpoint is None
+        assert sc.postgres_password is None
+        assert sc.mysql_endpoint is None
+        assert sc.redis_endpoint is None
+        assert sc.mongo_password is None
+
+    def test_multi_server_fields(self, multi_server_setup_config):
+        sc = multi_server_setup_config
+        assert sc.deployment_type == "multi-server"
+        assert sc.env_config == "isolated-services"
+        assert sc.services_server_ip == "10.0.11.140"
+        assert sc.proxy_jump_host == "13.212.74.207"
+        assert len(sc.app_server_ips) == 2
+        assert sc.postgres_endpoint == "multi-test-postgres.abc123.rds.amazonaws.com:5432"
+        assert sc.redis_endpoint == "master.multi-test-redis.abc123.cache.amazonaws.com"
+        assert sc.mongo_password == "mongopass123"
+
+    def test_multi_server_passwords_excluded_from_dump(self, multi_server_setup_config):
+        """Passwords with Field(exclude=True) must not appear in serialized output."""
+        data = multi_server_setup_config.model_dump()
+        assert "postgres_password" not in data
+        assert "mysql_password" not in data
+        assert "redis_auth_token" not in data
+        assert "mongo_password" not in data
+
 
 # ---------------------------------------------------------------------------
 # Enums

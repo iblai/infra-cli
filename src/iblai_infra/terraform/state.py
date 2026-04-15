@@ -10,6 +10,30 @@ from iblai_infra.models import InfraConfig, ProjectState
 
 WORKSPACE_ROOT = Path.home() / ".iblai-infra" / "projects"
 
+_TFVAR_RE = None  # lazy-compiled
+
+
+def read_tfvar(workspace_path: Path, key: str) -> str | None:
+    """Read a single variable value from terraform.tfvars in the workspace.
+
+    The tfvars format is ``key = "value"`` per line.  Returns *None* if the
+    file does not exist or the key is not found.
+    """
+    import re
+
+    global _TFVAR_RE  # noqa: PLW0603
+    if _TFVAR_RE is None:
+        _TFVAR_RE = re.compile(r'^(\w+)\s*=\s*"(.*)"', re.MULTILINE)
+
+    tfvars = workspace_path / "terraform.tfvars"
+    if not tfvars.exists():
+        return None
+
+    for m in _TFVAR_RE.finditer(tfvars.read_text()):
+        if m.group(1) == key:
+            return m.group(2)
+    return None
+
 
 def workspace_dir(config: InfraConfig) -> Path:
     """Return the workspace directory for a given configuration."""

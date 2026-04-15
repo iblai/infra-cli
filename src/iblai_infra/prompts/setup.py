@@ -76,11 +76,15 @@ def _prompt_platform_config(
     step: int,
     total: int,
     base_domain: str | None = None,
+    env_config: str | None = None,
 ) -> dict:
     """Collect platform configuration. Returns a dict of config values.
 
     If base_domain is provided, it's used as-is (from Terraform state).
     Otherwise, it's prompted interactively.
+
+    If env_config is provided (e.g. ``"isolated-services"`` for multi-server),
+    it is used directly instead of defaulting to ``"single-server"``.
     """
     ui.step_header(step, total, "Platform Configuration")
 
@@ -100,8 +104,13 @@ def _prompt_platform_config(
     edx_version = "sumac"
     ui.success(f"Open edX version: [highlight]Sumac[/highlight]")
 
-    env_config = "single-server"
-    ui.success(f"Server type: [highlight]Single Server[/highlight]")
+    if env_config is None:
+        env_config = "single-server"
+    _ENV_CONFIG_LABELS = {
+        "single-server": "Single Server",
+        "isolated-services": "Isolated Services (Multi-Server)",
+    }
+    ui.success(f"Server type: [highlight]{_ENV_CONFIG_LABELS.get(env_config, env_config)}[/highlight]")
 
     cli_ops_release_tag = questionary.text(
         "iblai-cli-ops release tag:",
@@ -215,6 +224,28 @@ def _prompt_credentials(
             ui.abort()
         aws_region = aws_region.strip()
 
+    ecr_account_id = questionary.text(
+        "ECR AWS Account ID:",
+        validate=lambda v: (len(v.strip()) > 0 and v.strip().isdigit()) or "Enter a valid AWS account ID (digits only)",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if ecr_account_id is None:
+        ui.abort()
+    ecr_account_id = ecr_account_id.strip()
+    ui.success(f"ECR account: [highlight]{ecr_account_id}[/highlight]")
+
+    ecr_region = questionary.text(
+        "ECR region:",
+        default="us-east-1",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if ecr_region is None:
+        ui.abort()
+    ecr_region = ecr_region.strip()
+    ui.success(f"ECR region: [highlight]{ecr_region}[/highlight]")
+
     openai_api_key = ""
     ui.info("OpenAI API key enables AI mentor features. Leave blank to skip.")
     openai_input = questionary.password(
@@ -270,6 +301,8 @@ def _prompt_credentials(
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,
+        "ecr_account_id": ecr_account_id,
+        "ecr_region": ecr_region,
         "openai_api_key": openai_api_key,
         "admin_username": admin_username,
         "admin_email": admin_email,
@@ -281,8 +314,21 @@ def _prompt_credentials(
 # Setup flow (from Terraform state)
 # ---------------------------------------------------------------------------
 
-def prompt_setup(state: ProjectState) -> SetupConfig:
-    """Collect variables for Ansible setup from a provisioned environment."""
+def prompt_setup(
+    state: ProjectState,
+    env_config: str | None = None,
+) -> SetupConfig:
+    """Collect variables for Ansible setup from a provisioned environment.
+
+    Parameters
+    ----------
+    state:
+        The Terraform project state.
+    env_config:
+        If provided (e.g. ``"isolated-services"`` for multi-server), passed
+        through to ``_prompt_platform_config`` so the value is fixed rather
+        than defaulting to ``"single-server"``.
+    """
     target_host = state.outputs.get("instance_public_ip", "")
 
     # ----- Step 1: SSH Access -----
@@ -319,6 +365,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
         step=2,
         total=SETUP_STEPS,
         base_domain=state.config.dns.base_domain,
+        env_config=env_config,
     )
 
     # ----- Step 3: Credentials -----

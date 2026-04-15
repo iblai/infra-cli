@@ -1,0 +1,155 @@
+---
+# ---------------------------------------------------------------------------
+# Configure DM to use external RDS PostgreSQL
+# ---------------------------------------------------------------------------
+
+- name: Configure DM database host (RDS PostgreSQL)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set IBL_DM.DB_HOST='{{ postgres_host }}'
+    ibl config save --set IBL_DM.DB_DATABASE='dlmanager'
+    ibl config save --set IBL_DM.DB_PASSWORD='{{ postgres_password }}'
+    ibl config save --set IBL_DM.DB_USER='postgres'
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  no_log: true
+
+# ---------------------------------------------------------------------------
+# Configure DM to use external ElastiCache Redis
+# ---------------------------------------------------------------------------
+
+- name: Configure DM Redis host (ElastiCache)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set IBL_DM.REDIS_HOST='{{ redis_endpoint }}'
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+# ---------------------------------------------------------------------------
+# Disable local services — DM runs pipeline/beat/api_cache only
+# ---------------------------------------------------------------------------
+
+- name: Disable local DM services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set IBL_DM.RUN_DB=false
+    ibl config save --set IBL_DM.RUN_WEB=false
+    ibl config save --set IBL_DM.RUN_REDIS=false
+    ibl config save --set IBL_DM.RUN_ASGI_WEB=false
+    ibl config save --set IBL_DM.RUN_AI_AGENT_WORKER=false
+    ibl config save --set IBL_DM.RUN_AI_PLAYWRIGHT_WORKER=false
+    ibl config save --set IBL_DM.RUN_LANGFLOW_WEB=false
+    ibl config save --set IBL_DM.RUN_LANGFUSE_WEB=false
+    ibl config save --set IBL_DM.RUN_WORKER=false
+    ibl config save --set IBL_DM.RUN_AI_BOT=false
+    ibl config save --set IBL_DM.RUN_SEED_FLOW=false
+    ibl config save --set IBL_DM.RUN_LANGFLOW_POSTGRES=false
+    ibl config save --set IBL_DM.RUN_LANGFUSE_WORKER=false
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+# ---------------------------------------------------------------------------
+# Enable required DM services
+# ---------------------------------------------------------------------------
+
+- name: Enable required DM services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set IBL_DM.RUN_PIPELINE=true
+    ibl config save --set IBL_DM.RUN_BEAT=true
+    ibl config save --set IBL_DM.RUN_API_CACHE=true
+    ibl config save --set IBL_DM.RUN_LANGFUSE_MINIO=true
+    ibl config save --set IBL_DM.RUN_FLOWISE=true
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+# ---------------------------------------------------------------------------
+# Additional DM flags
+# ---------------------------------------------------------------------------
+
+- name: Configure additional DM settings
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set IBL_DM.CATALOG_APP_ALLOW_DEFAULT_PLATFORM_IN_RESULTS=true
+    ibl config save --set IBL_DM.ENABLE_USER_APPS=false
+    ibl config save --set IBL_DM.ENABLE_PLATFORM_PROVISIONING=false
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
+# ---------------------------------------------------------------------------
+# Launch DM (pipeline/beat/api_cache only — no local DB, no web)
+# ---------------------------------------------------------------------------
+
+- name: Launch DM services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl dm launch 2>&1
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  async: 3600
+  poll: 30
+  ignore_errors: true
+
+# ---------------------------------------------------------------------------
+# Verify DM containers are running
+# ---------------------------------------------------------------------------
+
+- name: Check for running DM containers
+  become: false
+  shell: docker ps --filter "name=ibl_dm" --format '{{ '{{' }}.Names{{ '}}' }}'
+  args:
+    executable: /bin/bash
+  register: dm_containers
+  changed_when: false
+
+- name: Show running DM containers
+  debug:
+    msg: "Running DM containers: {{ dm_containers.stdout_lines | default([]) }}"

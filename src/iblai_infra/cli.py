@@ -516,6 +516,8 @@ def launch(
     admin_username: str = typer.Option("ibl_admin", "--admin-username", help="Admin username"),
     openai_key: str = typer.Option("", "--openai-key", help="OpenAI API key (optional)"),
     enable_ai: bool = typer.Option(True, "--enable-ai/--no-ai", help="Enable AI features"),
+    ecr_account_id: str = typer.Option(..., "--ecr-account-id", help="AWS account ID for ECR registry"),
+    ecr_region: str = typer.Option("us-east-1", "--ecr-region", help="AWS region for ECR registry"),
     deployment_type: str = typer.Option("single-server", "--deployment-type", help="single-server or multi-server"),
     app_server_count: int = typer.Option(2, "--app-server-count", help="Number of app servers (multi-server only)"),
     services_instance_type: str = typer.Option("t3.2xlarge", "--services-instance-type", help="Services server instance type (multi-server only)"),
@@ -553,6 +555,7 @@ def launch(
         environment=environment, cli_tag=cli_tag,
         admin_username=admin_username, openai_key=openai_key,
         enable_ai=enable_ai,
+        ecr_account_id=ecr_account_id, ecr_region=ecr_region,
         deployment_type=deployment_type,
         app_server_count=app_server_count,
         services_instance_type=services_instance_type,
@@ -723,6 +726,8 @@ def _run_launch(
     admin_username: str,
     openai_key: str,
     enable_ai: bool,
+    ecr_account_id: str,
+    ecr_region: str = "us-east-1",
     deployment_type: str = "single-server",
     app_server_count: int = 2,
     services_instance_type: str = "t3.2xlarge",
@@ -889,6 +894,8 @@ def _run_launch(
         admin_username=admin_username,
         admin_email=admin_email,
         admin_password=admin_password,
+        ecr_account_id=ecr_account_id,
+        ecr_region=ecr_region,
     )
 
     ansible_runner = AnsibleRunner(
@@ -942,6 +949,8 @@ def service_update(
     aws_secret_key: str | None = typer.Option(None, "--aws-secret-key", help="AWS secret access key (with --ami-id)"),
     aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region (with --ami-id)"),
     prod_images_tag: str = typer.Option("main", "--prod-images-tag", help="iblai-prod-images git tag or branch"),
+    ecr_account_id: str = typer.Option(..., "--ecr-account-id", help="AWS account ID for ECR registry"),
+    ecr_region: str = typer.Option("us-east-1", "--ecr-region", help="AWS region for ECR registry"),
 ) -> None:
     """Update container images and restart services.
 
@@ -974,11 +983,13 @@ def service_update(
             aws_key_id=aws_key_id, aws_secret_key=aws_secret_key,
             aws_region=aws_region, ssh_key=ssh_key, git_token=git_token,
             ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
+            ecr_account_id=ecr_account_id, ecr_region=ecr_region,
         )
     elif host:
         _run_service_update(
             host=host, ssh_key=ssh_key, git_token=git_token,
             ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
+            ecr_account_id=ecr_account_id, ecr_region=ecr_region,
         )
     else:
         ui.error("Either --host or --ami-id is required.")
@@ -993,6 +1004,8 @@ def _run_service_update(
     ssh_user: str,
     name: str | None,
     prod_images_tag: str = "main",
+    ecr_account_id: str = "",
+    ecr_region: str = "us-east-1",
 ) -> None:
     """Install latest images and restart all services."""
     import os
@@ -1047,6 +1060,8 @@ def _run_service_update(
         aws_secret_access_key="",
         aws_default_region="us-east-1",
         git_access_token=git_token,
+        ecr_account_id=ecr_account_id,
+        ecr_region=ecr_region,
     )
 
     # Create or update state
@@ -1133,6 +1148,8 @@ def _run_service_update_from_ami(
     ssh_user: str,
     name: str | None,
     prod_images_tag: str = "main",
+    ecr_account_id: str = "",
+    ecr_region: str = "us-east-1",
 ) -> None:
     """Launch EC2 from AMI, run service update, register in target group."""
     import os
@@ -1229,6 +1246,8 @@ def _run_service_update_from_ami(
         aws_secret_access_key="",
         aws_default_region=aws_region,
         git_access_token=git_token,
+        ecr_account_id=ecr_account_id,
+        ecr_region=ecr_region,
     )
 
     workspace_path = str(WORKSPACE_ROOT / f"{project_name}-service-update")
@@ -1437,6 +1456,8 @@ def _run_resetup(name: str) -> None:
 
 def _run_setup_provisioned(name: str) -> None:
     """Set up a Terraform-provisioned environment by name."""
+    from iblai_infra.models import DeploymentType
+
     state = load_state(name)
     if state is None:
         ui.error(f"No infrastructure found with name: {name}")
@@ -1453,9 +1474,16 @@ def _run_setup_provisioned(name: str) -> None:
         )
         raise typer.Exit(1)
 
-    if not state.outputs or not state.outputs.get("instance_public_ip"):
-        ui.error("No instance IP found in Terraform outputs. Re-run provisioning.")
-        raise typer.Exit(1)
+    # Multi-server deployments use a different setup flow
+    is_multi = state.config.deployment_type == DeploymentType.MULTI
+    if is_multi:
+        if not state.outputs or not state.outputs.get("services_server_private_ip"):
+            ui.error("No services server IP found in Terraform outputs. Re-run provisioning.")
+            raise typer.Exit(1)
+    else:
+        if not state.outputs or not state.outputs.get("instance_public_ip"):
+            ui.error("No instance IP found in Terraform outputs. Re-run provisioning.")
+            raise typer.Exit(1)
 
     # Check if already set up
     if state.setup_status == "completed":
@@ -1473,9 +1501,6 @@ def _run_setup_provisioned(name: str) -> None:
 
     import shutil
 
-    from iblai_infra.ansible.runner import AnsibleRunner
-    from iblai_infra.prompts.setup import prompt_setup
-
     if shutil.which("ansible-playbook") is None:
         ui.error("ansible-playbook not found")
         ui.newline()
@@ -1484,13 +1509,151 @@ def _run_setup_provisioned(name: str) -> None:
         ui.newline()
         raise typer.Exit(1)
 
+    if is_multi:
+        _run_setup_multi(state)
+    else:
+        from iblai_infra.prompts.setup import prompt_setup
+
+        try:
+            setup_config = prompt_setup(state)
+        except KeyboardInterrupt:
+            ui.newline()
+            ui.abort("Interrupted.")
+
+        _confirm_and_run(state, setup_config, f"iblai infra setup {name}")
+
+
+def _run_setup_multi(state) -> None:
+    """Set up a multi-server deployment: services server first, then app servers."""
+    from datetime import datetime, timezone
+
+    from iblai_infra.ansible.runner import AnsibleRunner, SERVICES_ROLE_LABELS
+    from iblai_infra.models import generate_password
+    from iblai_infra.prompts.setup import prompt_setup
+    from iblai_infra.terraform.state import read_tfvar
+
+    outputs = state.outputs or {}
+    ws = Path(state.workspace_path)
+
+    # ---- Extract endpoints from Terraform outputs ----
+    services_ip = outputs.get("services_server_private_ip", "")
+    app_ips = outputs.get("app_server_public_ips", [])
+    proxy_jump = app_ips[0] if app_ips else ""
+    postgres_endpoint = outputs.get("postgres_endpoint")
+    mysql_endpoint = outputs.get("mysql_endpoint")
+    redis_endpoint = outputs.get("redis_endpoint")
+    redis_port = outputs.get("redis_port")
+    efs_dns_name = outputs.get("efs_dns_name")
+
+    # ---- Recover passwords from terraform.tfvars ----
+    postgres_password = read_tfvar(ws, "postgres_password")
+    mysql_password = read_tfvar(ws, "mysql_password")
+    redis_auth_token = read_tfvar(ws, "redis_auth_token")
+
+    # ---- Generate MongoDB password (not Terraform-managed) ----
+    mongo_password = generate_password()
+
+    # ---- Collect user input (SSH, domain, credentials) ----
     try:
-        setup_config = prompt_setup(state)
+        setup_config = prompt_setup(state, env_config="isolated-services")
     except KeyboardInterrupt:
         ui.newline()
         ui.abort("Interrupted.")
 
-    _confirm_and_run(state, setup_config, f"iblai infra setup {name}")
+    # ---- Populate multi-server fields on SetupConfig ----
+    setup_config.deployment_type = "multi-server"
+    setup_config.target_host = services_ip
+    setup_config.services_server_ip = services_ip
+    setup_config.app_server_ips = app_ips
+    setup_config.proxy_jump_host = proxy_jump
+    setup_config.postgres_endpoint = postgres_endpoint
+    setup_config.postgres_password = postgres_password
+    setup_config.mysql_endpoint = mysql_endpoint
+    setup_config.mysql_password = mysql_password
+    setup_config.redis_endpoint = redis_endpoint
+    setup_config.redis_port = redis_port
+    setup_config.redis_auth_token = redis_auth_token
+    setup_config.efs_dns_name = efs_dns_name
+    setup_config.mongo_password = mongo_password
+
+    # ---- Summary ----
+    import questionary
+
+    rows = [
+        ("Deployment", "Multi-server"),
+        ("Services server", services_ip),
+        ("App servers", ", ".join(app_ips) if app_ips else "none"),
+        ("Proxy jump", proxy_jump),
+        ("Domain", setup_config.base_domain),
+        ("CLI ops tag", setup_config.cli_ops_release_tag),
+        ("Env config", "isolated-services"),
+        ("AWS region", setup_config.aws_default_region),
+    ]
+    if postgres_endpoint:
+        host = postgres_endpoint.rpartition(":")[0]
+        rows.append(("RDS Postgres", host))
+    if mysql_endpoint:
+        host = mysql_endpoint.rpartition(":")[0]
+        rows.append(("RDS MySQL", host))
+    if redis_endpoint:
+        rows.append(("ElastiCache Redis", redis_endpoint))
+    if efs_dns_name:
+        rows.append(("EFS", efs_dns_name))
+    rows.append(("MongoDB", "Docker container on services server"))
+
+    ui.summary_panel("Multi-Server Setup Summary", rows)
+
+    confirm = questionary.confirm(
+        "Proceed with services server setup?",
+        default=True,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if not confirm:
+        ui.abort("Cancelled.")
+
+    # ---- Phase 1: Services server bootstrap ----
+    ui.newline()
+    ui.info("[brand]Phase 1:[/brand] Bootstrapping services server...")
+    ui.newline()
+
+    runner = AnsibleRunner(
+        state,
+        setup_config,
+        playbook="services_playbook.yml",
+        role_labels=SERVICES_ROLE_LABELS,
+    )
+
+    if not runner.preflight():
+        raise typer.Exit(1)
+
+    runner.setup()
+
+    try:
+        success = runner.run()
+    except KeyboardInterrupt:
+        ui.newline()
+        state.setup_status = "failed"
+        state.updated_at = datetime.now(timezone.utc)
+        save_state(state)
+        ui.abort(f"Interrupted. Re-run with: iblai infra setup {state.name}")
+
+    if success:
+        ui.newline()
+        ui.success(
+            f"Services server setup complete on [highlight]{services_ip}[/highlight]"
+        )
+        ui.newline()
+
+    # ---- Phase 2: App servers (stub) ----
+    ui.info(
+        "[brand]Phase 2:[/brand] App server setup is not yet implemented. "
+        "App servers must be configured separately."
+    )
+    if app_ips:
+        for i, ip in enumerate(app_ips, 1):
+            ui.muted(f"  App server {i}: {ip}")
+    ui.newline()
 
 
 def _run_setup_interactive() -> None:

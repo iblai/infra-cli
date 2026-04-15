@@ -308,7 +308,7 @@
 - name: Login to ECR
   become: false
   shell: |
-    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 765174860755.dkr.ecr.us-east-1.amazonaws.com
+    aws ecr get-login-password --region {{ ecr_region }} | docker login --username AWS --password-stdin {{ ecr_account_id }}.dkr.ecr.{{ ecr_region }}.amazonaws.com
   args:
     executable: /bin/bash
   environment:

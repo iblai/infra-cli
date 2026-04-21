@@ -174,16 +174,32 @@
 # DM: ensure running + wait for collectstatic + health check
 # ---------------------------------------------------------------------------
 
-- name: Ensure DM containers are running
+- name: Update DM via `ibl dm update`
+  # `ibl dm update` is the canonical update path — it pulls new images and
+  # recreates containers to align compose state with the freshly-installed
+  # iblai-prod-images package. We explicitly want this here (not plain
+  # `docker compose up -d`) so that image tag bumps from a new
+  # prod-images-tag actually get applied on the server in one deterministic
+  # step — instead of relying on `docker compose up -d` to diff compose
+  # files and partially recreate containers.
+  #
+  # Async + long poll because DM cold-start runs `collectstatic` +
+  # `initiate_notifications` before gunicorn binds (10-15 min worst case).
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && nohup docker compose up -d > /tmp/dm-compose.log 2>&1 &
-    sleep 5
-    echo "DM compose started in background"
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl dm update 2>&1
   args:
     executable: /bin/bash
+    chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  async: 3600
+  poll: 30
 
 - name: Wait for DM web to be ready
   become: false

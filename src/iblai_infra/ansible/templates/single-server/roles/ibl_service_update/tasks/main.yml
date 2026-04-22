@@ -202,8 +202,11 @@
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
-  async: 1800
-  poll: 15
+  # 60 min. Older AMIs with many pending migrations against a new
+  # `iblai-prod-images` tag have been observed to exceed 30 min — most of
+  # the time is spent pulling the new DM image on the one-shot container.
+  async: 3600
+  poll: 30
 
 - name: Update DM via `ibl dm update`
   # `ibl dm update` is the canonical update path — it pulls new images and

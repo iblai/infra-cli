@@ -12,6 +12,7 @@ from rich.status import Status
 from iblai_infra import ui
 from iblai_infra.models import (
     AWSCredentials,
+    CALL_INSTANCE_TYPES,
     CallServerConfig,
     ComputeConfig,
     DeploymentType,
@@ -335,15 +336,21 @@ def _prompt_call_server_config() -> CallServerConfig:
     ui.newline()
     ui.info("[bold]Call Server[/bold] (LiveKit) — isolated VPC, direct public EIP")
 
+    # Call-server uses a dedicated instance-type list sized for LiveKit
+    # (starts at t3.medium — the single-server INSTANCE_TYPES starts at
+    # t3.xlarge which is overkill for a small LiveKit node).
     instance_labels = {
-        f"{itype}  — {desc}": itype for itype, desc in INSTANCE_TYPES.items()
+        f"{itype}  — {desc}": itype for itype, desc in CALL_INSTANCE_TYPES.items()
     }
     instance_labels["Custom (enter manually)"] = "_custom"
+
+    # Default must match the exact key-format built above so the validator accepts it.
+    _default_label = next(k for k, v in instance_labels.items() if v == "t3.large")
 
     selection = questionary.autocomplete(
         "Call server instance type (LiveKit is CPU-bound — upsize for heavy workloads):",
         choices=list(instance_labels.keys()),
-        default=f"t3.xlarge  — {INSTANCE_TYPES['t3.xlarge']}",
+        default=_default_label,
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
         validate=lambda v: v in instance_labels or "Select from the list",

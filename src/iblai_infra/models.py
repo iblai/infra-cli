@@ -71,13 +71,24 @@ AWS_REGIONS: dict[str, str] = {
     "af-south-1": "Africa (Cape Town)",
 }
 
-# Common instance types with human-readable descriptions
+# Common instance types with human-readable descriptions (single/multi-server).
 INSTANCE_TYPES: dict[str, str] = {
     "t3.xlarge": "4 vCPU,  16 GB RAM — Small workloads",
     "t3.2xlarge": "8 vCPU,  32 GB RAM",
     "m5.2xlarge": "8 vCPU,  32 GB RAM — Compute optimized",
     "m5.4xlarge": "16 vCPU, 64 GB RAM — Large workloads",
     "r5.2xlarge": "8 vCPU,  64 GB RAM — Memory optimized",
+}
+
+# LiveKit (call-server) sizing recommendations. Per LiveKit's self-hosting
+# guide, SFU-only workloads fit on 2 vCPU boxes; egress/recording benefits
+# from CPU-optimized (c5) families.
+CALL_INSTANCE_TYPES: dict[str, str] = {
+    "t3.medium":  "2 vCPU,  4 GB RAM — SFU-only, small rooms",
+    "t3.large":   "2 vCPU,  8 GB RAM — SFU-only, moderate rooms (default)",
+    "t3.xlarge":  "4 vCPU, 16 GB RAM — with egress / medium rooms",
+    "c5.xlarge":  "4 vCPU,  8 GB RAM — CPU-optimized for transcoding",
+    "c5.2xlarge": "8 vCPU, 16 GB RAM — heavy production / recording",
 }
 
 # IBL platform subdomains generated from the base domain

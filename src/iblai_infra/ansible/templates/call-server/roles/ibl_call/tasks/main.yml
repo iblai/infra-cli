@@ -65,15 +65,20 @@
     AWS_DEFAULT_REGION: "{{ aws_default_region }}"
   no_log: true
 
-- name: Launch the call stack (ibl call start)
+- name: Launch the call stack (ibl call up)
   become: false
+  # `ibl call start` (iblai-cli-ops ≤ 5.8.1) passes `--remove-orphans` to a
+  # `docker compose` subcommand that Docker Compose v5 (bundled with Docker
+  # 29+) rejects with "unknown flag: --remove-orphans". `ibl call up` takes
+  # a simpler path and works on both Compose v2 and v5 stacks. Verified live
+  # on stg-call-pro (44.210.28.14) 2026-04-24.
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl call start
+    ibl call up
   args:
     executable: /bin/bash
   environment:

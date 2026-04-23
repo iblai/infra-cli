@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from iblai_infra import ui
-from iblai_infra.models import InfraConfig
+from iblai_infra.models import DeploymentType, InfraConfig
 from iblai_infra.prompts.credentials import prompt_credentials
 from iblai_infra.prompts.dns_certs import prompt_dns_and_certs
 from iblai_infra.prompts.infrastructure import prompt_project_and_compute, prompt_network_and_ssh
@@ -32,15 +32,27 @@ def run_provision_wizard(show_banner: bool = True) -> None:
         save_session(credentials)
 
     # Step 2 — Project & compute
-    project_name, environment, deployment_type, compute, multi_server = (
-        prompt_project_and_compute()
+    (
+        project_name,
+        environment,
+        deployment_type,
+        compute,
+        multi_server,
+        call_server,
+    ) = prompt_project_and_compute()
+
+    # Step 3 — Network & SSH (call-server uses 10.1/16 to avoid clash with the
+    # 10.0/16 default single-server and multi-server VPCs)
+    default_cidr = "10.1.0.0/16" if deployment_type == DeploymentType.CALL else "10.0.0.0/16"
+    network, ssh = prompt_network_and_ssh(
+        credentials, project_name, environment, default_vpc_cidr=default_cidr
     )
 
-    # Step 3 — Network & SSH
-    network, ssh = prompt_network_and_ssh(credentials, project_name, environment)
-
     # Step 4 — Domain & certificates
-    dns, certificates = prompt_dns_and_certs(credentials)
+    dns, certificates = prompt_dns_and_certs(
+        credentials,
+        is_call_server=(deployment_type == DeploymentType.CALL),
+    )
 
     # Assemble the full config
     config = InfraConfig(
@@ -51,6 +63,7 @@ def run_provision_wizard(show_banner: bool = True) -> None:
         network=network,
         compute=compute,
         multi_server=multi_server,
+        call_server=call_server,
         ssh=ssh,
         certificates=certificates,
         dns=dns,
@@ -182,7 +195,7 @@ def _offer_setup(config: InfraConfig, state) -> None:
         ui.newline()
         return
 
-    from iblai_infra.ansible.runner import AnsibleRunner
+    from iblai_infra.ansible.runner import AnsibleRunner, CALL_ROLE_LABELS
     from iblai_infra.prompts.setup import prompt_setup
 
     try:
@@ -195,7 +208,17 @@ def _offer_setup(config: InfraConfig, state) -> None:
         ui.newline()
         return
 
-    runner = AnsibleRunner(state, setup_config)
+    # Call-server has its own (smaller) role set + dedicated playbook
+    if config.deployment_type == DeploymentType.CALL:
+        # Override env_config so ibl_call role runs `ibl config environment call-only`
+        setup_config.env_config = "call-only"
+        runner = AnsibleRunner(
+            state, setup_config,
+            playbook="call_playbook.yml",
+            role_labels=CALL_ROLE_LABELS,
+        )
+    else:
+        runner = AnsibleRunner(state, setup_config)
 
     if not runner.preflight():
         ui.newline()

@@ -421,7 +421,8 @@ class TerraformRunner:
     def _copy_templates(self) -> None:
         """Copy Terraform template files to workspace."""
         self.ws.mkdir(parents=True, exist_ok=True)
-        topology = self.config.deployment_type.value  # "single-server" or "multi-server"
+        # "single-server", "multi-server", or "call-server"
+        topology = self.config.deployment_type.value
         template_dir = Path(__file__).parent / "templates" / "aws" / topology
         if not template_dir.exists():
             ui.abort(f"Template directory not found: {template_dir}")
@@ -478,12 +479,7 @@ class TerraformRunner:
         tf("vpn_ip", c.network.vpn_ip)
         tf("base_domain", c.dns.base_domain)
 
-        # S3 bucket uniqueness — check if default names are taken
-        bucket_suffix = self._resolve_bucket_suffix(c)
-        if bucket_suffix:
-            tf("bucket_suffix", bucket_suffix)
-
-        # SSH
+        # SSH (shared across all deployment types)
         if c.ssh.method == SSHKeyMethod.AWS_KEYPAIR:
             tf("existing_key_pair_name", c.ssh.key_name)
             tf("create_key_pair", False)
@@ -492,7 +488,22 @@ class TerraformRunner:
             tf("key_pair_name", c.ssh.key_name)
             tf("create_key_pair", True)
 
-        # Certificates
+        # Call-server has its own variable set — no ALB, no ACM cert (LiveKit
+        # handles TLS in-process), no S3 buckets. hosted_zone_id alone drives
+        # optional R53 A-record creation.
+        if c.deployment_type == DeploymentType.CALL:
+            cs = c.call_server
+            tf("hosted_zone_id", c.certificates.hosted_zone_id or "")
+            tf("enable_sip", cs.enable_sip if cs else False)
+            (self.ws / "terraform.tfvars").write_text("\n".join(lines) + "\n")
+            return
+
+        # S3 bucket uniqueness — check if default names are taken
+        bucket_suffix = self._resolve_bucket_suffix(c)
+        if bucket_suffix:
+            tf("bucket_suffix", bucket_suffix)
+
+        # Certificates (ALB-attached — single-server and multi-server only)
         if c.certificates.method == CertMethod.ACM:
             tf("hosted_zone_id", c.certificates.hosted_zone_id or "")
             tf("certificate_method", "acm")

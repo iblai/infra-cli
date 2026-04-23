@@ -43,6 +43,7 @@ class Environment(str, Enum):
 class DeploymentType(str, Enum):
     SINGLE = "single-server"
     MULTI = "multi-server"
+    CALL = "call-server"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +211,28 @@ class MultiServerConfig(BaseModel):
         return v
 
 
+class CallServerConfig(BaseModel):
+    """Configuration for call-server (LiveKit) deployments.
+
+    Deployed as a standalone VM in an isolated VPC. Exposes the full LiveKit
+    port set: API/WebSocket :7880, ICE/TCP :7881, ICE/UDP-mux :7882,
+    ICE/UDP 50000-60000, TURN/TLS :5349, TURN/UDP :3478. SIP stack
+    (5060/5061/10000-20000) is gated on `enable_sip`.
+    """
+    instance_type: str = "t3.large"
+    volume_size: int = 40
+    volume_type: str = "gp3"
+    vpc_cidr: str = "10.1.0.0/16"  # distinct default from single-server (10.0/16)
+    enable_sip: bool = False
+
+    @field_validator("volume_size")
+    @classmethod
+    def validate_volume(cls, v: int) -> int:
+        if v < 20:
+            raise ValueError("Volume size must be at least 20 GB")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Top-level config — the single contract
 # ---------------------------------------------------------------------------
@@ -222,6 +245,7 @@ class InfraConfig(BaseModel):
     network: NetworkConfig
     compute: ComputeConfig
     multi_server: MultiServerConfig | None = None
+    call_server: CallServerConfig | None = None
     ssh: SSHConfig
     certificates: CertificateConfig
     dns: DNSConfig

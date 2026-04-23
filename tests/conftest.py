@@ -12,9 +12,11 @@ import pytest
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
+    CallServerConfig,
     CertificateConfig,
     CertMethod,
     ComputeConfig,
+    DeploymentType,
     DNSConfig,
     Environment,
     InfraConfig,
@@ -107,6 +109,47 @@ def resetup_config(tmp_path: Path) -> SetupConfig:
         aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         aws_default_region="us-east-1",
         git_access_token="ghp_testtoken123",
+    )
+
+
+@pytest.fixture
+def call_server_infra_config(aws_credentials: AWSCredentials) -> InfraConfig:
+    """InfraConfig for a call-server (LiveKit) deployment."""
+    return InfraConfig(
+        project_name="testcall",
+        environment=Environment.DEV,
+        deployment_type=DeploymentType.CALL,
+        credentials=aws_credentials,
+        network=NetworkConfig(vpc_cidr="10.1.0.0/16", vpn_ip="203.0.113.42"),
+        compute=ComputeConfig(instance_type="t3.large", volume_size=40, volume_type="gp3"),
+        call_server=CallServerConfig(
+            instance_type="t3.large",
+            volume_size=40,
+            vpc_cidr="10.1.0.0/16",
+            enable_sip=False,
+        ),
+        ssh=SSHConfig(
+            method=SSHKeyMethod.GENERATE,
+            key_name="testcall-dev",
+            public_key="ssh-rsa AAAA...",
+            private_key_path=Path("/tmp/testcall.pem"),
+        ),
+        certificates=CertificateConfig(method=CertMethod.ACM, hosted_zone_id="Z12345"),
+        dns=DNSConfig(base_domain="call.example.com"),
+    )
+
+
+@pytest.fixture
+def call_server_project_state(call_server_infra_config: InfraConfig, tmp_path: Path) -> ProjectState:
+    return ProjectState(
+        name="testcall",
+        provider="aws",
+        status="created",
+        config=call_server_infra_config,
+        outputs={"instance_public_ip": "54.123.45.67", "elastic_ip": "54.123.45.67"},
+        created_at=datetime(2026, 4, 24, 10, 0, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 24, 10, 30, 0, tzinfo=timezone.utc),
+        workspace_path=str(tmp_path),
     )
 
 

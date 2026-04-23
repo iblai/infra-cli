@@ -19,7 +19,7 @@ from rich.live import Live
 from rich.table import Table
 
 from iblai_infra import ui
-from iblai_infra.models import ProjectState, SetupConfig
+from iblai_infra.models import DeploymentType, ProjectState, SetupConfig
 from iblai_infra.terraform.state import save_state
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,14 @@ LAUNCH_ROLE_LABELS: dict[str, str] = {
 SERVICE_UPDATE_ROLE_LABELS: dict[str, str] = {
     "ibl_cli_ops": "iblai-cli-ops",
     "ibl_service_update": "Service Update",
+}
+
+CALL_ROLE_LABELS: dict[str, str] = {
+    "docker": "Docker Engine",
+    "awscli": "AWS CLI",
+    "python": "Python Environment",
+    "ibl_cli_ops": "iblai-cli-ops",
+    "ibl_call": "Call Stack (LiveKit)",
 }
 
 TOTAL_ROLES = len(ROLE_LABELS)
@@ -371,9 +379,30 @@ class AnsibleRunner:
     # Workspace setup
     # ------------------------------------------------------------------
 
+    def _topology(self) -> str:
+        """Pick the ansible template topology based on state.config.deployment_type.
+
+        Falls back to 'single-server' when state has no config (e.g. when
+        AnsibleRunner is built from a bootstrap ProjectState that pre-dates
+        the deployment_type field).
+        """
+        try:
+            return self.state.config.deployment_type.value
+        except AttributeError:
+            return "single-server"
+
+    def _host_group(self) -> str:
+        """Inventory host group name for this deployment type."""
+        return "call_servers" if self._topology() == DeploymentType.CALL.value else "ibl_servers"
+
     def _copy_templates(self) -> None:
         """Copy Ansible template files to workspace."""
-        template_dir = Path(__file__).parent / "templates" / "single-server"
+        topology = self._topology()
+        template_dir = Path(__file__).parent / "templates" / topology
+        if not template_dir.exists():
+            # Fall back to single-server for topologies that don't ship their own
+            # ansible template (e.g. "multi-server" currently reuses single-server).
+            template_dir = Path(__file__).parent / "templates" / "single-server"
         if not template_dir.exists():
             ui.abort(f"Ansible template directory not found: {template_dir}")
 
@@ -384,13 +413,14 @@ class AnsibleRunner:
 
     def _generate_inventory(self) -> None:
         """Generate inventory.ini from SetupConfig."""
+        group = self._host_group()
         content = (
-            "[ibl_servers]\n"
+            f"[{group}]\n"
             f"{self.config.target_host}"
             f" ansible_user={self.config.ssh_user}"
             f" ansible_ssh_private_key_file={self.config.ssh_private_key_path}\n"
             "\n"
-            "[ibl_servers:vars]\n"
+            f"[{group}:vars]\n"
             "ansible_python_interpreter=/usr/bin/python3\n"
         )
         (self.ws / "inventory.ini").write_text(content)

@@ -1,0 +1,52 @@
+---
+- name: Ensure venv pip and uv are up-to-date
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    pip install --upgrade pip uv
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Ensure working directory exists
+  become: false
+  file:
+    path: "{{ repo_dir }}"
+    state: directory
+
+- name: Install iblai-prod-images (ibl-cli-ops + image definitions)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    uv pip install "iblai-images[sumac] @ git+https://{{ git_access_token }}@github.com/iblai/iblai-prod-images@{{ prod_images_tag | default('main') }}#egg=iblai-images" --reinstall
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    GIT_CONFIG_COUNT: "1"
+    GIT_CONFIG_KEY_0: "url.https://{{ git_access_token }}@github.com/.insteadOf"
+    GIT_CONFIG_VALUE_0: "https://github.com/"
+
+- name: Verify ibl CLI is available
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl --help
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  changed_when: false

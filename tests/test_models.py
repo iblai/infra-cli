@@ -10,9 +10,11 @@ from pydantic import ValidationError
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
+    CallServerConfig,
     CertificateConfig,
     CertMethod,
     ComputeConfig,
+    DeploymentType,
     DNSConfig,
     Environment,
     IBL_SUBDOMAINS,
@@ -326,6 +328,64 @@ class TestEnums:
         assert Environment.DEV.value == "dev"
         assert Environment.STAGING.value == "staging"
         assert Environment.PROD.value == "prod"
+
+    def test_deployment_types(self):
+        assert DeploymentType.SINGLE.value == "single-server"
+        assert DeploymentType.MULTI.value == "multi-server"
+        assert DeploymentType.CALL.value == "call-server"
+
+
+# ---------------------------------------------------------------------------
+# CallServerConfig
+# ---------------------------------------------------------------------------
+
+
+class TestCallServerConfig:
+    def test_defaults(self):
+        cfg = CallServerConfig()
+        assert cfg.instance_type == "t3.large"
+        assert cfg.volume_size == 40
+        assert cfg.volume_type == "gp3"
+        assert cfg.vpc_cidr == "10.1.0.0/16"  # distinct from single-server's 10.0/16
+        assert cfg.enable_sip is False
+
+    def test_custom_values(self):
+        cfg = CallServerConfig(
+            instance_type="m5.xlarge",
+            volume_size=100,
+            vpc_cidr="172.16.0.0/16",
+            enable_sip=True,
+        )
+        assert cfg.instance_type == "m5.xlarge"
+        assert cfg.volume_size == 100
+        assert cfg.vpc_cidr == "172.16.0.0/16"
+        assert cfg.enable_sip is True
+
+    def test_volume_size_floor(self):
+        with pytest.raises(ValidationError, match="at least 20"):
+            CallServerConfig(volume_size=10)
+
+    def test_attaches_to_infra_config(self, aws_credentials):
+        """InfraConfig accepts a CallServerConfig under call_server field."""
+        infra = InfraConfig(
+            project_name="callenv",
+            environment=Environment.PROD,
+            deployment_type=DeploymentType.CALL,
+            credentials=aws_credentials,
+            network=NetworkConfig(vpc_cidr="10.1.0.0/16", vpn_ip="203.0.113.1"),
+            compute=ComputeConfig(),
+            call_server=CallServerConfig(enable_sip=True),
+            ssh=SSHConfig(method=SSHKeyMethod.GENERATE, key_name="call"),
+            certificates=CertificateConfig(method=CertMethod.ACM),
+            dns=DNSConfig(base_domain="example.com"),
+        )
+        assert infra.deployment_type == DeploymentType.CALL
+        assert infra.call_server is not None
+        assert infra.call_server.enable_sip is True
+
+    def test_call_server_defaults_none(self, infra_config):
+        """InfraConfig.call_server defaults to None for non-call deployments."""
+        assert infra_config.call_server is None
 
 
 # ---------------------------------------------------------------------------

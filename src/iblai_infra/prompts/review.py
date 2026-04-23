@@ -45,6 +45,11 @@ def prompt_review(config: InfraConfig) -> bool:
         rows.append(("App volume", f"{ms.app_server_volume_size} GB gp3"))
         rows.append(("Services server", f"1 x {ms.services_instance_type}"))
         rows.append(("Services volume", f"{ms.services_volume_size} GB gp3"))
+    elif config.deployment_type == DeploymentType.CALL and config.call_server:
+        cs = config.call_server
+        rows.append(("Call server", f"1 x {cs.instance_type}"))
+        rows.append(("Volume", f"{cs.volume_size} GB {cs.volume_type}"))
+        rows.append(("SIP stack", "Enabled" if cs.enable_sip else "Disabled"))
     else:
         rows.append(("Instance type", config.compute.instance_type))
         rows.append(("Volume", f"{config.compute.volume_size} GB {config.compute.volume_type}"))
@@ -65,10 +70,14 @@ def prompt_review(config: InfraConfig) -> bool:
     rows.append(("VPC CIDR", config.network.vpc_cidr))
     if config.deployment_type == DeploymentType.MULTI:
         rows.append(("Subnets", "Public + Private + DB + Cache (multi-AZ)"))
+    elif config.deployment_type == DeploymentType.CALL:
+        rows.append(("Subnets", "2 public (multi-AZ, isolated VPC)"))
     else:
         rows.append(("Subnets", "2 public (multi-AZ)"))
     rows.append(("SSH access", f"{config.network.vpn_ip}/32 only"))
-    if config.deployment_type == DeploymentType.MULTI and config.multi_server:
+    if config.deployment_type == DeploymentType.CALL:
+        rows.append(("Load balancer", "None — direct EIP (LiveKit needs UDP)"))
+    elif config.deployment_type == DeploymentType.MULTI and config.multi_server:
         rows.append(("Load balancer", f"ALB ({config.multi_server.app_server_count} targets)"))
     else:
         rows.append(("Load balancer", "Application LB (internet-facing)"))
@@ -100,10 +109,11 @@ def prompt_review(config: InfraConfig) -> bool:
         rows.append(("DNS", "External (user-managed)"))
         rows.append(("Certificates", "None (HTTP only)"))
 
-    # Storage
-    rows.append(("", ""))
-    rows.append(("", "[bold]Storage[/bold]"))
-    rows.append(("S3 buckets", "3 (backups, media, static)"))
+    # Storage (call-server has none — LiveKit is self-contained)
+    if config.deployment_type != DeploymentType.CALL:
+        rows.append(("", ""))
+        rows.append(("", "[bold]Storage[/bold]"))
+        rows.append(("S3 buckets", "3 (backups, media, static)"))
 
     ui.summary_panel("Infrastructure Summary", rows)
 

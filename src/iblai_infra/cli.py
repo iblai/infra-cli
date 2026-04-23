@@ -503,8 +503,8 @@ def launch(
     ssh_public_key: str = typer.Option(..., "--ssh-public-key", help="SSH public key material"),
     ssh_key: Path = typer.Option(..., "--ssh-key", help="Path to SSH private key"),
     git_token: str = typer.Option(..., "--git-token", help="GitHub Personal Access Token"),
-    admin_email: str = typer.Option(..., "--admin-email", help="Admin email address"),
-    admin_password: str = typer.Option(..., "--admin-password", help="Admin password (min 8 chars)"),
+    admin_email: str = typer.Option("", "--admin-email", help="Admin email address (required for single/multi-server, ignored for call-server)"),
+    admin_password: str = typer.Option("", "--admin-password", help="Admin password (required for single/multi-server, ignored for call-server)"),
     vpn_ip: str = typer.Option(..., "--vpn-ip", help="IP address allowed SSH access"),
     name: str | None = typer.Option(None, "--name", help="Project name (auto-generated from domain if omitted)"),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH user"),
@@ -516,13 +516,14 @@ def launch(
     admin_username: str = typer.Option("ibl_admin", "--admin-username", help="Admin username"),
     openai_key: str = typer.Option("", "--openai-key", help="OpenAI API key (optional)"),
     enable_ai: bool = typer.Option(True, "--enable-ai/--no-ai", help="Enable AI features"),
-    deployment_type: str = typer.Option("single-server", "--deployment-type", help="single-server or multi-server"),
+    deployment_type: str = typer.Option("single-server", "--deployment-type", help="single-server, multi-server, or call-server"),
     app_server_count: int = typer.Option(2, "--app-server-count", help="Number of app servers (multi-server only)"),
     services_instance_type: str = typer.Option("t3.2xlarge", "--services-instance-type", help="Services server instance type (multi-server only)"),
     services_volume_size: int = typer.Option(500, "--services-volume-size", help="Services server volume in GB (multi-server only)"),
     enable_mysql: bool = typer.Option(False, "--enable-mysql/--no-mysql", help="Enable managed MySQL RDS (multi-server only)"),
     enable_postgres: bool = typer.Option(False, "--enable-postgres/--no-postgres", help="Enable managed PostgreSQL RDS (multi-server only)"),
     enable_redis: bool = typer.Option(False, "--enable-redis/--no-redis", help="Enable managed Redis ElastiCache (multi-server only)"),
+    enable_sip: bool = typer.Option(False, "--enable-sip/--no-sip", help="Open LiveKit SIP ports (call-server only)"),
 ) -> None:
     """Launch IBL platform from a pre-built AMI. Non-interactive, CI/CD-friendly.
 
@@ -530,6 +531,10 @@ def launch(
     then configures the platform (domain, secrets, service restarts) via Ansible.
 
     Provide either --domain or --ingress (resolved from registered endpoints).
+
+    For a standalone LiveKit call server, pass --deployment-type call-server.
+    This provisions an isolated 10.1.0.0/16 VPC with the full LiveKit port set
+    and runs only docker/awscli/python/ibl_cli_ops/ibl_call ansible roles.
     """
     if ingress_name and not domain:
         entries = load_ingress()
@@ -542,6 +547,13 @@ def launch(
     if not domain:
         ui.error("Either --domain or --ingress is required.")
         raise typer.Exit(1)
+
+    # call-server skips admin creation entirely; single/multi still need it
+    if deployment_type != "call-server":
+        if not admin_email or not admin_password:
+            ui.error("--admin-email and --admin-password are required for single/multi-server deployments.")
+            raise typer.Exit(1)
+
     _run_launch(
         ami_id=ami_id, domain=domain, hosted_zone_id=hosted_zone_id,
         aws_key_id=aws_key_id, aws_secret_key=aws_secret_key,
@@ -560,6 +572,7 @@ def launch(
         enable_mysql=enable_mysql,
         enable_postgres=enable_postgres,
         enable_redis=enable_redis,
+        enable_sip=enable_sip,
     )
 
 
@@ -730,16 +743,18 @@ def _run_launch(
     enable_mysql: bool = False,
     enable_postgres: bool = False,
     enable_redis: bool = False,
+    enable_sip: bool = False,
 ) -> None:
     """Provision infrastructure from AMI and configure platform. Non-interactive."""
     import os
     import shutil
     from datetime import datetime, timezone
 
-    from iblai_infra.ansible.runner import AnsibleRunner, LAUNCH_ROLE_LABELS
+    from iblai_infra.ansible.runner import AnsibleRunner, CALL_ROLE_LABELS, LAUNCH_ROLE_LABELS
     from iblai_infra.models import (
         AWSCredentials,
         AuthMethod,
+        CallServerConfig,
         CertificateConfig,
         CertMethod,
         ComputeConfig,
@@ -777,12 +792,16 @@ def _run_launch(
     env = env_map.get(environment, Environment.STAGING)
 
     # Map deployment type string
-    deploy_type = (
-        DeploymentType.MULTI if deployment_type == "multi-server" else DeploymentType.SINGLE
-    )
+    deploy_type_map = {
+        "multi-server": DeploymentType.MULTI,
+        "call-server": DeploymentType.CALL,
+    }
+    deploy_type = deploy_type_map.get(deployment_type, DeploymentType.SINGLE)
 
-    # Build multi-server config if applicable
-    multi_server = None
+    # Topology-specific optional configs
+    multi_server: MultiServerConfig | None = None
+    call_server: CallServerConfig | None = None
+
     if deploy_type == DeploymentType.MULTI:
         multi_server = MultiServerConfig(
             app_server_count=app_server_count,
@@ -797,6 +816,13 @@ def _run_launch(
             postgres_password=generate_password() if enable_postgres else None,
             redis_auth_token=generate_password(32) if enable_redis else None,
         )
+    elif deploy_type == DeploymentType.CALL:
+        call_server = CallServerConfig(
+            instance_type=instance_type,
+            volume_size=volume_size,
+            vpc_cidr="10.1.0.0/16",
+            enable_sip=enable_sip,
+        )
 
     # Check prerequisites
     if shutil.which("terraform") is None:
@@ -805,6 +831,10 @@ def _run_launch(
     if shutil.which("ansible-playbook") is None:
         ui.error("ansible-playbook not found. Install with: pip install ansible-core")
         raise typer.Exit(1)
+
+    # call-server uses an isolated 10.1/16 VPC to avoid clashing with
+    # single/multi-server deployments running alongside.
+    vpc_cidr = "10.1.0.0/16" if deploy_type == DeploymentType.CALL else "10.0.0.0/16"
 
     # Build InfraConfig
     infra_config = InfraConfig(
@@ -817,13 +847,14 @@ def _run_launch(
             secret_access_key=aws_secret_key,
             region=aws_region,
         ),
-        network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip=vpn_ip),
+        network=NetworkConfig(vpc_cidr=vpc_cidr, vpn_ip=vpn_ip),
         compute=ComputeConfig(
             instance_type=instance_type,
             volume_size=volume_size,
             ami_id=ami_id,
         ),
         multi_server=multi_server,
+        call_server=call_server,
         ssh=SSHConfig(
             method=SSHKeyMethod.GENERATE,
             key_name=f"{project_name}-{environment}",
@@ -879,6 +910,7 @@ def _run_launch(
         ssh_user=ssh_user,
         target_host=instance_ip,
         base_domain=domain,
+        env_config=("call-only" if deploy_type == DeploymentType.CALL else "single-server"),
         cli_ops_release_tag=cli_tag,
         enable_ai=enable_ai,
         aws_access_key_id=aws_key_id,
@@ -891,11 +923,18 @@ def _run_launch(
         admin_password=admin_password,
     )
 
-    ansible_runner = AnsibleRunner(
-        state, setup_config,
-        playbook="launch_playbook.yml",
-        role_labels=LAUNCH_ROLE_LABELS,
-    )
+    if deploy_type == DeploymentType.CALL:
+        ansible_runner = AnsibleRunner(
+            state, setup_config,
+            playbook="call_playbook.yml",
+            role_labels=CALL_ROLE_LABELS,
+        )
+    else:
+        ansible_runner = AnsibleRunner(
+            state, setup_config,
+            playbook="launch_playbook.yml",
+            role_labels=LAUNCH_ROLE_LABELS,
+        )
 
     if not ansible_runner.preflight():
         raise typer.Exit(1)
@@ -1593,17 +1632,27 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
     """Show summary, confirm, and run Ansible. Shared by both setup paths."""
     from datetime import datetime, timezone
 
-    from iblai_infra.ansible.runner import AnsibleRunner
+    from iblai_infra.ansible.runner import AnsibleRunner, CALL_ROLE_LABELS
+    from iblai_infra.models import DeploymentType
+
+    is_call = (
+        getattr(state.config, "deployment_type", DeploymentType.SINGLE) == DeploymentType.CALL
+    )
 
     rows = []
     if setup_config.is_resetup:
         rows.append(("Mode", "Re-setup"))
+    if is_call:
+        rows.append(("Mode", "Call server (LiveKit)"))
     rows.extend([
         ("Target", setup_config.target_host),
         ("SSH key", str(setup_config.ssh_private_key_path)),
         ("Domain", setup_config.base_domain),
         ("CLI ops tag", setup_config.cli_ops_release_tag),
-        ("edX version", setup_config.edx_version),
+    ])
+    if not is_call:
+        rows.append(("edX version", setup_config.edx_version))
+    rows.extend([
         ("Env config", setup_config.env_config),
         ("AWS region", setup_config.aws_default_region),
     ])
@@ -1625,7 +1674,17 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
         state.config.dns.base_domain = setup_config.base_domain
         save_state(state)
 
-    runner = AnsibleRunner(state, setup_config)
+    if is_call:
+        # ibl_call role uses env_config; make sure it's set even if the prompt defaulted
+        if not setup_config.env_config or setup_config.env_config == "single-server":
+            setup_config.env_config = "call-only"
+        runner = AnsibleRunner(
+            state, setup_config,
+            playbook="call_playbook.yml",
+            role_labels=CALL_ROLE_LABELS,
+        )
+    else:
+        runner = AnsibleRunner(state, setup_config)
 
     if not runner.preflight():
         raise typer.Exit(1)

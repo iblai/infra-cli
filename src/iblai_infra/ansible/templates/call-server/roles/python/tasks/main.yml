@@ -1,0 +1,121 @@
+---
+- name: Ensure IBL root directory exists
+  file:
+    path: "{{ ibl_root }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+
+- name: Install Python build dependencies
+  apt:
+    name:
+      - build-essential
+      - libssl-dev
+      - zlib1g-dev
+      - libbz2-dev
+      - libreadline-dev
+      - libsqlite3-dev
+      - wget
+      - llvm
+      - libncurses5-dev
+      - libncursesw5-dev
+      - xz-utils
+      - tk-dev
+      - libffi-dev
+      - liblzma-dev
+      - python3-openssl
+    state: present
+
+- name: Ensure pyenv root directory exists
+  become: false
+  file:
+    path: "{{ pyenv_root }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+
+- name: Install pyenv
+  become: false
+  git:
+    repo: https://github.com/pyenv/pyenv.git
+    dest: "{{ pyenv_root }}"
+    update: true
+    version: master
+
+- name: Ensure pyenv plugins directory exists
+  become: false
+  file:
+    path: "{{ pyenv_root }}/plugins"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+
+- name: Install pyenv-virtualenv plugin
+  become: false
+  git:
+    repo: https://github.com/pyenv/pyenv-virtualenv.git
+    dest: "{{ pyenv_root }}/plugins/pyenv-virtualenv"
+    version: master
+    update: true
+
+- name: Configure shell environment for pyenv
+  become: false
+  lineinfile:
+    path: "{{ bashrc_path }}"
+    line: "{{ item }}"
+    insertafter: EOF
+  loop:
+    - 'export IBL_ROOT={{ ibl_root }}/'
+    - 'export PYENV_ROOT="{{ pyenv_root }}"'
+    - 'export PATH="$PYENV_ROOT/bin:$PATH"'
+    - 'eval "$(pyenv init -)"'
+    - 'eval "$(pyenv virtualenv-init -)"'
+
+- name: Install Python {{ python_version }} via pyenv
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    if ! pyenv versions --bare | grep -qx "{{ python_version }}"; then
+      CFLAGS="-O2" pyenv install "{{ python_version }}"
+    fi
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Create virtualenv {{ venv_name }}
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    if ! pyenv virtualenvs --bare | grep -qx "{{ venv_name }}"; then
+      pyenv virtualenv "{{ python_version }}" "{{ venv_name }}"
+    fi
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Auto-activate virtualenv in .bashrc
+  become: false
+  lineinfile:
+    path: "{{ bashrc_path }}"
+    line: "pyenv activate {{ venv_name }}"
+    insertafter: EOF
+
+- name: Verify virtualenv pip exists
+  become: false
+  stat:
+    path: "/home/{{ ansible_user }}/.pyenv/versions/{{ venv_name }}/bin/pip"
+  register: venv_pip_stat
+
+- name: Fail if virtualenv pip is missing
+  fail:
+    msg: "Venv pip not found at /home/{{ ansible_user }}/.pyenv/versions/{{ venv_name }}/bin/pip"
+  when: not venv_pip_stat.stat.exists

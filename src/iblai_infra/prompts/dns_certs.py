@@ -24,14 +24,25 @@ from iblai_infra.providers.aws import (
 TOTAL_STEPS = 5
 
 
-def prompt_dns_and_certs(credentials: AWSCredentials) -> tuple[DNSConfig, CertificateConfig]:
-    """Prompt for domain, DNS provider, and certificate source."""
+def prompt_dns_and_certs(
+    credentials: AWSCredentials,
+    is_call_server: bool = False,
+) -> tuple[DNSConfig, CertificateConfig]:
+    """Prompt for domain, DNS provider, and certificate source.
+
+    When ``is_call_server`` is True, skips the 19-subdomain expansion + CNAME
+    conflict check — the call-server Terraform template only creates a single
+    A record for the call FQDN, and TLS is terminated inside LiveKit rather
+    than at an AWS ALB.
+    """
 
     ui.step_header(4, TOTAL_STEPS, "Domain & Certificates")
 
+    prompt_text = "Call server FQDN (e.g. call.example.com):" if is_call_server else "Base domain:"
+
     # ----- base domain -----
     base_domain = questionary.text(
-        "Base domain:",
+        prompt_text,
         validate=lambda v: _validate_domain(v) or "Enter a valid domain (e.g. example.com)",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
@@ -46,6 +57,52 @@ def prompt_dns_and_certs(credentials: AWSCredentials) -> tuple[DNSConfig, Certif
 
     # Find zones matching the domain
     matching_zones = [z for z in zones if base_domain.endswith(z.name) or z.name == base_domain]
+
+    # Call-server has a much simpler path: optional R53 A-record, no ACM certs
+    # (LiveKit terminates TLS internally), no subdomain expansion.
+    if is_call_server:
+        hosted_zone_id: str | None = None
+        if matching_zones:
+            if len(matching_zones) == 1:
+                zone = matching_zones[0]
+                ui.info(f"Found Route53 zone: [highlight]{zone.name}[/highlight] ({zone.zone_id})")
+            else:
+                zone = questionary.select(
+                    "Select hosted zone:",
+                    choices=[
+                        questionary.Choice(f"{z.name} ({z.zone_id})", value=z)
+                        for z in matching_zones
+                    ],
+                    style=ui.PROMPT_STYLE,
+                    qmark=ui.QMARK,
+                ).ask()
+                if zone is None:
+                    ui.abort()
+            use_r53 = questionary.confirm(
+                f"Create a Route53 A record for {base_domain} → Elastic IP?",
+                default=True,
+                style=ui.PROMPT_STYLE,
+                qmark=ui.QMARK,
+            ).ask()
+            if use_r53 is None:
+                ui.abort()
+            if use_r53:
+                hosted_zone_id = zone.zone_id
+        else:
+            ui.muted(f"No Route53 hosted zone in this account matches {base_domain}.")
+            ui.muted("Skipping DNS — point your A record at the Elastic IP after provisioning.")
+
+        return (
+            DNSConfig(
+                base_domain=base_domain,
+                use_route53=bool(hosted_zone_id),
+                hosted_zone_id=hosted_zone_id,
+            ),
+            CertificateConfig(
+                method=CertMethod.ACM if hosted_zone_id else CertMethod.NONE,
+                hosted_zone_id=hosted_zone_id,
+            ),
+        )
 
     if matching_zones:
         ui.success(f"Found Route53 hosted zone(s) matching [highlight]{base_domain}[/highlight]")

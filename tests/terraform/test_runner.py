@@ -11,8 +11,10 @@ import pytest
 from botocore.exceptions import ClientError
 
 from iblai_infra.models import (
+    CallServerConfig,
     CertMethod,
     CertificateConfig,
+    DeploymentType,
     Environment,
     SSHKeyMethod,
 )
@@ -281,6 +283,96 @@ class TestGenerateTfvars:
         tfvars = (tmp_path / "terraform.tfvars").read_text()
         assert "ami_id" not in tfvars
         assert "skip_user_data" not in tfvars
+
+
+class TestCopyTemplatesCallServer:
+    def test_call_server_picks_correct_template_dir(self, infra_config, tmp_path):
+        infra_config.deployment_type = DeploymentType.CALL
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        runner._copy_templates()
+
+        # Expected files from templates/aws/call-server/
+        for name in ("main.tf", "variables.tf", "outputs.tf", "user_data.sh"):
+            assert (tmp_path / name).exists(), f"missing {name}"
+
+        # main.tf should be the call-server one, not single-server — look for a
+        # signature string that only exists in the call template
+        main_tf = (tmp_path / "main.tf").read_text()
+        assert "LiveKit" in main_tf or "call-sg" in main_tf
+
+    def test_single_server_picks_correct_template_dir(self, infra_config, tmp_path):
+        # Sanity: default SINGLE still copies the single-server template
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        runner._copy_templates()
+
+        main_tf = (tmp_path / "main.tf").read_text()
+        assert "LiveKit" not in main_tf
+
+
+class TestGenerateTfvarsCallServer:
+    """Call-server has its own variable set — no bucket_suffix, no certificate_method,
+    no multi_server vars. Drives conditional DNS A-record via hosted_zone_id + enable_sip."""
+
+    def test_emits_call_vars_and_skips_non_call(self, infra_config, tmp_path):
+        infra_config.deployment_type = DeploymentType.CALL
+        infra_config.call_server = CallServerConfig(
+            instance_type="t3.large",
+            volume_size=40,
+            vpc_cidr="10.1.0.0/16",
+            enable_sip=True,
+        )
+        # Align the shared compute config with call defaults (the CLI does this)
+        infra_config.compute.instance_type = "t3.large"
+        infra_config.compute.volume_size = 40
+        infra_config.network.vpc_cidr = "10.1.0.0/16"
+        infra_config.certificates = CertificateConfig(
+            method=CertMethod.ACM, hosted_zone_id="Z12345"
+        )
+
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        # Bucket suffix lookup is AWS-side; it must NOT be called for call-server.
+        with patch.object(runner, "_resolve_bucket_suffix") as mock_bucket:
+            runner._generate_tfvars()
+            mock_bucket.assert_not_called()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        # Core shared vars still emitted
+        assert 'project_name = "testproject"' in tfvars
+        assert 'instance_type = "t3.large"' in tfvars
+        assert "root_volume_size = 40" in tfvars
+        assert 'vpc_cidr = "10.1.0.0/16"' in tfvars
+        # Call-specific
+        assert 'hosted_zone_id = "Z12345"' in tfvars
+        assert "enable_sip = true" in tfvars
+        # Non-call vars must be absent (they'd be undeclared in the call template)
+        assert "certificate_method" not in tfvars
+        assert "bucket_suffix" not in tfvars
+        assert "app_server_count" not in tfvars
+        assert "enable_mysql" not in tfvars
+
+    def test_enable_sip_false_by_default(self, infra_config, tmp_path):
+        infra_config.deployment_type = DeploymentType.CALL
+        infra_config.call_server = CallServerConfig()
+        infra_config.certificates = CertificateConfig(method=CertMethod.NONE)
+
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        runner._generate_tfvars()
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "enable_sip = false" in tfvars
+        # empty hosted_zone_id is still written (so terraform can read ""), but with no cert the R53 A record will be skipped
+        assert 'hosted_zone_id = ""' in tfvars
 
 
 # ---------------------------------------------------------------------------

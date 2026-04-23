@@ -12,6 +12,7 @@ from rich.status import Status
 from iblai_infra import ui
 from iblai_infra.models import (
     AWSCredentials,
+    CallServerConfig,
     ComputeConfig,
     DeploymentType,
     Environment,
@@ -38,9 +39,21 @@ WORKSPACE_DIR = Path.home() / ".iblai-infra"
 # ---------------------------------------------------------------------------
 
 def prompt_project_and_compute() -> (
-    tuple[str, Environment, DeploymentType, ComputeConfig, MultiServerConfig | None]
+    tuple[
+        str,
+        Environment,
+        DeploymentType,
+        ComputeConfig,
+        MultiServerConfig | None,
+        CallServerConfig | None,
+    ]
 ):
-    """Prompt for project identity, deployment type, and compute settings."""
+    """Prompt for project identity, deployment type, and compute settings.
+
+    Returns a 6-tuple; the last two fields are mutually exclusive:
+    - multi_server is set only when deployment_type == MULTI
+    - call_server is set only when deployment_type == CALL
+    """
 
     ui.step_header(2, TOTAL_STEPS, "Project & Compute")
 
@@ -84,6 +97,10 @@ def prompt_project_and_compute() -> (
                 "Multi-server   — app servers + services server + optional managed DBs",
                 value=DeploymentType.MULTI,
             ),
+            questionary.Choice(
+                "Call server    — standalone LiveKit in an isolated VPC",
+                value=DeploymentType.CALL,
+            ),
         ],
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
@@ -92,12 +109,23 @@ def prompt_project_and_compute() -> (
         ui.abort()
 
     multi_server = None
+    call_server = None
 
     if deployment_type == DeploymentType.MULTI:
         multi_server = _prompt_multi_server_config()
         # For multi-server, compute is a placeholder (not used by the template)
         compute = ComputeConfig()
-        return project_name, env, deployment_type, compute, multi_server
+        return project_name, env, deployment_type, compute, multi_server, call_server
+
+    if deployment_type == DeploymentType.CALL:
+        call_server = _prompt_call_server_config()
+        # Sync compute so the shared tfvars emitter produces the right values
+        compute = ComputeConfig(
+            instance_type=call_server.instance_type,
+            volume_size=call_server.volume_size,
+            volume_type=call_server.volume_type,
+        )
+        return project_name, env, deployment_type, compute, multi_server, call_server
 
     # ----- single-server: instance type -----
     instance_labels = {
@@ -157,7 +185,7 @@ def prompt_project_and_compute() -> (
         volume_size=int(volume_size),
         volume_type=volume_type,
     )
-    return project_name, env, deployment_type, compute, multi_server
+    return project_name, env, deployment_type, compute, multi_server, call_server
 
 
 def _prompt_multi_server_config() -> MultiServerConfig:
@@ -302,6 +330,63 @@ def _prompt_multi_server_config() -> MultiServerConfig:
     )
 
 
+def _prompt_call_server_config() -> CallServerConfig:
+    """Prompt for call-server (LiveKit) configuration."""
+    ui.newline()
+    ui.info("[bold]Call Server[/bold] (LiveKit) — isolated VPC, direct public EIP")
+
+    instance_labels = {
+        f"{itype}  — {desc}": itype for itype, desc in INSTANCE_TYPES.items()
+    }
+    instance_labels["Custom (enter manually)"] = "_custom"
+
+    selection = questionary.autocomplete(
+        "Call server instance type (LiveKit is CPU-bound — upsize for heavy workloads):",
+        choices=list(instance_labels.keys()),
+        default=f"t3.xlarge  — {INSTANCE_TYPES['t3.xlarge']}",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+        validate=lambda v: v in instance_labels or "Select from the list",
+    ).ask()
+    if selection is None:
+        ui.abort()
+    instance_type = instance_labels[selection]
+    if instance_type == "_custom":
+        instance_type = questionary.text(
+            "Enter instance type:",
+            validate=lambda v: bool(v.strip()) or "Required",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if instance_type is None:
+            ui.abort()
+
+    volume_size = questionary.text(
+        "Root volume size (GB):",
+        default="40",
+        validate=lambda v: (v.isdigit() and int(v) >= 20) or "Must be >= 20",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if volume_size is None:
+        ui.abort()
+
+    enable_sip = questionary.confirm(
+        "Enable SIP stack? (opens 5060 TCP+UDP, 5061 TLS, 10000-20000 UDP for RTP)",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enable_sip is None:
+        ui.abort()
+
+    return CallServerConfig(
+        instance_type=instance_type,
+        volume_size=int(volume_size),
+        enable_sip=enable_sip,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 3 — Network & SSH
 # ---------------------------------------------------------------------------
@@ -310,6 +395,7 @@ def prompt_network_and_ssh(
     credentials: AWSCredentials,
     project_name: str,
     environment: Environment,
+    default_vpc_cidr: str = "10.0.0.0/16",
 ) -> tuple[NetworkConfig, SSHConfig]:
     """Prompt for network (VPC, VPN IP) and SSH key configuration."""
 
@@ -318,7 +404,7 @@ def prompt_network_and_ssh(
     # ----- VPC CIDR -----
     vpc_cidr = questionary.text(
         "VPC CIDR block:",
-        default="10.0.0.0/16",
+        default=default_vpc_cidr,
         validate=_validate_cidr,
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,

@@ -1,0 +1,45 @@
+---
+- name: Check for AWS CLI
+  stat:
+    path: /usr/local/bin/aws
+  register: awscli
+
+- name: Install AWS CLI v2
+  when: not awscli.stat.exists
+  block:
+    - name: Download AWS CLI installer
+      get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+        mode: "0644"
+
+    - name: Extract AWS CLI installer
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: true
+
+    - name: Run AWS CLI installer
+      command: /tmp/aws/install
+
+- name: Verify AWS CLI version
+  command: /usr/local/bin/aws --version
+  changed_when: false
+  ignore_errors: true
+
+- name: Configure AWS credentials
+  when: aws_access_key_id | length > 0 and aws_secret_access_key | length > 0
+  become: false
+  block:
+    - name: Set AWS access key ID
+      command: /usr/local/bin/aws configure set aws_access_key_id "{{ aws_access_key_id }}"
+
+    - name: Set AWS secret access key
+      command: /usr/local/bin/aws configure set aws_secret_access_key "{{ aws_secret_access_key }}"
+      no_log: true
+
+    - name: Set AWS default region
+      command: /usr/local/bin/aws configure set default.region "{{ aws_default_region }}"
+
+    - name: Set AWS output format
+      command: /usr/local/bin/aws configure set output json

@@ -7,7 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from iblai_infra.ansible.runner import LAUNCH_ROLE_LABELS, ROLE_LABELS, SERVICE_UPDATE_ROLE_LABELS, TOTAL_ROLES, AnsibleRunner
+from iblai_infra.ansible.runner import (
+    CALL_ROLE_LABELS,
+    LAUNCH_ROLE_LABELS,
+    ROLE_LABELS,
+    SERVICE_UPDATE_ROLE_LABELS,
+    TOTAL_ROLES,
+    AnsibleRunner,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +155,84 @@ class TestGenerateInventory:
         assert "54.123.45.67" in content
         assert "ansible_user=ubuntu" in content
         assert "ansible_python_interpreter=/usr/bin/python3" in content
+
+    def test_call_server_inventory_uses_call_servers_group(
+        self, call_server_project_state, setup_config, tmp_path
+    ):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = call_server_project_state
+        runner.config = setup_config
+        runner.ws = tmp_path
+
+        runner._generate_inventory()
+
+        content = (tmp_path / "inventory.ini").read_text()
+        assert "[call_servers]" in content
+        assert "[call_servers:vars]" in content
+        assert "[ibl_servers]" not in content
+
+
+# ---------------------------------------------------------------------------
+# Call-server topology selection
+# ---------------------------------------------------------------------------
+
+
+class TestCallServerTopology:
+    def test_topology_returns_call_server(self, call_server_project_state, setup_config):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = call_server_project_state
+        runner.config = setup_config
+        assert runner._topology() == "call-server"
+        assert runner._host_group() == "call_servers"
+
+    def test_topology_defaults_to_single_server(self, project_state, setup_config):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config
+        assert runner._topology() == "single-server"
+        assert runner._host_group() == "ibl_servers"
+
+    def test_copy_templates_picks_call_server_dir(
+        self, call_server_project_state, setup_config, tmp_path
+    ):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = call_server_project_state
+        runner.config = setup_config
+        runner.ws = tmp_path / "ansible"
+
+        runner._copy_templates()
+
+        # call_playbook.yml is unique to the call-server template
+        assert (runner.ws / "call_playbook.yml").exists()
+        # ibl_call role should be present
+        assert (runner.ws / "roles" / "ibl_call" / "tasks" / "main.yml").exists()
+        # Roles that only belong to single-server should NOT be here
+        assert not (runner.ws / "roles" / "ibl_platform").exists()
+        assert not (runner.ws / "roles" / "ibl_dm").exists()
+        assert not (runner.ws / "roles" / "ibl_edx").exists()
+
+    def test_copy_templates_single_server_still_works(
+        self, project_state, setup_config, tmp_path
+    ):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config
+        runner.ws = tmp_path / "ansible"
+
+        runner._copy_templates()
+
+        assert (runner.ws / "playbook.yml").exists()
+        assert (runner.ws / "roles" / "ibl_platform").exists()
+
+    def test_call_role_labels_shape(self):
+        """CALL_ROLE_LABELS covers exactly the roles in call_playbook.yml."""
+        assert set(CALL_ROLE_LABELS) == {
+            "docker",
+            "awscli",
+            "python",
+            "ibl_cli_ops",
+            "ibl_call",
+        }
 
 
 # ---------------------------------------------------------------------------

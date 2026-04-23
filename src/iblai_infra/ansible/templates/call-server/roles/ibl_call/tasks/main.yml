@@ -1,0 +1,152 @@
+---
+# ibl_call role — configure and launch the LiveKit call stack.
+#
+# Prerequisites (handled by earlier roles):
+#   - docker, awscli, python, ibl_cli_ops
+#   - /ibl exists and is owned by the ansible user
+#
+# Inputs (set in extra-vars):
+#   - base_domain       — FQDN operators will use to reach the call server
+#   - env_config        — should be "call-only"
+#   - aws_*             — ECR auth for image pulls
+#   - git_access_token  — unused here but accepted for parity
+
+- name: Configure base domain in ibl config
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config save --set BASE_DOMAIN='{{ base_domain }}'
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Configure environment profile (call-only)
+  become: false
+  # Single-quote the env_config arg to match the shell-quoting convention used by
+  # the single-server ibl_platform role. env_config is CLI-controlled, but we
+  # still don't want a stray space or shell metachar to change command semantics.
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config environment '{{ env_config | default("call-only") }}'
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Ensure ibl_local_default docker network exists
+  become: false
+  shell: |
+    docker network inspect ibl_local_default >/dev/null 2>&1 || \
+      docker network create ibl_local_default
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Login to ECR
+  become: false
+  shell: |
+    aws ecr get-login-password --region {{ aws_default_region }} | \
+      docker login --username AWS --password-stdin \
+      765174860755.dkr.ecr.{{ aws_default_region }}.amazonaws.com
+  args:
+    executable: /bin/bash
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+    AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+    AWS_DEFAULT_REGION: "{{ aws_default_region }}"
+  no_log: true
+
+- name: Launch the call stack (ibl call start)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl call start
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: call_start_result
+  changed_when: true
+
+- name: Wait for LiveKit API (:7880) to accept connections
+  become: false
+  # 300s accommodates a cold-boot ECR pull of the livekit image + startup
+  # (transcoding containers are slower than the API itself).
+  wait_for:
+    host: 127.0.0.1
+    port: 7880
+    timeout: 300
+    state: started
+
+- name: Capture call secrets (ibl call show-call-secrets)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl call show-call-secrets
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: call_secrets_result
+  changed_when: false
+  # Secrets printed to the operator terminal via the `debug` task below,
+  # never echoed to ansible's default logging.
+  no_log: true
+
+- name: Fail if `ibl call show-call-secrets` produced no output
+  # Don't silently paint an empty "secrets" banner — surface the failure so the
+  # operator knows to ssh in and run the command themselves. `no_log` stays
+  # true because stderr might contain partial secret material on some failure
+  # modes.
+  fail:
+    msg: |
+      `ibl call show-call-secrets` returned no output.
+      SSH in and run it manually:
+        ssh ubuntu@<host>
+        pyenv activate {{ venv_name }} && ibl call show-call-secrets
+  when: call_secrets_result.stdout | default('') | trim | length == 0
+  no_log: true
+
+- name: Show call secrets to operator (save these now)
+  become: false
+  debug:
+    msg: |
+      ==============================================================
+      LIVEKIT CALL SERVER SECRETS — save these now, they are not
+      persisted anywhere outside the server.
+      ==============================================================
+      {{ call_secrets_result.stdout }}
+      ==============================================================
+  # Ansible's default verbosity prints `debug` messages; still, mark this
+  # as explicitly readable by setting no_log=false.
+  no_log: false
+
+- name: Verify call containers are running
+  become: false
+  shell: docker ps --format '{{ "{{" }}.Names{{ "}}" }}' | wc -l
+  args:
+    executable: /bin/bash
+  register: call_container_count
+  changed_when: false
+
+- name: Fail if no call containers are running
+  fail:
+    msg: "No containers running after `ibl call start` — check ECR pull / disk space / compose file."
+  when: (call_container_count.stdout | int) == 0

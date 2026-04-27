@@ -126,16 +126,22 @@
   changed_when: "'\"platforms_created\": []' not in (pw_dm_result.stdout | default(''))"
   no_log: true  # keep generated platform-admin passwords out of -vvv logs
 
+# The IBLAI_FIXTURE_OUTPUT_BEGIN/END markers tell the iblai-infra-cli runner
+# to capture this msg's content and reprint it AFTER its transient Live
+# display tears down — without those markers, the password and admin
+# secrets disappear into the consumed-but-never-echoed stdout pipe. The
+# runner decodes JSON \n escapes between the markers and prints each line
+# verbatim under a header rule.
 - name: Show Playwright platform setup result (one-time, capture this)
   ansible.builtin.debug:
     msg: |
-      ================================================================
+      IBLAI_FIXTURE_OUTPUT_BEGIN
       PLAYWRIGHT TEST FIXTURE — SAVE THIS OUTPUT
       Browser/student password is regenerated on every role run.
-      ================================================================
+
       Browser superuser + student user password:
         {{ pw_test_password }}
-      ----------------------------------------------------------------
+
       Platform setup result (admin passwords for each fresh launch):
       {{ pw_dm_result.stdout_lines | default([]) | join('\n') }}
-      ================================================================
+      IBLAI_FIXTURE_OUTPUT_END

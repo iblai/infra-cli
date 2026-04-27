@@ -164,6 +164,11 @@ class AnsibleRunner:
 
         errors: list[str] = []
         output_tail: deque[str] = deque(maxlen=30)
+        # Lines a role asked us to surface to the operator after the run
+        # completes — captured between IBLAI_FIXTURE_OUTPUT_BEGIN/END markers
+        # in a debug task's `msg`. Used by playwright_test_platforms to show
+        # the regenerated test-user password without persisting it to disk.
+        fixture_output: list[str] = []
         current_role: str | None = None
         role_start_time: float = 0
 
@@ -194,6 +199,7 @@ class AnsibleRunner:
                 if line:
                     output_tail.append(line)
 
+                self._maybe_capture_fixture(line, fixture_output)
                 role_name, task_desc = self._extract_role_and_task(line)
                 if role_name and role_name in steps and task_desc:
                     steps[role_name]["task"] = task_desc
@@ -242,6 +248,7 @@ class AnsibleRunner:
                     if line:
                         output_tail.append(line)
 
+                    self._maybe_capture_fixture(line, fixture_output)
                     role_name, task_desc = self._extract_role_and_task(line)
                     if role_name and role_name in steps and task_desc:
                         steps[role_name]["task"] = task_desc
@@ -275,6 +282,22 @@ class AnsibleRunner:
             steps[current_role]["elapsed"] = int(time.time() - role_start_time)
             completed += 1
             progress.update(task_id, completed=completed)
+
+        # Surface any fixture output captured during the run (e.g. the
+        # Playwright test-fixture password block). The Rich Live display in
+        # interactive mode runs with transient=True, so we print these AFTER
+        # the Live has been torn down — that's the point at which the
+        # captured lines actually become visible to the operator. Always
+        # print on success; on failure the regular error block already shows
+        # the last 30 lines of output, which is more useful than partial
+        # fixture output that may not have completed.
+        if fixture_output and proc.returncode == 0:
+            ui.newline()
+            ui.console.rule("[bold yellow]Captured fixture output (one-time, save it now)[/]")
+            for ln in fixture_output:
+                ui.console.print(ln)
+            ui.console.rule()
+            ui.newline()
 
         if proc.returncode != 0:
             if errors:
@@ -510,6 +533,40 @@ class AnsibleRunner:
     # ------------------------------------------------------------------
     # Line-based output parsing (ansible default callback)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _maybe_capture_fixture(line: str, sink: list[str]) -> None:
+        """Capture content between IBLAI_FIXTURE_OUTPUT_BEGIN/END markers.
+
+        A role can ask the runner to surface text to the operator's terminal
+        (visible AFTER the transient Live display is torn down) by emitting
+        a `debug: msg=...` containing the begin/end markers. The default
+        ansible callback JSON-encodes multi-line msg into a single stdout
+        line with `\\n` escapes, so both markers land on the same line; we
+        match that single-line shape and decode the embedded escapes.
+
+        Used by playwright_test_platforms to display the regenerated
+        test-user password without persisting it to disk.
+        """
+        BEGIN = "IBLAI_FIXTURE_OUTPUT_BEGIN"
+        END = "IBLAI_FIXTURE_OUTPUT_END"
+        if BEGIN not in line or END not in line:
+            return
+        try:
+            start = line.index(BEGIN) + len(BEGIN)
+            end = line.index(END)
+            if end <= start:
+                return
+            raw = line[start:end]
+            # Decode JSON-style \n / \" escapes from the default callback.
+            # Wrap in quotes so json.loads gives us the unescaped string.
+            decoded = json.loads(f'"{raw}"') if raw else ""
+        except (ValueError, json.JSONDecodeError):
+            return
+        for sub in decoded.splitlines():
+            stripped = sub.strip()
+            if stripped:
+                sink.append(stripped)
 
     def _extract_role_and_task(self, line: str) -> tuple[str | None, str | None]:
         """Extract role name and task description from an Ansible TASK line.

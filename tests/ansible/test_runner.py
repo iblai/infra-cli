@@ -88,6 +88,61 @@ class TestExtractRoleFromLine:
             assert runner._extract_role_from_line(line) == role_name
 
 
+class TestMaybeCaptureFixture:
+    """Marker-based capture of fixture output for post-Live display."""
+
+    def test_skips_lines_without_markers(self):
+        sink: list[str] = []
+        AnsibleRunner._maybe_capture_fixture("ok: [host] => {", sink)
+        AnsibleRunner._maybe_capture_fixture('TASK [foo : bar] ***', sink)
+        AnsibleRunner._maybe_capture_fixture('"msg": "regular debug"', sink)
+        assert sink == []
+
+    def test_skips_partial_marker(self):
+        sink: list[str] = []
+        # only BEGIN, no END
+        AnsibleRunner._maybe_capture_fixture(
+            '"msg": "IBLAI_FIXTURE_OUTPUT_BEGIN\\nfoo"', sink
+        )
+        # only END
+        AnsibleRunner._maybe_capture_fixture(
+            '"msg": "bar\\nIBLAI_FIXTURE_OUTPUT_END"', sink
+        )
+        assert sink == []
+
+    def test_captures_single_line_msg_with_escapes(self):
+        sink: list[str] = []
+        # Default ansible callback emits multi-line msg as JSON with \n escapes
+        line = (
+            '"msg": "IBLAI_FIXTURE_OUTPUT_BEGIN\\n'
+            "PLAYWRIGHT TEST FIXTURE — SAVE THIS OUTPUT\\n"
+            "Browser/student password:\\n"
+            "  abc123def456ghij\\n"
+            'IBLAI_FIXTURE_OUTPUT_END"'
+        )
+        AnsibleRunner._maybe_capture_fixture(line, sink)
+        assert sink == [
+            "PLAYWRIGHT TEST FIXTURE — SAVE THIS OUTPUT",
+            "Browser/student password:",
+            "abc123def456ghij",
+        ]
+
+    def test_handles_empty_block(self):
+        sink: list[str] = []
+        AnsibleRunner._maybe_capture_fixture(
+            '"msg": "IBLAI_FIXTURE_OUTPUT_BEGINIBLAI_FIXTURE_OUTPUT_END"', sink
+        )
+        assert sink == []
+
+    def test_appends_to_existing_sink(self):
+        sink: list[str] = ["earlier line"]
+        AnsibleRunner._maybe_capture_fixture(
+            '"msg": "IBLAI_FIXTURE_OUTPUT_BEGIN\\nnew line\\nIBLAI_FIXTURE_OUTPUT_END"',
+            sink,
+        )
+        assert sink == ["earlier line", "new line"]
+
+
 class TestExtractRoleFromLineLaunch:
     @pytest.fixture
     def runner(self, project_state, setup_config):

@@ -220,6 +220,46 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
 
+# IBL_EDX.IBL_EDX_SSO_BACKEND_APP needs:
+#   - ENABLE_CORS_ORIGIN_WHITELIST: true   (bool — fine with `ibl config save --set`)
+#   - IBL_CSRF_EXEMPT_URLS: [/courses, /event, /api/mfe_context]
+#     (list — `ibl config save --set` cannot round-trip Python list repr,
+#     so we manipulate config.yml directly via PyYAML and let the next
+#     `ibl config save` re-render the templates.)
+#
+# Done in BOTH staging (~/.local/share/ibl/config.yml) and runtime
+# (/ibl/config.yml) to dodge the staging-vs-runtime drift class of bug
+# (skill iblai-infra-ops §7.5).
+- name: Configure SSO backend app — CORS whitelist + CSRF-exempt URLs
+  become: false
+  shell: |
+    python3 -c "
+    import yaml
+    TARGET_URLS = ['/courses', '/event', '/api/mfe_context']
+    files = [
+        '/home/{{ ansible_user }}/.local/share/ibl/config.yml',
+        '{{ ibl_root }}/config.yml',
+    ]
+    for path in files:
+        try:
+            with open(path) as f:
+                cfg = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            continue
+        sso = cfg.setdefault('IBL_EDX', {}).setdefault('IBL_EDX_SSO_BACKEND_APP', {})
+        sso['ENABLE_CORS_ORIGIN_WHITELIST'] = True
+        existing = sso.get('IBL_CSRF_EXEMPT_URLS') or []
+        if not isinstance(existing, list):
+            existing = []
+        # Preserve existing custom URLs, add the required ones, dedupe.
+        sso['IBL_CSRF_EXEMPT_URLS'] = list(dict.fromkeys(existing + TARGET_URLS))
+        with open(path, 'w') as f:
+            yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+        print('updated', path)
+    "
+  args:
+    executable: /bin/bash
+
 - name: Enable AI features for DM
   become: false
   shell: |

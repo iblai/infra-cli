@@ -35,6 +35,26 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
 
+# Seeds the Open edX demo course into the LMS/CMS (tutor's bundled course).
+# Runs AFTER the DM seeders and BEFORE RBAC, so RBAC's tenant-scoped role
+# wiring runs against a fully-populated edX install.
+# `ibl tutor local do importdemocourse` is the supported wrapper for
+# `tutor local do importdemocourse` — it inherits IBL_ROOT-aware paths.
+- name: Seed Open edX demo course
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl tutor local do importdemocourse
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+
 # RBAC must run last — it consumes the resources created by the preceding
 # seeders (flows, llm-registry, base-mentors, tools) when wiring up group
 # memberships and permissions. Re-ordering will leave the platform without

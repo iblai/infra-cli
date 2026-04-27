@@ -141,6 +141,7 @@ def _prompt_platform_config(
         ui.success("Playwright test platforms: [highlight]Skip[/highlight]")
 
     smtp_fields = _prompt_smtp_config()
+    stripe_fields = _prompt_stripe_config()
 
     return {
         "base_domain": base_domain,
@@ -150,6 +151,7 @@ def _prompt_platform_config(
         "enable_ai": enable_ai,
         "create_playwright_platforms": create_playwright_platforms,
         **smtp_fields,
+        **stripe_fields,
     }
 
 
@@ -253,6 +255,106 @@ def _prompt_smtp_config() -> dict:
         "smtp_sender_email": smtp_sender_email,
         "smtp_use_tls": smtp_use_tls,
         "smtp_use_ssl": smtp_use_ssl,
+    }
+
+
+def _prompt_stripe_config() -> dict:
+    """Optionally collect Stripe billing credentials.
+
+    Default is "skip" — when answered "no" all eight stripe_* fields stay at
+    their model defaults and the ansible role no-ops. When answered "yes",
+    we gather the values that map to the StripeAPIKey row on the 'main'
+    platform plus the GlobalConfiguration['IBL_CURRENT_STRIPE_MODE'] entry.
+    Secret-shaped fields use `questionary.password` (no echo); none of these
+    values are persisted locally — they ride extra_vars to ansible at run
+    time only.
+    """
+    enabled = questionary.confirm(
+        "Configure Stripe billing? (creates StripeAPIKey + IBL_CURRENT_STRIPE_MODE)",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enabled is None:
+        ui.abort()
+    if not enabled:
+        ui.success("Stripe: [highlight]Skip[/highlight]")
+        return {"stripe_enabled": False}
+
+    stripe_mode = questionary.select(
+        "Stripe mode:",
+        choices=["test", "live"],
+        default="test",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if stripe_mode is None:
+        ui.abort()
+
+    stripe_secret_key = questionary.password(
+        f"Stripe secret key (sk_{stripe_mode}_...):",
+        validate=lambda v: v.startswith(("sk_test_", "sk_live_")) or "Must start with sk_test_ or sk_live_",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if stripe_secret_key is None:
+        ui.abort()
+
+    stripe_pub_key = questionary.password(
+        f"Stripe publishable key (pk_{stripe_mode}_...):",
+        validate=lambda v: v.startswith(("pk_test_", "pk_live_")) or "Must start with pk_test_ or pk_live_",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if stripe_pub_key is None:
+        ui.abort()
+
+    stripe_pricing_table_id = questionary.text(
+        "Stripe pricing table id (prctbl_..., blank to skip):",
+        default="",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if stripe_pricing_table_id is None:
+        ui.abort()
+    stripe_pricing_table_id = stripe_pricing_table_id.strip()
+
+    stripe_pricing_table_id_returning = questionary.text(
+        "Stripe pricing table id for returning users (blank to skip):",
+        default="",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if stripe_pricing_table_id_returning is None:
+        ui.abort()
+    stripe_pricing_table_id_returning = stripe_pricing_table_id_returning.strip()
+
+    stripe_webhook_secret = questionary.password(
+        "Stripe webhook signing secret (whsec_..., blank to skip):",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if stripe_webhook_secret is None:
+        ui.abort()
+
+    stripe_connect_webhook_secret = questionary.password(
+        "Stripe Connect webhook signing secret (whsec_..., blank to skip):",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if stripe_connect_webhook_secret is None:
+        ui.abort()
+
+    ui.success(f"Stripe: [highlight]{stripe_mode}[/highlight] mode")
+    return {
+        "stripe_enabled": True,
+        "stripe_mode": stripe_mode,
+        "stripe_secret_key": stripe_secret_key,
+        "stripe_pub_key": stripe_pub_key,
+        "stripe_pricing_table_id": stripe_pricing_table_id,
+        "stripe_pricing_table_id_returning": stripe_pricing_table_id_returning,
+        "stripe_webhook_secret": stripe_webhook_secret,
+        "stripe_connect_webhook_secret": stripe_connect_webhook_secret,
     }
 
 

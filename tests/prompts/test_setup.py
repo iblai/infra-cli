@@ -190,8 +190,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
             mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
@@ -222,8 +222,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, don't reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, False]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, don't reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False]
             mock_text.return_value.ask.side_effect = ["3.19.0", "NEW_ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
@@ -248,8 +248,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled (no reuse prompt when no access keys)
-            mock_confirm.return_value.ask.side_effect = [True, True, False]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled (no reuse prompt when no access keys)
+            mock_confirm.return_value.ask.side_effect = [True, True, False, False]
             mock_text.return_value.ask.side_effect = ["3.19.0", "ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
@@ -277,8 +277,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
             mock_path.return_value.ask.return_value = str(new_key)
             mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
@@ -303,8 +303,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
             mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
@@ -329,8 +329,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
             mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
 
@@ -357,9 +357,9 @@ class TestPromptSetup:
                 "Admin1234",
             ]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled,
-            #          smtp_use_tls, smtp_use_ssl, reuse_credentials
+            #          smtp_use_tls, smtp_use_ssl, stripe_enabled, reuse_credentials
             mock_confirm.return_value.ask.side_effect = [
-                True, False, True, True, False, True,
+                True, False, True, True, False, False, True,
             ]
             # texts: cli_ops_tag, smtp_host, smtp_port, smtp_username,
             #        smtp_sender_email, admin_username, admin_email
@@ -385,6 +385,59 @@ class TestPromptSetup:
         assert config.smtp_use_ssl is False
         # password is excluded from JSON serialization
         assert '"smtp_password"' not in config.model_dump_json()
+
+    def test_full_flow_stripe_enabled(self, tmp_path):
+        """When operator answers yes to Stripe, all 8 fields are collected and 4 secrets are excluded from JSON."""
+        from iblai_infra.prompts.setup import prompt_setup
+
+        state = self._make_state(tmp_path)
+
+        with (
+            patch("questionary.password") as mock_password,
+            patch("questionary.confirm") as mock_confirm,
+            patch("questionary.select") as mock_select,
+            patch("questionary.text") as mock_text,
+        ):
+            # passwords (4 stripe + GitHub + skip OpenAI + admin):
+            mock_password.return_value.ask.side_effect = [
+                "sk_test_secretvalue",
+                "pk_test_pubvalue",
+                "whsec_webhookvalue",
+                "whsec_connectvalue",
+                "ghp_testtoken",
+                "",
+                "Admin1234",
+            ]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled,
+            #          stripe_enabled, reuse_credentials
+            mock_confirm.return_value.ask.side_effect = [
+                True, False, False, True, True,
+            ]
+            # selects: stripe_mode
+            mock_select.return_value.ask.return_value = "test"
+            # texts: cli_ops_tag, pricing_table_id, pricing_table_id_returning, admin_username, admin_email
+            mock_text.return_value.ask.side_effect = [
+                "3.19.0",
+                "prctbl_abcdef",
+                "",
+                "ibl_admin",
+                "admin@example.com",
+            ]
+
+            config = prompt_setup(state)
+
+        assert config.stripe_enabled is True
+        assert config.stripe_mode == "test"
+        assert config.stripe_secret_key == "sk_test_secretvalue"
+        assert config.stripe_pub_key == "pk_test_pubvalue"
+        assert config.stripe_pricing_table_id == "prctbl_abcdef"
+        assert config.stripe_pricing_table_id_returning == ""
+        assert config.stripe_webhook_secret == "whsec_webhookvalue"
+        assert config.stripe_connect_webhook_secret == "whsec_connectvalue"
+        # all 4 secret-shaped Stripe fields are excluded from JSON serialization
+        dumped = config.model_dump_json()
+        for excluded in ("stripe_secret_key", "stripe_pub_key", "stripe_webhook_secret", "stripe_connect_webhook_secret"):
+            assert f'"{excluded}"' not in dumped
 
 
 # ---------------------------------------------------------------------------

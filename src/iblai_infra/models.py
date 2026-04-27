@@ -329,6 +329,19 @@ class SetupConfig(BaseModel):
     smtp_sender_email: str = ""
     smtp_use_tls: bool = True
     smtp_use_ssl: bool = False
+    # Stripe billing config (pk=1 of dl_iblai_services_app.StripeAPIKey for the
+    # 'main' platform + GlobalConfiguration['IBL_CURRENT_STRIPE_MODE']).
+    # Disabled by default; the role no-ops unless stripe_enabled is true.
+    # All four secret-shaped fields are Field(exclude=True) so they never land
+    # in state.json — they ride extra_vars to ansible at run time only.
+    stripe_enabled: bool = False
+    stripe_mode: str = "test"  # "test" or "live"
+    stripe_secret_key: str = Field(default="", exclude=True)
+    stripe_pub_key: str = Field(default="", exclude=True)
+    stripe_pricing_table_id: str = ""
+    stripe_pricing_table_id_returning: str = ""
+    stripe_webhook_secret: str = Field(default="", exclude=True)
+    stripe_connect_webhook_secret: str = Field(default="", exclude=True)
 
 
 # ---------------------------------------------------------------------------

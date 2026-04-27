@@ -318,6 +318,11 @@ class TestBuildExtraVars:
         assert extra["smtp_port"] == 587
         assert extra["smtp_use_tls"] is True
         assert extra["smtp_use_ssl"] is False
+        # Stripe fields default to disabled / empty
+        assert extra["stripe_enabled"] is False
+        assert extra["stripe_mode"] == "test"
+        assert extra["stripe_secret_key"] == ""
+        assert extra["stripe_pricing_table_id"] == ""
 
     def test_resetup_extra_vars(self, project_state, resetup_config):
         runner = AnsibleRunner.__new__(AnsibleRunner)
@@ -387,15 +392,15 @@ class TestConstants:
         assert TOTAL_ROLES == len(ROLE_LABELS)
 
     def test_expected_roles(self):
-        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform", "smtp_config", "ibl_dm", "ibl_edx", "ibl_spa", "integrations", "admin_setup", "data_seeding"}
+        expected = {"docker", "awscli", "python", "ibl_cli_ops", "ibl_platform", "smtp_config", "ibl_dm", "ibl_edx", "ibl_spa", "integrations", "admin_setup", "data_seeding", "stripe_config"}
         assert set(ROLE_LABELS.keys()) == expected
 
     def test_launch_role_labels(self):
-        expected = {"ibl_cli_ops", "ibl_launch", "smtp_config", "ibl_launch_services", "integrations", "admin_setup", "data_seeding"}
+        expected = {"ibl_cli_ops", "ibl_launch", "smtp_config", "ibl_launch_services", "integrations", "admin_setup", "data_seeding", "stripe_config"}
         assert set(LAUNCH_ROLE_LABELS.keys()) == expected
 
     def test_launch_role_labels_count(self):
-        assert len(LAUNCH_ROLE_LABELS) == 7
+        assert len(LAUNCH_ROLE_LABELS) == 8
 
     def test_service_update_role_labels(self):
         expected = {"ibl_cli_ops", "ibl_service_update"}

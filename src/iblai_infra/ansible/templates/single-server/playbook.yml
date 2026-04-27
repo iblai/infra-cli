@@ -48,6 +48,7 @@
     - integrations
     - admin_setup
     - data_seeding
+    - stripe_config
 
   tasks:
     # Optional Playwright test fixture setup. Runs only when the operator

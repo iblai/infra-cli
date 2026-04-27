@@ -529,6 +529,14 @@ def launch(
     smtp_sender_email: str = typer.Option("", "--smtp-sender-email", help="SMTP sender email (From: address)"),
     smtp_use_tls: bool = typer.Option(True, "--smtp-use-tls/--no-smtp-use-tls", help="Use STARTTLS (default true)"),
     smtp_use_ssl: bool = typer.Option(False, "--smtp-use-ssl/--no-smtp-use-ssl", help="Use implicit SSL/SMTPS (default false)"),
+    # Stripe — `--stripe-secret-key` is the trigger; if empty, the role no-ops
+    stripe_secret_key: str = typer.Option("", "--stripe-secret-key", help="Stripe secret key (sk_test_/sk_live_). Setting this enables Stripe."),
+    stripe_pub_key: str = typer.Option("", "--stripe-pub-key", help="Stripe publishable key (pk_test_/pk_live_)"),
+    stripe_mode: str = typer.Option("test", "--stripe-mode", help="Stripe mode: test or live (default test)"),
+    stripe_pricing_table_id: str = typer.Option("", "--stripe-pricing-table-id", help="Stripe pricing table id (prctbl_...)"),
+    stripe_pricing_table_id_returning: str = typer.Option("", "--stripe-pricing-table-id-returning", help="Stripe pricing table id for returning users"),
+    stripe_webhook_secret: str = typer.Option("", "--stripe-webhook-secret", help="Stripe webhook signing secret (whsec_...)"),
+    stripe_connect_webhook_secret: str = typer.Option("", "--stripe-connect-webhook-secret", help="Stripe Connect webhook signing secret (whsec_...)"),
     deployment_type: str = typer.Option("single-server", "--deployment-type", help="single-server, multi-server, or call-server"),
     app_server_count: int = typer.Option(2, "--app-server-count", help="Number of app servers (multi-server only)"),
     services_instance_type: str = typer.Option("t3.2xlarge", "--services-instance-type", help="Services server instance type (multi-server only)"),
@@ -586,6 +594,13 @@ def launch(
         smtp_sender_email=smtp_sender_email,
         smtp_use_tls=smtp_use_tls,
         smtp_use_ssl=smtp_use_ssl,
+        stripe_secret_key=stripe_secret_key,
+        stripe_pub_key=stripe_pub_key,
+        stripe_mode=stripe_mode,
+        stripe_pricing_table_id=stripe_pricing_table_id,
+        stripe_pricing_table_id_returning=stripe_pricing_table_id_returning,
+        stripe_webhook_secret=stripe_webhook_secret,
+        stripe_connect_webhook_secret=stripe_connect_webhook_secret,
         deployment_type=deployment_type,
         app_server_count=app_server_count,
         services_instance_type=services_instance_type,
@@ -697,6 +712,13 @@ def launch_env(
     smtp_sender_email = env.get("SMTP_SENDER_EMAIL", "")
     smtp_use_tls = env.get("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
     smtp_use_ssl = env.get("SMTP_USE_SSL", "false").lower() in ("true", "1", "yes")
+    stripe_secret_key = env.get("STRIPE_SECRET_KEY", "")
+    stripe_pub_key = env.get("STRIPE_PUB_KEY", "")
+    stripe_mode = env.get("STRIPE_MODE", "test")
+    stripe_pricing_table_id = env.get("STRIPE_PRICING_TABLE_ID", "")
+    stripe_pricing_table_id_returning = env.get("STRIPE_PRICING_TABLE_ID_RETURNING", "")
+    stripe_webhook_secret = env.get("STRIPE_WEBHOOK_SECRET", "")
+    stripe_connect_webhook_secret = env.get("STRIPE_CONNECT_WEBHOOK_SECRET", "")
 
     # Show summary
     project_name = name or domain.replace(".", "-")
@@ -747,6 +769,13 @@ def launch_env(
         smtp_sender_email=smtp_sender_email,
         smtp_use_tls=smtp_use_tls,
         smtp_use_ssl=smtp_use_ssl,
+        stripe_secret_key=stripe_secret_key,
+        stripe_pub_key=stripe_pub_key,
+        stripe_mode=stripe_mode,
+        stripe_pricing_table_id=stripe_pricing_table_id,
+        stripe_pricing_table_id_returning=stripe_pricing_table_id_returning,
+        stripe_webhook_secret=stripe_webhook_secret,
+        stripe_connect_webhook_secret=stripe_connect_webhook_secret,
     )
 
 
@@ -781,6 +810,13 @@ def _run_launch(
     smtp_sender_email: str = "",
     smtp_use_tls: bool = True,
     smtp_use_ssl: bool = False,
+    stripe_secret_key: str = "",
+    stripe_pub_key: str = "",
+    stripe_mode: str = "test",
+    stripe_pricing_table_id: str = "",
+    stripe_pricing_table_id_returning: str = "",
+    stripe_webhook_secret: str = "",
+    stripe_connect_webhook_secret: str = "",
     deployment_type: str = "single-server",
     app_server_count: int = 2,
     services_instance_type: str = "t3.2xlarge",
@@ -967,6 +1003,14 @@ def _run_launch(
         smtp_sender_email=smtp_sender_email,
         smtp_use_tls=smtp_use_tls,
         smtp_use_ssl=smtp_use_ssl,
+        stripe_enabled=bool(stripe_secret_key),
+        stripe_mode=stripe_mode,
+        stripe_secret_key=stripe_secret_key,
+        stripe_pub_key=stripe_pub_key,
+        stripe_pricing_table_id=stripe_pricing_table_id,
+        stripe_pricing_table_id_returning=stripe_pricing_table_id_returning,
+        stripe_webhook_secret=stripe_webhook_secret,
+        stripe_connect_webhook_secret=stripe_connect_webhook_secret,
         aws_access_key_id=aws_key_id,
         aws_secret_access_key=aws_secret_key,
         aws_default_region=aws_region,

@@ -30,6 +30,7 @@
     - integrations
     - admin_setup
     - data_seeding
+    - stripe_config
 
   tasks:
     - name: Set up Playwright test platforms

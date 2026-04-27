@@ -39,6 +39,7 @@ ROLE_LABELS: dict[str, str] = {
     "integrations": "OAuth & Integrations",
     "admin_setup": "Admin & CORS Setup",
     "data_seeding": "Data Seeding",
+    "stripe_config": "Stripe Config",
 }
 
 LAUNCH_ROLE_LABELS: dict[str, str] = {
@@ -49,6 +50,7 @@ LAUNCH_ROLE_LABELS: dict[str, str] = {
     "integrations": "OAuth & Integrations",
     "admin_setup": "Admin & CORS Setup",
     "data_seeding": "Data Seeding",
+    "stripe_config": "Stripe Config",
 }
 
 SERVICE_UPDATE_ROLE_LABELS: dict[str, str] = {
@@ -473,6 +475,14 @@ class AnsibleRunner:
             "smtp_sender_email": self.config.smtp_sender_email,
             "smtp_use_tls": self.config.smtp_use_tls,
             "smtp_use_ssl": self.config.smtp_use_ssl,
+            "stripe_enabled": self.config.stripe_enabled,
+            "stripe_mode": self.config.stripe_mode,
+            "stripe_secret_key": self.config.stripe_secret_key,
+            "stripe_pub_key": self.config.stripe_pub_key,
+            "stripe_pricing_table_id": self.config.stripe_pricing_table_id,
+            "stripe_pricing_table_id_returning": self.config.stripe_pricing_table_id_returning,
+            "stripe_webhook_secret": self.config.stripe_webhook_secret,
+            "stripe_connect_webhook_secret": self.config.stripe_connect_webhook_secret,
             "openai_api_key": self.config.openai_api_key,
             "admin_username": self.config.admin_username,
             "admin_email": self.config.admin_email,

@@ -100,6 +100,28 @@
   args:
     executable: /bin/bash
 
+# Magic-link login uses LMS email templates (subject + HTML body) for sending
+# the one-time login links that test users (and any other passwordless flow)
+# rely on. The defaults ship with `ibl_edx_magic_link_login` but are not
+# auto-loaded into the DB on first boot. They must be seeded by invoking the
+# Command class directly — `./manage.py setup_default_templates` collides
+# with another app's command of the same name, so we import + call handle()
+# in `lms shell` instead. force=True overwrites any stale templates from
+# prior runs so the canonical defaults always win, which makes the task
+# safely idempotent across re-runs.
+- name: Seed magic-link login default email templates
+  become: false
+  shell: |
+    docker exec -i ibl_prod_lms ./manage.py lms shell <<'PY'
+    from ibl_edx_magic_link_login.management.commands.setup_default_templates import Command
+    Command().handle(force=True)
+    print("MAGIC_LINK_TEMPLATES_DONE")
+    PY
+  args:
+    executable: /bin/bash
+  register: magic_link_templates_result
+  changed_when: "'MAGIC_LINK_TEMPLATES_DONE' in (magic_link_templates_result.stdout | default(''))"
+
 # RBAC must run last — it consumes the resources created by the preceding
 # seeders (flows, llm-registry, base-mentors, tools) when wiring up group
 # memberships and permissions. Re-ordering will leave the platform without

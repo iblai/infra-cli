@@ -366,7 +366,10 @@ def _prompt_credentials(
     """Collect credentials. If state is provided, offers to reuse provisioning creds."""
     ui.step_header(step, total, "Credentials")
 
-    ui.info("A GitHub Personal Access Token is needed to install iblai-cli-ops on the VM.")
+    ui.info(
+        "A GitHub Personal Access Token + the org/repo names for the two "
+        "private packages this setup installs."
+    )
     git_access_token = questionary.password(
         "GitHub Personal Access Token:",
         validate=lambda v: len(v.strip()) > 0 or "Required",
@@ -377,6 +380,49 @@ def _prompt_credentials(
         ui.abort()
     git_access_token = git_access_token.strip()
     ui.success("GitHub token provided")
+
+    # Configurable so a fork or non-default deployment can point at its
+    # own repos. Defaults match the canonical IBL setup; press Enter to
+    # accept. The values are baked into the ansible install URL for
+    # iblai-prod-images and shown back in the pre-flight notice.
+    github_org = questionary.text(
+        "GitHub org owning the private packages:",
+        default="iblai",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if github_org is None:
+        ui.abort()
+    github_org = github_org.strip()
+
+    cli_ops_repo = questionary.text(
+        "CLI ops repo name:",
+        default="iblai-cli-ops",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if cli_ops_repo is None:
+        ui.abort()
+    cli_ops_repo = cli_ops_repo.strip()
+
+    prod_images_repo = questionary.text(
+        "Prod images repo name:",
+        default="iblai-prod-images",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if prod_images_repo is None:
+        ui.abort()
+    prod_images_repo = prod_images_repo.strip()
+    # Echo bare repo names only — the org is collected for the install
+    # URL but not surfaced in operator-facing summary text.
+    ui.success(
+        f"Private packages: [highlight]{cli_ops_repo}[/highlight], "
+        f"[highlight]{prod_images_repo}[/highlight]"
+    )
 
     ui.info(
         "AWS credentials for the VM. "
@@ -489,6 +535,9 @@ def _prompt_credentials(
 
     return {
         "git_access_token": git_access_token,
+        "github_org": github_org,
+        "cli_ops_repo": cli_ops_repo,
+        "prod_images_repo": prod_images_repo,
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,

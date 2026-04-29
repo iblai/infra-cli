@@ -323,6 +323,10 @@ class TestBuildExtraVars:
         assert extra["stripe_mode"] == "test"
         assert extra["stripe_secret_key"] == ""
         assert extra["stripe_pricing_table_id"] == ""
+        # GitHub org / repo names default to canonical IBL values
+        assert extra["github_org"] == "iblai"
+        assert extra["cli_ops_repo"] == "iblai-cli-ops"
+        assert extra["prod_images_repo"] == "iblai-prod-images"
 
     def test_resetup_extra_vars(self, project_state, resetup_config):
         runner = AnsibleRunner.__new__(AnsibleRunner)

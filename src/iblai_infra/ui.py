@@ -192,6 +192,83 @@ def abort(message: str = "Aborted.") -> None:
     raise SystemExit(1)
 
 
+# Notice shown before any ansible-driven setup or launch. The platform's
+# ansible roles install two private Python packages (`iblai-cli-ops` and
+# `iblai-prod-images`) and `docker pull` every container image from a
+# private ECR registry. Without access, the run fails part-way through
+# with auth errors that are hard to map back to "you don't have
+# permission yet" — usually buried inside `pip install` or `docker
+# login` output 5-30 minutes deep.
+#
+# We deliberately do NOT name our GitHub org or our ECR account ID in
+# user-facing text — both are operational details delivered as part of
+# the access-grant during onboarding (along with the GitHub PAT + AWS
+# IAM credentials that the operator pastes into the existing prompts).
+# Surfacing this requirement at the top of every setup / launch flow
+# lets a first-time operator (or someone trying the open-source repo)
+# confirm they're set up correctly OR bail before spending time and
+# AWS dollars on a doomed run.
+_PRIVATE_ACCESS_NOTICE_TEMPLATE = """\
+This setup installs two private Python packages and pulls container
+images from a private ECR registry. You'll need access to ALL three of:
+
+  1. {cli_ops_repo}
+       (private package — pulled in transitively by the install of #2,
+        via the GitHub token you'll paste at the credentials prompt)
+  2. {prod_images_repo}
+       (private package — installed directly via `pip install`)
+  3. The IBL private ECR registry, of shape
+       <account-id>.dkr.ecr.<region>.amazonaws.com
+     (private container images: edX, DM, MFE, MySQL, Mongo, Redis,
+      Meilisearch, the SPAs, and others — pulled with the AWS IAM
+      credentials you'll paste at the credentials prompt)
+
+Without all three, the run will fail part-way through with auth errors —
+typically `pip install` for the packages or `docker pull` / `docker
+login` for the container images, after the box has already been
+provisioned.
+
+Don't have access yet? Request it at https://ibl.ai/contact/ before
+re-running. Mention you want access to:
+  - {cli_ops_repo} and {prod_images_repo}
+  - the IBL private ECR registry
+
+The contact response will include the exact resource handles and the
+GitHub-token / AWS-IAM credentials you'll paste at the credentials
+prompt. If you're using a fork or a non-canonical deployment, override
+the defaults at the credentials prompt (interactive) or via
+`--github-org` / `--cli-ops-repo` / `--prod-images-repo` (launch).
+"""
+
+
+def private_access_notice(
+    cli_ops_repo: str = "iblai-cli-ops",
+    prod_images_repo: str = "iblai-prod-images",
+) -> None:
+    """Print the IBL private-access prerequisites notice.
+
+    Renders the operator-supplied repo names (bare, without the org
+    prefix — the org is collected separately as plumbing for the
+    pip install URL but not echoed in the notice). Defaults match
+    the canonical IBL repos for invocations that haven't been
+    threaded with SetupConfig yet (e.g. dry-runs).
+
+    Always shown right before the ansible-driven phase of `iblai infra
+    setup` / `iblai infra launch` / `iblai infra launch-env` begins.
+    The interactive setup flow follows this with a `questionary.confirm`
+    so the operator can bail; non-interactive flows (launch, launch-env)
+    print the notice as a hard-to-miss heads-up so a CI run that fails
+    on pip/docker auth has an obvious explanation in its stdout.
+    """
+    section(
+        "Prerequisites — IBL platform access required",
+        _PRIVATE_ACCESS_NOTICE_TEMPLATE.format(
+            cli_ops_repo=cli_ops_repo,
+            prod_images_repo=prod_images_repo,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Progress display builders
 # ---------------------------------------------------------------------------

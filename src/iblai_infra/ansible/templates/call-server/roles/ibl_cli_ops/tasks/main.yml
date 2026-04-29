@@ -19,7 +19,7 @@
     path: "{{ repo_dir }}"
     state: directory
 
-- name: Install iblai-prod-images (ibl-cli-ops + image definitions)
+- name: Install prod images package (cli-ops + image definitions)
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
@@ -27,7 +27,7 @@
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    uv pip install "iblai-images[sumac] @ git+https://{{ git_access_token }}@github.com/iblai/iblai-prod-images@{{ prod_images_tag | default('main') }}#egg=iblai-images" --reinstall
+    uv pip install "iblai-images[sumac] @ git+https://{{ git_access_token }}@github.com/{{ github_org | default('iblai') }}/{{ prod_images_repo | default('iblai-prod-images') }}@{{ prod_images_tag | default('main') }}#egg=iblai-images" --reinstall
   args:
     executable: /bin/bash
   environment:

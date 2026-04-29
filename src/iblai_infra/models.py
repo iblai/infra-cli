@@ -314,6 +314,13 @@ class SetupConfig(BaseModel):
     aws_secret_access_key: str
     aws_default_region: str
     git_access_token: str
+    # GitHub org + repo names for the two private packages this setup
+    # installs (iblai-prod-images directly, iblai-cli-ops transitively).
+    # Configurable so a fork or a non-iblai deployment can point at its
+    # own repos. Defaults reflect the canonical IBL deployment.
+    github_org: str = "iblai"
+    cli_ops_repo: str = "iblai-cli-ops"
+    prod_images_repo: str = "iblai-prod-images"
     openai_api_key: str = ""
     admin_username: str = "ibl_admin"
     admin_email: str = ""

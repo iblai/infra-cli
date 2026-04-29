@@ -192,7 +192,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
-            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -224,7 +224,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, don't reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False]
-            mock_text.return_value.ask.side_effect = ["3.19.0", "NEW_ACCESS_KEY", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "NEW_ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -250,7 +250,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", "", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled (no reuse prompt when no access keys)
             mock_confirm.return_value.ask.side_effect = [True, True, False, False]
-            mock_text.return_value.ask.side_effect = ["3.19.0", "ACCESS_KEY", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -280,7 +280,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
             mock_path.return_value.ask.return_value = str(new_key)
-            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -306,7 +306,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -332,7 +332,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -362,13 +362,18 @@ class TestPromptSetup:
                 True, False, True, True, False, False, True,
             ]
             # texts: cli_ops_tag, smtp_host, smtp_port, smtp_username,
-            #        smtp_sender_email, admin_username, admin_email
+            #        smtp_sender_email,
+            #        github_org, cli_ops_repo, prod_images_repo,
+            #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
                 "3.19.0",
                 "email-smtp.us-east-1.amazonaws.com",
                 "587",
                 "AKIATESTUSER",
                 "noreply@example.com",
+                "iblai",
+                "iblai-cli-ops",
+                "iblai-prod-images",
                 "ibl_admin",
                 "admin@example.com",
             ]
@@ -415,11 +420,16 @@ class TestPromptSetup:
             ]
             # selects: stripe_mode
             mock_select.return_value.ask.return_value = "test"
-            # texts: cli_ops_tag, pricing_table_id, pricing_table_id_returning, admin_username, admin_email
+            # texts: cli_ops_tag, pricing_table_id, pricing_table_id_returning,
+            #        github_org, cli_ops_repo, prod_images_repo,
+            #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
                 "3.19.0",
                 "prctbl_abcdef",
                 "",
+                "iblai",
+                "iblai-cli-ops",
+                "iblai-prod-images",
                 "ibl_admin",
                 "admin@example.com",
             ]
@@ -493,7 +503,7 @@ class TestPromptResetup:
             # Only one confirm: reuse credentials
             mock_confirm.return_value.ask.return_value = True
             # text prompts: base_domain, cli_ops_release_tag, admin_username, admin_email
-            mock_text.return_value.ask.side_effect = ["new.example.com", "3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["new.example.com", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_resetup(state)
 
@@ -522,7 +532,7 @@ class TestPromptResetup:
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
-            mock_text.return_value.ask.side_effect = ["changed.example.com", "3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["changed.example.com", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_resetup(state)
 
@@ -544,7 +554,7 @@ class TestPromptResetup:
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
-            mock_text.return_value.ask.side_effect = ["new.example.com", "3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["new.example.com", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_resetup(state)
 
@@ -566,7 +576,7 @@ class TestPromptResetup:
             # Decline reusing credentials
             mock_confirm.return_value.ask.return_value = False
             # Region is pre-populated from state, so not prompted
-            mock_text.return_value.ask.side_effect = ["new.example.com", "3.19.0", "NEW_KEY", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["new.example.com", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "NEW_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_resetup(state)
 
@@ -597,7 +607,7 @@ class TestPromptResetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
             # text prompts: cli_ops_release_tag, admin_username, admin_email
-            mock_text.return_value.ask.side_effect = ["3.19.0", "ibl_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_resetup(state)
 

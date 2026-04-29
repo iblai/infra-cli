@@ -50,28 +50,85 @@
       Check 'ibl edx launch' output above for errors.
   when: edx_containers.stdout | trim | length == 0
 
-- name: Wait for LMS to be ready
+# Verify the openedx schema actually got migrated by `ibl edx launch`.
+#
+# `ibl edx launch` calls `ibl tutor local launch -I`, which is supposed to
+# run `tutor local do init` (and therefore the openedx migrations). On
+# certain bootstrap paths the init step has been observed to silently skip
+# migrations, leaving the LMS container in a permanent crash loop with
+# `(1146, "Table 'openedx.<table>' doesn't exist")`. Without this guard,
+# the operator only finds out 10 minutes later when the LMS-readiness
+# wait task times out — buried under retry noise. Catch it directly: if
+# `waffle_flag` (a table created early in the migration sequence) doesn't
+# exist within ~3 minutes of launch returning, fail with an actionable
+# message.
+- name: Verify openedx migrations ran (waffle_flag must exist)
   become: false
   shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:8600/heartbeat 2>/dev/null | grep -q '200'
+    set -o pipefail
+    PW=$(docker exec ibl_prod_mysql printenv MYSQL_ROOT_PASSWORD 2>/dev/null)
+    docker exec ibl_prod_mysql mysql -uroot -p"$PW" \
+      -e "SHOW TABLES LIKE 'waffle_flag';" openedx 2>/dev/null \
+      | grep -q waffle_flag
+  args:
+    executable: /bin/bash
+  register: openedx_migrations_ok
+  retries: 6
+  delay: 30
+  until: openedx_migrations_ok.rc == 0
+  failed_when: false
+
+- name: Fail with a clear message if openedx migrations didn't run
+  fail:
+    msg: >-
+      `ibl edx launch` returned but `openedx.waffle_flag` does not exist —
+      the `tutor local do init` step did not complete migrations. SSH in
+      and run `ibl tutor local do init` manually, OR `docker compose down -v`
+      from `{{ ibl_root }}/app/ibl-edx/ibl-edx-pro/env/local/` and re-run
+      `ibl edx launch`.
+  when: openedx_migrations_ok.rc | default(1) | int != 0
+
+# LMS readiness probe — layout-agnostic. The earlier version polled
+# `http://localhost:8600/heartbeat` directly, which only exists when edX
+# is running with tutor's published-port layout. Some bootstrap paths
+# render a Caddy-fronted layout where LMS is reachable only via a Host
+# header on the local reverse proxy, NOT on `:8600`. Probing through the
+# host nginx (always on `:80`) with a `--resolve` to `127.0.0.1` works
+# uniformly: nginx routes by Host to whichever upstream the deployment
+# rendered (LMS direct, or Caddy on `:81`, or anything else).
+#
+# We also sample `RestartCount` inside the same loop so a real crash loop
+# (e.g. the schema-mismatch failure that motivated the migration check
+# above) returns rc=2 immediately instead of letting the operator burn
+# the full retry budget. rc=1 (not yet ready) is the normal retry signal.
+- name: Wait for LMS to be ready (with crash-loop early-exit)
+  become: false
+  shell: |
+    set +e
+    HTTP=$(curl -sk --resolve learn.{{ base_domain }}:80:127.0.0.1 \
+      -o /dev/null -w '%{http_code}' --max-time 5 \
+      http://learn.{{ base_domain }}/heartbeat 2>/dev/null)
+    RC=$(docker inspect --format '{{ '{{' }}.RestartCount{{ '}}' }}' ibl_prod_lms 2>/dev/null || echo 0)
+    if [ "$RC" -gt 5 ]; then
+      LAST=$(docker logs --tail 30 ibl_prod_lms 2>&1 \
+        | grep -Ei 'error|exception|traceback|fatal' \
+        | tail -3 | head -c 600)
+      echo "LMS_CRASHLOOP RestartCount=$RC last_error: $LAST" >&2
+      exit 2
+    fi
+    [ "$HTTP" = "200" ] && exit 0
+    exit 1
   args:
     executable: /bin/bash
   register: lms_health
-  until: lms_health.rc == 0
   retries: 40
   delay: 15
+  until: lms_health.rc == 0
+  failed_when: lms_health.rc not in [0, 1]
 
-- name: Check LMS container is not crash-looping
-  become: false
-  shell: |
-    docker inspect --format '{{ '{{' }}.RestartCount{{ '}}' }}' ibl_prod_lms
-  args:
-    executable: /bin/bash
-  register: lms_restart_count
-
-- name: Fail if LMS is crash-looping
+- name: Fail with crash-loop diagnosis if LMS never stabilized
   fail:
     msg: >-
-      ibl_prod_lms has restarted {{ lms_restart_count.stdout | trim }} times.
-      Run 'docker logs ibl_prod_lms' on the server to diagnose.
-  when: lms_restart_count.stdout | trim | int > 3
+      ibl_prod_lms is in a crash loop (RestartCount > 5). Last error
+      from the container: {{ lms_health.stderr | default('see docker logs ibl_prod_lms on the server') }}
+  when: lms_health.rc is defined and lms_health.rc == 2

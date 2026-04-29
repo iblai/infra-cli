@@ -1007,8 +1007,8 @@ def _run_launch(
     # has already provisioned the box; if the operator realizes here
     # they don't have access, they can ctrl-C and `iblai infra destroy`
     # before phase 2 burns hours on a doomed pip / docker pull.
+    # Bare repo names only — `github_org` is plumbing, not display.
     ui.private_access_notice(
-        github_org=github_org,
         cli_ops_repo=cli_ops_repo,
         prod_images_repo=prod_images_repo,
     )
@@ -1798,8 +1798,10 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
     # commits to a 30-90 minute setup that pulls from private GitHub repos
     # and ECR. The non-interactive flows print the same notice without
     # this confirmation prompt — see `_run_launch`.
+    # Notice intentionally renders bare repo names only (no org prefix);
+    # the configured `github_org` is plumbing for the pip install URL,
+    # not operator-facing display.
     ui.private_access_notice(
-        github_org=setup_config.github_org,
         cli_ops_repo=setup_config.cli_ops_repo,
         prod_images_repo=setup_config.prod_images_repo,
     )

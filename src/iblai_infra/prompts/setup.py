@@ -417,9 +417,11 @@ def _prompt_credentials(
     if prod_images_repo is None:
         ui.abort()
     prod_images_repo = prod_images_repo.strip()
+    # Echo bare repo names only — the org is collected for the install
+    # URL but not surfaced in operator-facing summary text.
     ui.success(
-        f"Private packages: [highlight]{github_org}/{cli_ops_repo}[/highlight], "
-        f"[highlight]{github_org}/{prod_images_repo}[/highlight]"
+        f"Private packages: [highlight]{cli_ops_repo}[/highlight], "
+        f"[highlight]{prod_images_repo}[/highlight]"
     )
 
     ui.info(

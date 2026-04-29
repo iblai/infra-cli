@@ -212,10 +212,10 @@ _PRIVATE_ACCESS_NOTICE_TEMPLATE = """\
 This setup installs two private Python packages and pulls container
 images from a private ECR registry. You'll need access to ALL three of:
 
-  1. {github_org}/{cli_ops_repo}
+  1. {cli_ops_repo}
        (private package — pulled in transitively by the install of #2,
         via the GitHub token you'll paste at the credentials prompt)
-  2. {github_org}/{prod_images_repo}
+  2. {prod_images_repo}
        (private package — installed directly via `pip install`)
   3. The IBL private ECR registry, of shape
        <account-id>.dkr.ecr.<region>.amazonaws.com
@@ -230,29 +230,28 @@ provisioned.
 
 Don't have access yet? Request it at https://ibl.ai/contact/ before
 re-running. Mention you want access to:
-  - {github_org}/{cli_ops_repo} and {github_org}/{prod_images_repo}
+  - {cli_ops_repo} and {prod_images_repo}
   - the IBL private ECR registry
 
 The contact response will include the exact resource handles and the
 GitHub-token / AWS-IAM credentials you'll paste at the credentials
-prompt. If you're using a fork or a non-canonical org/repo, override
+prompt. If you're using a fork or a non-canonical deployment, override
 the defaults at the credentials prompt (interactive) or via
 `--github-org` / `--cli-ops-repo` / `--prod-images-repo` (launch).
 """
 
 
 def private_access_notice(
-    github_org: str = "iblai",
     cli_ops_repo: str = "iblai-cli-ops",
     prod_images_repo: str = "iblai-prod-images",
 ) -> None:
     """Print the IBL private-access prerequisites notice.
 
-    Renders the operator-supplied org + repo names so a fork / non-
-    canonical deployment sees its own values rather than the canonical
-    iblai ones. Defaults match the canonical IBL deployment for
-    `iblai infra` invocations that haven't been threaded with
-    SetupConfig yet (for example, dry-runs).
+    Renders the operator-supplied repo names (bare, without the org
+    prefix — the org is collected separately as plumbing for the
+    pip install URL but not echoed in the notice). Defaults match
+    the canonical IBL repos for invocations that haven't been
+    threaded with SetupConfig yet (e.g. dry-runs).
 
     Always shown right before the ansible-driven phase of `iblai infra
     setup` / `iblai infra launch` / `iblai infra launch-env` begins.
@@ -264,7 +263,6 @@ def private_access_notice(
     section(
         "Prerequisites — IBL platform access required",
         _PRIVATE_ACCESS_NOTICE_TEMPLATE.format(
-            github_org=github_org,
             cli_ops_repo=cli_ops_repo,
             prod_images_repo=prod_images_repo,
         ),

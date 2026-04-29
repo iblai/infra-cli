@@ -634,8 +634,10 @@ class TestPromptResetup:
             mock_select.return_value.ask.return_value = "__custom__"
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
-            # text prompts: custom domain, cli_ops_release_tag, admin_username, admin_email
-            mock_text.return_value.ask.side_effect = ["custom.example.com", "3.19.0", "ibl_admin", "admin@example.com"]
+            # text prompts: custom domain, cli_ops_release_tag,
+            #               github_org, cli_ops_repo, prod_images_repo,
+            #               admin_username, admin_email
+            mock_text.return_value.ask.side_effect = ["custom.example.com", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_resetup(state)
 

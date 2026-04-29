@@ -1599,6 +1599,10 @@ def _run_resetup(name: str) -> None:
         ui.newline()
         raise typer.Exit(1)
 
+    # Same upfront access gate as the other interactive setup paths —
+    # bail before prompts if the operator lacks access.
+    _confirm_private_access_or_abort()
+
     try:
         setup_config = prompt_resetup(state)
     except KeyboardInterrupt:
@@ -1606,6 +1610,32 @@ def _run_resetup(name: str) -> None:
         ui.abort("Interrupted.")
 
     _confirm_and_run(state, setup_config, f"iblai infra resetup {name}")
+
+
+def _confirm_private_access_or_abort() -> None:
+    """Show the IBL private-resource prerequisite notice and gate the flow.
+
+    Called at the very top of every interactive setup path — before any
+    prompts collect input — so an operator who lacks access can bail
+    cleanly without typing GitHub PATs, AWS keys, or repo names. The
+    notice intentionally shows the canonical default repo names; if the
+    operator IS proceeding (yes), they can still override the repo names
+    at the credentials step a moment later.
+    """
+    import questionary
+
+    ui.private_access_notice()
+    have_access = questionary.confirm(
+        "Do you have access to all three private resources above?",
+        default=True,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if not have_access:
+        ui.abort(
+            "Cancelled. Request access at https://ibl.ai/contact/ "
+            "and re-run when ready."
+        )
 
 
 def _run_setup_provisioned(name: str) -> None:
@@ -1657,6 +1687,15 @@ def _run_setup_provisioned(name: str) -> None:
         ui.newline()
         raise typer.Exit(1)
 
+    # Show prerequisites + ask for access confirmation BEFORE collecting
+    # any prompts. If the operator doesn't have access to the private
+    # packages or ECR, they should bail here — not after pasting GitHub
+    # PAT, repo names, AWS keys, etc. The notice repeats the canonical
+    # default repo names; the credentials prompt collects optional
+    # overrides for forks. The final summary at `_confirm_and_run` is
+    # the last gate before ansible actually runs.
+    _confirm_private_access_or_abort()
+
     try:
         setup_config = prompt_setup(state)
     except KeyboardInterrupt:
@@ -1695,6 +1734,10 @@ def _run_setup_interactive() -> None:
         ui.muted("Then re-run: [brand]iblai infra setup[/brand]")
         ui.newline()
         raise typer.Exit(1)
+
+    # Same upfront access gate as `_run_setup_provisioned` — bail before
+    # any prompts collect anything if the operator lacks access.
+    _confirm_private_access_or_abort()
 
     try:
         setup_config, meta = prompt_bootstrap()
@@ -1794,30 +1837,11 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
 
     import questionary
 
-    # Make the IBL private-resource prerequisite obvious BEFORE the operator
-    # commits to a 30-90 minute setup that pulls from private GitHub repos
-    # and ECR. The non-interactive flows print the same notice without
-    # this confirmation prompt — see `_run_launch`.
-    # Notice intentionally renders bare repo names only (no org prefix);
-    # the configured `github_org` is plumbing for the pip install URL,
-    # not operator-facing display.
-    ui.private_access_notice(
-        cli_ops_repo=setup_config.cli_ops_repo,
-        prod_images_repo=setup_config.prod_images_repo,
-    )
-
-    have_access = questionary.confirm(
-        "Do you have access to all three private resources above?",
-        default=True,
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if not have_access:
-        ui.abort(
-            "Cancelled. Request access at https://ibl.ai/contact/ "
-            "and re-run when ready."
-        )
-
+    # The private-resource access notice + access confirm fired at the
+    # top of the flow (in `_run_setup_provisioned` / `_run_setup_interactive`),
+    # before any prompts collected input. This is the final summary gate
+    # — just confirm we're proceeding with the configured values shown
+    # above.
     confirm = questionary.confirm(
         "Proceed with setup?",
         default=True,

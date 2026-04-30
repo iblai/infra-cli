@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0] — 2026-04-30
+
+### Added
+- **Monorepo subdirectory installs** — `--cli-ops-repo` / `--prod-images-repo` (and the matching setup prompts) now accept a `repo/subdir` path, e.g. `kaplan-iblai-infra-ops/kaplan-iblai-prod-images`. The ansible role appends `&subdirectory=<subdir>` to the install URL so a single client monorepo can host both `iblai-cli-ops` and the prod-images package
+- **`parse_repo_path()` helper** in `models.py` — splits operator input into `(repo, subdir)`. Bare `iblai-cli-ops` keeps the canonical behavior; subdir-form unlocks per-client monorepo deployments
+- **`cli_ops_subdir` / `prod_images_subdir` extra-vars** passed through `AnsibleRunner` to the `ibl_cli_ops` role (single-server + call-server templates)
+
 ## [1.4.0] — 2026-04-14
 
 ### Added

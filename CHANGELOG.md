@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.3] — 2026-05-01
+
+### Fixed
+- **Fresh-provision LMS crash loop** (`ibl_platform` role). Newer `iblai-cli-ops` (5.x+) ships an import-time check in `ibl-edx-sso-backend-app/constants.py` that rejects a missing or placeholder `IBL_FERNET_KEY`. Fresh bootstrap user_data writes a placeholder, so LMS/CMS crash-loop with `ImproperlyConfigured` and the "Wait for LMS to be ready" task times out at 40 retries. Ports the same fernet guard from `ibl_service_update` to `ibl_platform`: reads the key, rotates only when empty/`BAD_FERNET_KEY`/the known template default, leaves real keys untouched. Idempotent
+
 ## [1.5.2] — 2026-05-01
 
 ### Fixed

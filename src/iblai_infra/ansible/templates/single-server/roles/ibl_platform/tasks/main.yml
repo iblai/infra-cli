@@ -122,6 +122,88 @@
   when: is_resetup | default(false) | bool
   ignore_errors: true
 
+# ---------------------------------------------------------------------------
+# Fernet key guard
+#
+# Newer iblai-cli-ops (5.x+) ships an import-time check in
+# ibl-edx-sso-backend-app/constants.py (AUTHZ-VULN-06 / issue #1321) that
+# rejects a missing or known-bad placeholder IBL_FERNET_KEY. On a fresh
+# provision the bootstrap user_data writes a placeholder, so LMS/CMS
+# crash-loop with `ImproperlyConfigured` until the key is rotated.
+#
+# The same guard already lives in ibl_service_update; this block is the
+# fresh-provision twin. Only rotates when the key is missing/empty or one
+# of the known-bad placeholders — never on a real, unique key.
+# ---------------------------------------------------------------------------
+
+- name: Read current IBL_FERNET_KEY from config.yml
+  become: false
+  shell: |
+    python3 -c "
+    import yaml
+    try:
+        with open('{{ ibl_root }}/config.yml') as f:
+            cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        print('')
+    else:
+        key = (
+            cfg.get('IBL_EDX', {})
+               .get('IBL_EDX_SSO_BACKEND_APP', {})
+               .get('IBL_FERNET_KEY', '') or ''
+        )
+        print(key.strip())
+    "
+  args:
+    executable: /bin/bash
+  register: current_fernet_key
+  changed_when: false
+  no_log: true
+
+- name: Set fernet rotation flag
+  set_fact:
+    fernet_needs_rotation: >-
+      {{
+        (current_fernet_key.stdout | default('') | trim) in
+        ['', 'BAD_FERNET_KEY', '1vCbtt_ffQ2BWc5-msIEeSBXTYNYDErBcSwPqoSjKuI=']
+      }}
+
+- name: Ensure backups dir exists (rotate-secrets requires it)
+  file:
+    path: "{{ ibl_root }}/app/backups"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+  when: fernet_needs_rotation | bool
+
+- name: Rotate placeholder IBL_FERNET_KEY
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config rotate-secrets -f --only IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_FERNET_KEY
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  when: fernet_needs_rotation | bool
+  register: fernet_rotation
+  changed_when: fernet_rotation.rc == 0
+
+- name: Show fernet rotation outcome
+  debug:
+    msg: >-
+      {{
+        'IBL_FERNET_KEY was placeholder/empty - rotated to a fresh key.'
+        if fernet_needs_rotation
+        else 'IBL_FERNET_KEY already set to a non-placeholder value - skipped rotation.'
+      }}
+
 - name: Configure edX version
   become: false
   shell: |

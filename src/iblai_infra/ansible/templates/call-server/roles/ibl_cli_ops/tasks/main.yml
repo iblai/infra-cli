@@ -36,6 +36,28 @@
     GIT_CONFIG_KEY_0: "url.https://{{ git_access_token }}@github.com/.insteadOf"
     GIT_CONFIG_VALUE_0: "https://github.com/"
 
+# See single-server template for the full reasoning. Short version:
+# uv pip install of a git URL ignores `[tool.uv.sources]`, so the
+# transitive ibl-cli dep falls through to PyPI's unrelated v2.0.11
+# (missing `ibl/templates/config/defaults.yml`). Reinstall the correct
+# package here from the operator-specified repo+tag.
+- name: Install iblai-cli-ops (override transitive ibl-cli with correct repo+tag)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    uv pip install "git+https://{{ git_access_token }}@github.com/{{ github_org | default('iblai') }}/{{ cli_ops_repo | default('iblai-cli-ops') }}@{{ cli_ops_release_tag | default('main') }}{% if cli_ops_subdir | default('') %}#subdirectory={{ cli_ops_subdir }}{% endif %}" --reinstall
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    GIT_CONFIG_COUNT: "1"
+    GIT_CONFIG_KEY_0: "url.https://{{ git_access_token }}@github.com/.insteadOf"
+    GIT_CONFIG_VALUE_0: "https://github.com/"
+
 - name: Verify ibl CLI is available
   become: false
   shell: |

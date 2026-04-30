@@ -36,6 +36,32 @@
     GIT_CONFIG_KEY_0: "url.https://{{ git_access_token }}@github.com/.insteadOf"
     GIT_CONFIG_VALUE_0: "https://github.com/"
 
+# Force-install iblai-cli-ops from the operator-specified repo+tag AFTER
+# the prod-images install. The prod-images package depends on `ibl-cli`
+# but its `[tool.uv.sources]` is ignored when uv pip installs from a git
+# URL — so the dependency falls through to PyPI's unrelated `ibl-cli`
+# package (v2.0.11), which is missing `ibl/templates/config/defaults.yml`
+# and crashes on `ibl --help`. Reinstalling here overrides the wrong
+# package with the right one (e.g. iblai/iblai-cli-ops@5.8.1, or a
+# subdir of a client monorepo like
+# kaplan-iblai-infra-ops/iblai-cli-ops@v1.0.1).
+- name: Install iblai-cli-ops (override transitive ibl-cli with correct repo+tag)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    uv pip install "git+https://{{ git_access_token }}@github.com/{{ github_org | default('iblai') }}/{{ cli_ops_repo | default('iblai-cli-ops') }}@{{ cli_ops_release_tag | default('main') }}{% if cli_ops_subdir | default('') %}#subdirectory={{ cli_ops_subdir }}{% endif %}" --reinstall
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    GIT_CONFIG_COUNT: "1"
+    GIT_CONFIG_KEY_0: "url.https://{{ git_access_token }}@github.com/.insteadOf"
+    GIT_CONFIG_VALUE_0: "https://github.com/"
+
 - name: Verify ibl CLI is available
   become: false
   shell: |

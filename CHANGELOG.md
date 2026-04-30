@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.2] — 2026-05-01
+
+### Fixed
+- **`ibl-cli` resolves to PyPI's wrong package on fresh provisions** (`ibl_cli_ops` role). When `iblai-prod-images` was installed via `uv pip install` of a git URL, uv silently ignored its `[tool.uv.sources]` (project-only) and fell through to PyPI's unrelated `ibl-cli==2.0.11`, which is missing `ibl/templates/config/defaults.yml`. `ibl --help` then crashed in the very next "Verify ibl CLI is available" task. The role now does a second explicit `uv pip install ... --reinstall` of `iblai-cli-ops` at the operator-specified repo+tag (honoring `cli_ops_subdir` for monorepo layouts), overriding the wrong transitive dependency. Applies to both `single-server` and `call-server` templates
+
 ## [1.5.1] — 2026-04-30
 
 ### Fixed

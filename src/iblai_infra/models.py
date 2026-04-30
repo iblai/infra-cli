@@ -13,6 +13,25 @@ from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def parse_repo_path(value: str) -> tuple[str, str | None]:
+    """Split a 'repo' or 'repo/subdir' string into (repo, subdir).
+
+    Used by the ansible runner to point installs at a package inside a
+    monorepo. `iblai-cli-ops` -> ('iblai-cli-ops', None);
+    `kaplan-iblai-infra-ops/iblai-cli-ops` -> ('kaplan-iblai-infra-ops',
+    'iblai-cli-ops').
+    """
+    cleaned = (value or "").strip().strip("/")
+    if "/" in cleaned:
+        repo, _, subdir = cleaned.partition("/")
+        return repo, subdir or None
+    return cleaned, None
+
+
+# ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
 
@@ -319,6 +338,10 @@ class SetupConfig(BaseModel):
     # Configurable so a fork or a non-iblai deployment can point at its
     # own repos. Defaults reflect the canonical IBL deployment.
     github_org: str = "iblai"
+    # Each repo field accepts either a bare repo name (`iblai-cli-ops`) or a
+    # `repo/subdir` path (`kaplan-iblai-infra-ops/iblai-cli-ops`) to point at
+    # a package inside a monorepo. Parsed by `parse_repo_path()` before the
+    # install URL is built.
     cli_ops_repo: str = "iblai-cli-ops"
     prod_images_repo: str = "iblai-prod-images"
     openai_api_key: str = ""

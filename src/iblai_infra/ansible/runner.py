@@ -19,7 +19,7 @@ from rich.live import Live
 from rich.table import Table
 
 from iblai_infra import ui
-from iblai_infra.models import DeploymentType, ProjectState, SetupConfig
+from iblai_infra.models import DeploymentType, ProjectState, SetupConfig, parse_repo_path
 from iblai_infra.terraform.state import save_state
 
 # ---------------------------------------------------------------------------
@@ -454,14 +454,18 @@ class AnsibleRunner:
 
     def _build_extra_vars(self) -> dict:
         """Build the extra-vars dict. Secrets are passed here, never to disk."""
+        cli_ops_repo, cli_ops_subdir = parse_repo_path(self.config.cli_ops_repo)
+        prod_images_repo, prod_images_subdir = parse_repo_path(self.config.prod_images_repo)
         extra = {
             "aws_access_key_id": self.config.aws_access_key_id,
             "aws_secret_access_key": self.config.aws_secret_access_key,
             "aws_default_region": self.config.aws_default_region,
             "git_access_token": self.config.git_access_token,
             "github_org": self.config.github_org,
-            "cli_ops_repo": self.config.cli_ops_repo,
-            "prod_images_repo": self.config.prod_images_repo,
+            "cli_ops_repo": cli_ops_repo,
+            "cli_ops_subdir": cli_ops_subdir or "",
+            "prod_images_repo": prod_images_repo,
+            "prod_images_subdir": prod_images_subdir or "",
             "base_domain": self.config.base_domain,
             "edx_version": self.config.edx_version,
             "env_config": self.config.env_config,

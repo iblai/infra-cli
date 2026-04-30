@@ -397,8 +397,9 @@ def _prompt_credentials(
     github_org = github_org.strip()
 
     cli_ops_repo = questionary.text(
-        "CLI ops repo name:",
+        "CLI ops repo (or repo/subdir for monorepo):",
         default="iblai-cli-ops",
+        instruction="(e.g. iblai-cli-ops, or kaplan-iblai-infra-ops/iblai-cli-ops)",
         validate=lambda v: len(v.strip()) > 0 or "Required",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
@@ -408,8 +409,9 @@ def _prompt_credentials(
     cli_ops_repo = cli_ops_repo.strip()
 
     prod_images_repo = questionary.text(
-        "Prod images repo name:",
+        "Prod images repo (or repo/subdir for monorepo):",
         default="iblai-prod-images",
+        instruction="(e.g. iblai-prod-images, or kaplan-iblai-infra-ops/kaplan-iblai-prod-images)",
         validate=lambda v: len(v.strip()) > 0 or "Required",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,

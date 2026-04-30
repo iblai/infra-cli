@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.1] — 2026-04-30
+
+### Fixed
+- **Private-access gate fires on `provision` → "Run platform setup now?"** path. The post-provision shortcut (`app._offer_setup`) bypassed `_confirm_private_access_or_abort()` because it never reached `_run_setup_provisioned`/`_run_setup_interactive`/`_run_resetup`. Operators going from `iblai infra provision` straight into setup now see the same prerequisites notice + Y/N confirm before any prompts collect input
+
 ## [1.5.0] — 2026-04-30
 
 ### Added

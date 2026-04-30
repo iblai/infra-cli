@@ -196,7 +196,16 @@ def _offer_setup(config: InfraConfig, state) -> None:
         return
 
     from iblai_infra.ansible.runner import AnsibleRunner, CALL_ROLE_LABELS
+    from iblai_infra.cli import _confirm_private_access_or_abort
     from iblai_infra.prompts.setup import prompt_setup
+
+    # Same prerequisite gate as `iblai infra setup <name>` — bail before
+    # any prompts collect input if the operator lacks access to the
+    # private CLI ops / prod-images repos or ECR. Without this, the
+    # post-provision shortcut (`provision` → "Run platform setup now?")
+    # would silently skip the notice, since this path doesn't reach
+    # `_run_setup_provisioned`.
+    _confirm_private_access_or_abort()
 
     try:
         setup_config = prompt_setup(state)

@@ -1003,20 +1003,11 @@ def _run_launch(
 
     # Same private-resource notice the interactive setup flow prints +
     # confirms — but this is `iblai infra launch` / `launch-env`, so we
-    # surface the requirement as a heads-up without prompting. Phase 1
-    # has already provisioned the box; if the operator realizes here
-    # they don't have access, they can ctrl-C and `iblai infra destroy`
-    # before phase 2 burns hours on a doomed pip / docker pull.
-    # Bare repo names only — `github_org` is plumbing, not display.
-    ui.private_access_notice(
-        cli_ops_repo=cli_ops_repo,
-        prod_images_repo=prod_images_repo,
-    )
-    ui.muted(
-        "Non-interactive launch — proceeding. If phase 2 fails on `pip "
-        "install` or `docker pull` auth errors, request access at "
-        "https://ibl.ai/contact/ and re-run."
-    )
+    # surface the requirement as a heads-up without prompting. The
+    # operator is committed to phase 2 by the time they see this; if
+    # they realize they don't have access, ctrl-C + `iblai infra
+    # destroy` is the recovery.
+    ui.private_access_notice()
     ui.newline()
 
     setup_config = SetupConfig(

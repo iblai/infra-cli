@@ -208,64 +208,33 @@ def abort(message: str = "Aborted.") -> None:
 # lets a first-time operator (or someone trying the open-source repo)
 # confirm they're set up correctly OR bail before spending time and
 # AWS dollars on a doomed run.
-_PRIVATE_ACCESS_NOTICE_TEMPLATE = """\
-This setup installs two private Python packages and pulls container
-images from a private ECR registry. You'll need access to ALL three of:
+_PRIVATE_ACCESS_NOTICE = """\
+This setup needs access to three private IBL resources:
 
-  1. {cli_ops_repo}
-       (private package — pulled in transitively by the install of #2,
-        via the GitHub token you'll paste at the credentials prompt)
-  2. {prod_images_repo}
-       (private package — installed directly via `pip install`)
-  3. The IBL private ECR registry, of shape
-       <account-id>.dkr.ecr.<region>.amazonaws.com
-     (private container images: edX, DM, MFE, MySQL, Mongo, Redis,
-      Meilisearch, the SPAs, and others — pulled with the AWS IAM
-      credentials you'll paste at the credentials prompt)
+  • iblai-cli-ops
+  • iblai-prod-images
+  • IBL's private ECR registry
 
-Without all three, the run will fail part-way through with auth errors —
-typically `pip install` for the packages or `docker pull` / `docker
-login` for the container images, after the box has already been
-provisioned.
-
-Don't have access yet? Request it at https://ibl.ai/contact/ before
-re-running. Mention you want access to:
-  - {cli_ops_repo} and {prod_images_repo}
-  - the IBL private ECR registry
-
-The contact response will include the exact resource handles and the
-GitHub-token / AWS-IAM credentials you'll paste at the credentials
-prompt. If you're using a fork or a non-canonical deployment, override
-the defaults at the credentials prompt (interactive) or via
-`--github-org` / `--cli-ops-repo` / `--prod-images-repo` (launch).
+You'll be asked for credentials in the next steps. If something fails
+or you don't have access yet, reach out at https://ibl.ai/contact/
 """
 
 
-def private_access_notice(
-    cli_ops_repo: str = "iblai-cli-ops",
-    prod_images_repo: str = "iblai-prod-images",
-) -> None:
+def private_access_notice() -> None:
     """Print the IBL private-access prerequisites notice.
 
-    Renders the operator-supplied repo names (bare, without the org
-    prefix — the org is collected separately as plumbing for the
-    pip install URL but not echoed in the notice). Defaults match
-    the canonical IBL repos for invocations that haven't been
-    threaded with SetupConfig yet (e.g. dry-runs).
+    Static, non-technical message naming the three private resources
+    operators need access to. Always shown right before the
+    ansible-driven phase of `iblai infra setup` / `iblai infra launch`
+    / `iblai infra launch-env` begins.
 
-    Always shown right before the ansible-driven phase of `iblai infra
-    setup` / `iblai infra launch` / `iblai infra launch-env` begins.
-    The interactive setup flow follows this with a `questionary.confirm`
-    so the operator can bail; non-interactive flows (launch, launch-env)
-    print the notice as a hard-to-miss heads-up so a CI run that fails
-    on pip/docker auth has an obvious explanation in its stdout.
+    Interactive flows follow this with a `questionary.confirm` so the
+    operator can bail; non-interactive flows print it as a heads-up so
+    a CI run that fails has an obvious explanation in its stdout.
     """
     section(
         "Prerequisites — IBL platform access required",
-        _PRIVATE_ACCESS_NOTICE_TEMPLATE.format(
-            cli_ops_repo=cli_ops_repo,
-            prod_images_repo=prod_images_repo,
-        ),
+        _PRIVATE_ACCESS_NOTICE,
     )
 
 

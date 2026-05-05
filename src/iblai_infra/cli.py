@@ -540,6 +540,10 @@ def launch(
     stripe_pricing_table_id_returning: str = typer.Option("", "--stripe-pricing-table-id-returning", help="Stripe pricing table id for returning users"),
     stripe_webhook_secret: str = typer.Option("", "--stripe-webhook-secret", help="Stripe webhook signing secret (whsec_...)"),
     stripe_connect_webhook_secret: str = typer.Option("", "--stripe-connect-webhook-secret", help="Stripe Connect webhook signing secret (whsec_...)"),
+    # Google SSO — `--google-sso-client-id` is the trigger; if empty, the role no-ops
+    google_sso_client_id: str = typer.Option("", "--google-sso-client-id", help="Google OAuth Client ID. Setting this enables the Google SSO ansible role."),
+    google_sso_client_secret: str = typer.Option("", "--google-sso-client-secret", help="Google OAuth Client Secret"),
+    google_sso_organization: str = typer.Option("", "--google-sso-organization", help="Organization short name to attach to the OAuth2ProviderConfig (optional)"),
     deployment_type: str = typer.Option("single-server", "--deployment-type", help="single-server, multi-server, or call-server"),
     app_server_count: int = typer.Option(2, "--app-server-count", help="Number of app servers (multi-server only)"),
     services_instance_type: str = typer.Option("t3.2xlarge", "--services-instance-type", help="Services server instance type (multi-server only)"),
@@ -607,6 +611,9 @@ def launch(
         stripe_pricing_table_id_returning=stripe_pricing_table_id_returning,
         stripe_webhook_secret=stripe_webhook_secret,
         stripe_connect_webhook_secret=stripe_connect_webhook_secret,
+        google_sso_client_id=google_sso_client_id,
+        google_sso_client_secret=google_sso_client_secret,
+        google_sso_organization=google_sso_organization,
         deployment_type=deployment_type,
         app_server_count=app_server_count,
         services_instance_type=services_instance_type,
@@ -728,6 +735,9 @@ def launch_env(
     stripe_pricing_table_id_returning = env.get("STRIPE_PRICING_TABLE_ID_RETURNING", "")
     stripe_webhook_secret = env.get("STRIPE_WEBHOOK_SECRET", "")
     stripe_connect_webhook_secret = env.get("STRIPE_CONNECT_WEBHOOK_SECRET", "")
+    google_sso_client_id = env.get("GOOGLE_SSO_CLIENT_ID", "")
+    google_sso_client_secret = env.get("GOOGLE_SSO_CLIENT_SECRET", "")
+    google_sso_organization = env.get("GOOGLE_SSO_ORGANIZATION", "")
 
     # Show summary
     project_name = name or domain.replace(".", "-")
@@ -788,6 +798,9 @@ def launch_env(
         stripe_pricing_table_id_returning=stripe_pricing_table_id_returning,
         stripe_webhook_secret=stripe_webhook_secret,
         stripe_connect_webhook_secret=stripe_connect_webhook_secret,
+        google_sso_client_id=google_sso_client_id,
+        google_sso_client_secret=google_sso_client_secret,
+        google_sso_organization=google_sso_organization,
     )
 
 
@@ -832,6 +845,9 @@ def _run_launch(
     stripe_pricing_table_id_returning: str = "",
     stripe_webhook_secret: str = "",
     stripe_connect_webhook_secret: str = "",
+    google_sso_client_id: str = "",
+    google_sso_client_secret: str = "",
+    google_sso_organization: str = "",
     deployment_type: str = "single-server",
     app_server_count: int = 2,
     services_instance_type: str = "t3.2xlarge",
@@ -1035,6 +1051,10 @@ def _run_launch(
         stripe_pricing_table_id_returning=stripe_pricing_table_id_returning,
         stripe_webhook_secret=stripe_webhook_secret,
         stripe_connect_webhook_secret=stripe_connect_webhook_secret,
+        google_sso_enabled=bool(google_sso_client_id),
+        google_sso_client_id=google_sso_client_id,
+        google_sso_client_secret=google_sso_client_secret,
+        google_sso_organization=google_sso_organization,
         aws_access_key_id=aws_key_id,
         aws_secret_access_key=aws_secret_key,
         aws_default_region=aws_region,

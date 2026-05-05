@@ -190,8 +190,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, True]
             mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
@@ -222,8 +222,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, don't reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, don't reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False]
             mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "NEW_ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
@@ -248,8 +248,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled (no reuse prompt when no access keys)
-            mock_confirm.return_value.ask.side_effect = [True, True, False, False]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled (no reuse prompt when no access keys)
+            mock_confirm.return_value.ask.side_effect = [True, True, False, False, False]
             mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ACCESS_KEY", "ibl_admin", "admin@example.com"]
 
             config = prompt_setup(state)
@@ -277,8 +277,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(new_key)
             mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
@@ -303,8 +303,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
             mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
@@ -329,8 +329,8 @@ class TestPromptSetup:
             patch("questionary.text") as mock_text,
         ):
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
-            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, reuse credentials
-            mock_confirm.return_value.ask.side_effect = [True, False, False, False, True]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, reuse credentials
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
             mock_text.return_value.ask.side_effect = ["3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ibl_admin", "admin@example.com"]
 
@@ -357,9 +357,10 @@ class TestPromptSetup:
                 "Admin1234",
             ]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled,
-            #          smtp_use_tls, smtp_use_ssl, stripe_enabled, reuse_credentials
+            #          smtp_use_tls, smtp_use_ssl, stripe_enabled,
+            #          google_sso_enabled, reuse_credentials
             mock_confirm.return_value.ask.side_effect = [
-                True, False, True, True, False, False, True,
+                True, False, True, True, False, False, False, True,
             ]
             # texts: cli_ops_tag, smtp_host, smtp_port, smtp_username,
             #        smtp_sender_email,
@@ -414,9 +415,9 @@ class TestPromptSetup:
                 "Admin1234",
             ]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled,
-            #          stripe_enabled, reuse_credentials
+            #          stripe_enabled, google_sso_enabled, reuse_credentials
             mock_confirm.return_value.ask.side_effect = [
-                True, False, False, True, True,
+                True, False, False, True, False, True,
             ]
             # selects: stripe_mode
             mock_select.return_value.ask.return_value = "test"
@@ -448,6 +449,53 @@ class TestPromptSetup:
         dumped = config.model_dump_json()
         for excluded in ("stripe_secret_key", "stripe_pub_key", "stripe_webhook_secret", "stripe_connect_webhook_secret"):
             assert f'"{excluded}"' not in dumped
+
+    def test_full_flow_google_sso_enabled(self, tmp_path):
+        """When operator answers yes to Google SSO, client_id/secret/org are collected
+        and the client_secret is excluded from JSON serialization."""
+        from iblai_infra.prompts.setup import prompt_setup
+
+        state = self._make_state(tmp_path)
+
+        with (
+            patch("questionary.password") as mock_password,
+            patch("questionary.confirm") as mock_confirm,
+            patch("questionary.text") as mock_text,
+        ):
+            # passwords: google_sso_client_secret, GitHub token, skip OpenAI, admin password
+            mock_password.return_value.ask.side_effect = [
+                "PLACEHOLDER_GOOGLE_CLIENT_SECRET",
+                "ghp_testtoken",
+                "",
+                "Admin1234",
+            ]
+            # confirms: enable_ai, create_playwright_platforms, smtp_enabled,
+            #          stripe_enabled, google_sso_enabled, reuse_credentials
+            mock_confirm.return_value.ask.side_effect = [
+                True, False, False, False, True, True,
+            ]
+            # texts: cli_ops_tag, google_sso_client_id, google_sso_organization,
+            #        github_org, cli_ops_repo, prod_images_repo,
+            #        admin_username, admin_email
+            mock_text.return_value.ask.side_effect = [
+                "3.19.0",
+                "client-id.apps.googleusercontent.com",
+                "test-org",
+                "iblai",
+                "iblai-cli-ops",
+                "iblai-prod-images",
+                "ibl_admin",
+                "admin@example.com",
+            ]
+
+            config = prompt_setup(state)
+
+        assert config.google_sso_enabled is True
+        assert config.google_sso_client_id == "client-id.apps.googleusercontent.com"
+        assert config.google_sso_client_secret == "PLACEHOLDER_GOOGLE_CLIENT_SECRET"
+        assert config.google_sso_organization == "test-org"
+        # client_secret is excluded from JSON serialization
+        assert '"google_sso_client_secret"' not in config.model_dump_json()
 
 
 # ---------------------------------------------------------------------------

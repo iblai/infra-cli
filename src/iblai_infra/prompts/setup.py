@@ -142,6 +142,7 @@ def _prompt_platform_config(
 
     smtp_fields = _prompt_smtp_config()
     stripe_fields = _prompt_stripe_config()
+    google_sso_fields = _prompt_google_sso_config()
 
     return {
         "base_domain": base_domain,
@@ -152,6 +153,7 @@ def _prompt_platform_config(
         "create_playwright_platforms": create_playwright_platforms,
         **smtp_fields,
         **stripe_fields,
+        **google_sso_fields,
     }
 
 
@@ -355,6 +357,69 @@ def _prompt_stripe_config() -> dict:
         "stripe_pricing_table_id_returning": stripe_pricing_table_id_returning,
         "stripe_webhook_secret": stripe_webhook_secret,
         "stripe_connect_webhook_secret": stripe_connect_webhook_secret,
+    }
+
+
+def _prompt_google_sso_config() -> dict:
+    """Optionally collect Google SSO credentials.
+
+    Default is "skip" — when answered "no" all four google_sso_* fields stay
+    at their model defaults and the ansible role no-ops. When answered "yes",
+    we gather the OAuth Client ID/Secret pair (from the operator's Google
+    Cloud Console) plus an optional organization slug. The role then writes
+    a Django `OAuth2ProviderConfig` row on the LMS for the `google-oauth2`
+    python-social-auth backend, bound to `learn.<base_domain>`. Client
+    secret is collected via `questionary.password` (no echo); none of these
+    values are persisted locally — they ride extra_vars to ansible at run
+    time only.
+    """
+    enabled = questionary.confirm(
+        "Configure Google SSO? (creates an OAuth2ProviderConfig in the LMS)",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enabled is None:
+        ui.abort()
+    if not enabled:
+        ui.success("Google SSO: [highlight]Skip[/highlight]")
+        return {"google_sso_enabled": False}
+
+    client_id = questionary.text(
+        "Google OAuth Client ID:",
+        validate=lambda v: bool(v.strip()) or "Client ID is required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if client_id is None:
+        ui.abort()
+    client_id = client_id.strip()
+
+    client_secret = questionary.password(
+        "Google OAuth Client Secret:",
+        validate=lambda v: bool(v) or "Client Secret is required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if client_secret is None:
+        ui.abort()
+
+    organization = questionary.text(
+        "Organization short name (optional, leave blank to skip):",
+        default="",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if organization is None:
+        ui.abort()
+    organization = organization.strip()
+
+    ui.success("Google SSO: [highlight]Enabled[/highlight]")
+    return {
+        "google_sso_enabled": True,
+        "google_sso_client_id": client_id,
+        "google_sso_client_secret": client_secret,
+        "google_sso_organization": organization,
     }
 
 

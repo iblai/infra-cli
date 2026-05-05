@@ -1,0 +1,121 @@
+---
+# Optional Google SSO configuration. Runs only when `google_sso_enabled` is
+# true (CLI prompt during setup, or `--google-sso-client-id` for launch).
+#
+# Creates an `OAuth2ProviderConfig` row in the LMS for the python-social-auth
+# `google-oauth2` backend, bound to the `learn.<base_domain>` Site. The
+# python-social-auth flow then uses the row's Client ID / Secret to drive
+# `https://<lms_host>/auth/login/google-oauth2/` and the matching
+# `/auth/complete/google-oauth2/` callback.
+#
+# `OAuth2ProviderConfig` is a `ConfigurationModel` — every save is a new
+# revision, and `current(slug)` returns the latest active revision. We skip
+# the save when the latest revision already matches what the operator
+# supplied, so re-running this role is a no-op.
+#
+# The whole role is `when: google_sso_enabled | default(false) | bool` so
+# it stays a no-op when disabled. The shell task carries `no_log: true`
+# because the rendered heredoc embeds the OAuth Client Secret as a
+# Jinja-substituted string.
+
+- name: Wait for LMS container to be ready
+  become: false
+  shell: |
+    docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' ibl_prod_lms 2>/dev/null | grep -q true && \
+    docker exec ibl_prod_lms echo "LMS ready"
+  args:
+    executable: /bin/bash
+  register: lms_ready
+  until: lms_ready.rc == 0
+  retries: 30
+  delay: 10
+  when: google_sso_enabled | default(false) | bool
+
+- name: Configure Google SSO in LMS (OAuth2ProviderConfig)
+  become: false
+  shell: |
+    docker exec -i ibl_prod_lms python manage.py lms shell <<'PY'
+    from django.contrib.sites.models import Site
+    from common.djangoapps.third_party_auth.models import OAuth2ProviderConfig
+
+    BASE_DOMAIN = "{{ base_domain }}"
+    LMS_HOST = "learn." + BASE_DOMAIN
+    CLIENT_ID = "{{ google_sso_client_id }}"
+    CLIENT_SECRET = "{{ google_sso_client_secret }}"
+    ORG_SHORT_NAME = "{{ google_sso_organization }}"
+
+    # 1. Resolve the Site this provider config attaches to. LMS deployments
+    #    typically already have a `learn.<base_domain>` Site row; if not
+    #    (e.g. fresh provision before final_steps wired DNS), create one
+    #    so the provider has a valid FK target. The display name mirrors
+    #    what edX writes by default.
+    site, _ = Site.objects.get_or_create(
+        domain=LMS_HOST,
+        defaults={"name": LMS_HOST},
+    )
+
+    # 2. Optional Organization — only attach when the operator supplied a
+    #    short_name AND that organization already exists. Don't auto-create
+    #    organizations from this role; leave the FK null otherwise.
+    org = None
+    if ORG_SHORT_NAME:
+        try:
+            from organizations.models import Organization
+            org = Organization.objects.filter(short_name=ORG_SHORT_NAME).first()
+        except Exception:
+            org = None
+
+    # 3. Idempotency check. ConfigurationModel.current(slug) returns the
+    #    latest revision; if it already matches the operator's input we
+    #    skip the save so re-runs don't churn the audit log.
+    existing = OAuth2ProviderConfig.current("google-oauth2")
+    already_correct = bool(
+        existing
+        and existing.enabled
+        and existing.key == CLIENT_ID
+        and existing.secret == CLIENT_SECRET
+        and existing.site_id == site.id
+        and (existing.organization_id == (org.id if org else None))
+    )
+
+    if already_correct:
+        print("GOOGLE_SSO_RESULT:UNCHANGED pk=" + str(existing.pk))
+    else:
+        cfg = OAuth2ProviderConfig(
+            backend_name="google-oauth2",
+            slug="google-oauth2",
+            name="Google",
+            enabled=True,
+            visible=True,
+            site=site,
+            organization=org,
+            key=CLIENT_ID,
+            secret=CLIENT_SECRET,
+            icon_class="fa-sign-in",
+            secondary=False,
+            skip_hinted_login_dialog=True,
+            skip_registration_form=True,
+            skip_email_verification=True,
+            send_welcome_email=False,
+            send_to_registration_first=False,
+            sync_learner_profile_data=False,
+            enable_sso_id_verification=False,
+            disable_for_enterprise_sso=False,
+            max_session_length=None,
+            other_settings="{}",
+        )
+        cfg.save()
+        print("GOOGLE_SSO_RESULT:CREATED pk=" + str(cfg.pk))
+    print("GOOGLE_SSO_DONE")
+    PY
+  args:
+    executable: /bin/bash
+  register: google_sso_result
+  changed_when: "'CREATED' in (google_sso_result.stdout | default(''))"
+  no_log: true
+  when: google_sso_enabled | default(false) | bool
+
+- name: Confirm Google SSO configuration applied
+  ansible.builtin.debug:
+    msg: "Google SSO configured for learn.{{ base_domain }} (organization={{ google_sso_organization or '(none)' }})"
+  when: google_sso_enabled | default(false) | bool

@@ -31,6 +31,7 @@
     - admin_setup
     - data_seeding
     - stripe_config
+    - google_sso_config
 
   tasks:
     - name: Set up Playwright test platforms

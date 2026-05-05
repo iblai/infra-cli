@@ -40,6 +40,7 @@ ROLE_LABELS: dict[str, str] = {
     "admin_setup": "Admin & CORS Setup",
     "data_seeding": "Data Seeding",
     "stripe_config": "Stripe Config",
+    "google_sso_config": "Google SSO Config",
 }
 
 LAUNCH_ROLE_LABELS: dict[str, str] = {
@@ -51,6 +52,7 @@ LAUNCH_ROLE_LABELS: dict[str, str] = {
     "admin_setup": "Admin & CORS Setup",
     "data_seeding": "Data Seeding",
     "stripe_config": "Stripe Config",
+    "google_sso_config": "Google SSO Config",
 }
 
 SERVICE_UPDATE_ROLE_LABELS: dict[str, str] = {
@@ -490,6 +492,10 @@ class AnsibleRunner:
             "stripe_pricing_table_id_returning": self.config.stripe_pricing_table_id_returning,
             "stripe_webhook_secret": self.config.stripe_webhook_secret,
             "stripe_connect_webhook_secret": self.config.stripe_connect_webhook_secret,
+            "google_sso_enabled": self.config.google_sso_enabled,
+            "google_sso_client_id": self.config.google_sso_client_id,
+            "google_sso_client_secret": self.config.google_sso_client_secret,
+            "google_sso_organization": self.config.google_sso_organization,
             "openai_api_key": self.config.openai_api_key,
             "admin_username": self.config.admin_username,
             "admin_email": self.config.admin_email,

@@ -372,6 +372,15 @@ class SetupConfig(BaseModel):
     stripe_pricing_table_id_returning: str = ""
     stripe_webhook_secret: str = Field(default="", exclude=True)
     stripe_connect_webhook_secret: str = Field(default="", exclude=True)
+    # Google SSO — adds an `OAuth2ProviderConfig` row in the LMS for the
+    # `google-oauth2` python-social-auth backend. Disabled by default; the
+    # ansible role no-ops unless google_sso_enabled is true. Client secret
+    # is excluded from serialization so it never lands in state.json — it
+    # rides extra_vars to ansible at run time only.
+    google_sso_enabled: bool = False
+    google_sso_client_id: str = ""
+    google_sso_client_secret: str = Field(default="", exclude=True)
+    google_sso_organization: str = ""
 
 
 # ---------------------------------------------------------------------------

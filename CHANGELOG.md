@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0] — 2026-05-06
+
+### Added
+- **Optional Google SSO setup** via a new `google_sso_config` ansible role. When the operator opts in (Y/N prompt during `iblai infra setup`, or `--google-sso-client-id` for `iblai infra launch`), the role creates an `OAuth2ProviderConfig` row on the LMS for the python-social-auth `google-oauth2` backend, bound to `learn.<base_domain>`. Captures Client ID, Client Secret (no-echo password prompt), and an optional organization short_name. Secret is `Field(exclude=True)` on `SetupConfig` so it never lands in `state.json` and rides extra-vars to ansible at run time only. Idempotent — re-runs check the latest revision and skip the save when values match
+- **`SetupConfig.google_sso_*` fields** — `google_sso_enabled`, `google_sso_client_id`, `google_sso_client_secret`, `google_sso_organization`
+- **Launch CLI flags** — `--google-sso-client-id` (the trigger), `--google-sso-client-secret`, `--google-sso-organization`. Same env-var pattern as Stripe/SMTP
+
 ## [1.5.4] — 2026-05-05
 
 ### Changed

@@ -154,7 +154,33 @@ The setup wizard prompts for:
 - Super admin credentials (username, email, password)
 - GitHub PAT and AWS credentials for the VM
 
-### 4. Re-setup an existing environment
+### 4. Non-interactive provision + setup (`.env` file)
+
+Skip the wizards. Same Terraform + same 9-role Ansible playbook as the interactive flow, just driven from a `.env` file. **Single-server only** (multi/call still use the wizard).
+
+```bash
+# Provision (Terraform) — fresh single-server, no AMI required
+cp .env.provision.example .env.provision
+$EDITOR .env.provision                       # fill in PROJECT_NAME, DOMAIN, AWS creds, etc.
+iblai infra provision-env -f .env.provision
+
+# Bootstrap (Ansible) — runs against the project just provisioned
+cp .env.setup.example .env.setup
+$EDITOR .env.setup                           # fill in GIT_TOKEN, admin creds, etc.
+iblai infra setup-env <project-name> -f .env.setup
+```
+
+**Free-standing server (any cloud, no Terraform):** omit the project name and add `TARGET_HOST`, `SSH_PRIVATE_KEY_PATH`, `BASE_DOMAIN`, `PROJECT_NAME` to your `.env.setup`:
+
+```bash
+iblai infra setup-env -f .env.setup          # builds a synthetic ProjectState, runs Ansible
+```
+
+**`.env` schema:** `.env.provision.example` and `.env.setup.example` document every key with synthetic placeholders. Required vs. optional, defaults, and integration triggers (SMTP / Stripe / Google SSO / Microsoft SSO — each enabled when its trigger key is set) are inline.
+
+**Security note:** populated `.env` files are gitignored by default (`.gitignore` blocks `.env.*` except the `*.example` templates). Never commit a real `.env`. The CLI never persists secrets to `state.json` — they ride `--extra-vars` into Ansible at run time only.
+
+### 5. Re-setup an existing environment
 
 ```bash
 iblai infra resetup <name>
@@ -164,7 +190,7 @@ Re-configures a previously set up environment with a new domain and fresh secret
 
 Use this when you need to change the domain or rotate credentials on a running environment without reprovisioning the infrastructure.
 
-### 5. Launch from AMI
+### 6. Launch from AMI
 
 **Simplest way — using a `.env` file:**
 
@@ -227,7 +253,7 @@ iblai infra launch \
 
 See `iblai infra launch --help` for all optional flags (instance type, volume size, region, AI features, etc.).
 
-### 6. Service update (image updates, CI/CD)
+### 7. Service update (image updates, CI/CD)
 
 Update container images and restart services on an existing server or a freshly launched AMI. No infrastructure provisioning, no secret rotation.
 
@@ -257,7 +283,7 @@ iblai infra service-update \
 
 What it does: installs latest `iblai-prod-images` (new image versions) → edX stop/start → DM update → DM migrations → SPA restart → nginx restart.
 
-### 7. Manage environments
+### 8. Manage environments
 
 ```bash
 iblai infra list                # List all managed environments

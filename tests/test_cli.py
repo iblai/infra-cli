@@ -606,6 +606,25 @@ class TestProvisionEnvCommand:
 
 
 # ---------------------------------------------------------------------------
+# setup-env command
+# ---------------------------------------------------------------------------
+
+
+class TestSetupEnvCommand:
+    def test_help_shows_setup_env(self):
+        result = runner.invoke(app, ["infra", "setup-env", "--help"])
+        assert result.exit_code == 0
+        assert "--env-file" in result.stdout
+        assert "free-standing" in result.stdout.lower() or "freestand" in result.stdout.lower()
+
+    def test_missing_env_file_errors(self, tmp_path):
+        result = runner.invoke(
+            app, ["infra", "setup-env", "-f", str(tmp_path / "nope.env")]
+        )
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # service-update command
 # ---------------------------------------------------------------------------
 

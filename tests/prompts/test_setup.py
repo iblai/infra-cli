@@ -25,7 +25,7 @@ from iblai_infra.models import (
 )
 from iblai_infra.prompts.setup import (
     _resolve_ssh_key,
-    _validate_key_permissions,
+    validate_key_permissions,
 )
 
 
@@ -92,7 +92,7 @@ class TestResolveSSHKey:
 
 
 # ---------------------------------------------------------------------------
-# _validate_key_permissions — all permission states
+# validate_key_permissions — all permission states
 # ---------------------------------------------------------------------------
 
 
@@ -101,13 +101,13 @@ class TestValidateKeyPermissions:
         key = tmp_path / "key.pem"
         key.write_text("key")
         key.chmod(0o600)
-        assert _validate_key_permissions(key) is True
+        assert validate_key_permissions(key) is True
 
     def test_too_open_permissions_644(self, tmp_path):
         key = tmp_path / "key.pem"
         key.write_text("key")
         key.chmod(0o644)
-        result = _validate_key_permissions(key)
+        result = validate_key_permissions(key)
         assert result is True
         # Should have fixed permissions
         assert (key.stat().st_mode & 0o777) == 0o600
@@ -116,7 +116,7 @@ class TestValidateKeyPermissions:
         key = tmp_path / "key.pem"
         key.write_text("key")
         key.chmod(0o755)
-        result = _validate_key_permissions(key)
+        result = validate_key_permissions(key)
         assert result is True
         assert (key.stat().st_mode & 0o777) == 0o600
 
@@ -124,19 +124,19 @@ class TestValidateKeyPermissions:
         key = tmp_path / "key.pem"
         key.write_text("key")
         key.chmod(0o400)
-        result = _validate_key_permissions(key)
+        result = validate_key_permissions(key)
         assert result is True
 
     def test_nonexistent_file(self, tmp_path):
         key = tmp_path / "nonexistent.pem"
-        result = _validate_key_permissions(key)
+        result = validate_key_permissions(key)
         assert result is False
 
     def test_world_readable_777(self, tmp_path):
         key = tmp_path / "key.pem"
         key.write_text("key")
         key.chmod(0o777)
-        result = _validate_key_permissions(key)
+        result = validate_key_permissions(key)
         assert result is True
         assert (key.stat().st_mode & 0o777) == 0o600
 

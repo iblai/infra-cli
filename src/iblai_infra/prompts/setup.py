@@ -54,7 +54,7 @@ def _prompt_ssh_key_path() -> Path:
     return Path(key_path).expanduser()
 
 
-def _validate_key_permissions(path: Path) -> bool:
+def validate_key_permissions(path: Path) -> bool:
     """Check that the private key has restrictive permissions."""
     try:
         mode = path.stat().st_mode & 0o777
@@ -746,7 +746,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
         ssh_key = _prompt_ssh_key_path()
         ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
 
-    _validate_key_permissions(ssh_key)
+    validate_key_permissions(ssh_key)
 
     # ----- Step 2: Platform Configuration -----
     platform = _prompt_platform_config(
@@ -844,7 +844,7 @@ def prompt_resetup(state: ProjectState) -> SetupConfig:
         ssh_key = _prompt_ssh_key_path()
         ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
 
-    _validate_key_permissions(ssh_key)
+    validate_key_permissions(ssh_key)
 
     # ----- Step 2: Platform Configuration -----
     ui.step_header(2, RESETUP_STEPS, "Platform Configuration")
@@ -938,7 +938,7 @@ def prompt_bootstrap() -> tuple[SetupConfig, dict]:
 
     ssh_key = _prompt_ssh_key_path()
     ui.success(f"SSH key: [highlight]{ssh_key}[/highlight]")
-    _validate_key_permissions(ssh_key)
+    validate_key_permissions(ssh_key)
 
     ssh_user = questionary.text(
         "SSH user:",

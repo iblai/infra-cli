@@ -166,6 +166,17 @@ Sets `state.provider = "launch"` to distinguish from interactive provisioning.
 
 **Multi-server / call-server are explicitly rejected** with a hint pointing at the wizard — keeps the schema small and the failure mode obvious.
 
+### Setup-Env Command
+
+`iblai infra setup-env [<name>] -f .env` — non-interactive Ansible bootstrap from a `.env` file. Single-server only (multi/call rejected upstream). Two modes:
+
+- **Provisioned-name:** `setup-env kapsix -f .env` — loads `ProjectState`, derives `target_host` / `ssh_private_key_path` / `base_domain` / `aws_default_region` from it. `.env` only carries credentials, image tags, admin user, optional integrations.
+- **Free-standing:** `setup-env -f .env` (no name) — builds a synthetic `ProjectState` with `provider="bootstrap"` (matching `_run_setup_interactive`). `.env` must include `PROJECT_NAME`, `TARGET_HOST`, `SSH_PRIVATE_KEY_PATH`, `BASE_DOMAIN`.
+
+**Schema** (`.env.setup.example` is the source of truth). Always required: AWS keys, `GIT_TOKEN` (or `GIT_ACCESS_TOKEN`), `ADMIN_USERNAME`/`ADMIN_EMAIL`/`ADMIN_PASSWORD`. Free-standing additionally needs the four "where to deploy" fields. Optional integrations follow the same trigger pattern as `iblai infra launch` — SMTP enabled when `SMTP_HOST` set, Stripe when `STRIPE_SECRET_KEY` set, Google SSO when `GOOGLE_SSO_CLIENT_ID` set, Microsoft SSO when `MICROSOFT_SSO_CLIENT_ID` set.
+
+**Implementation:** `src/iblai_infra/env_setup.py` — `build_setup_config_from_env(env, *, state)` returns a `SetupConfig`; `build_bootstrap_state_from_env(env)` synthesises the ProjectState for free-standing mode. CLI wrapper at `cli.py::setup_env` shows `ui.private_access_notice()` as an informational banner (no confirmation), then runs `AnsibleRunner.preflight()` → `setup()` → `run()` with the default single-server playbook + `ROLE_LABELS`. Reuses `validate_key_permissions` (promoted from `_validate_key_permissions` in `prompts/setup.py`) to auto-fix SSH-key permissions to `0o600`.
+
 ### Service Update Command
 
 `iblai infra service-update` — updates container images and restarts services without infrastructure changes or secret rotation. Two modes:
@@ -396,7 +407,7 @@ Three Terraform topologies selected via `DeploymentType` enum:
 
 ## Testing
 
-- **507 tests**, all via pytest: `uv run pytest tests/ -v`
+- **543 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

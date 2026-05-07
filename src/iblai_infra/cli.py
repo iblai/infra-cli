@@ -229,6 +229,7 @@ def infra_root(ctx: typer.Context) -> None:
         ("iblai infra setup", "Set up the IBL platform on a server"),
         ("iblai infra resetup <name>", "Re-setup with new domain and secrets"),
         ("iblai infra provision-env", "Provision a fresh single-server from .env (no AMI)"),
+        ("iblai infra setup-env", "Bootstrap a server from .env (Ansible only)"),
         ("iblai infra launch-env", "Launch from .env file (interactive confirm)"),
         ("iblai infra launch --ami-id ...", "Launch from AMI (non-interactive, CI/CD)"),
         ("iblai infra service-update", "Update images and restart services"),
@@ -879,6 +880,142 @@ def provision_env(
         f"Run [brand]iblai infra setup {config.project_name}[/brand] to bootstrap the VM."
     )
     ui.newline()
+
+
+@infra_app.command(name="setup-env")
+def setup_env(
+    name: str = typer.Argument(
+        None,
+        help="Project name (from provision/provision-env). Omit for free-standing-server mode.",
+    ),
+    env_file: Path = typer.Option(
+        Path(".env"), "--env-file", "-f",
+        help="Path to .env file (default: .env in current directory)",
+    ),
+) -> None:
+    """Bootstrap an IBL platform on a server from a .env file.
+
+    Mirrors the interactive `setup` command but reads every answer from a
+    .env file. Single-server only — use the wizard for multi/call.
+
+    Two modes:
+
+    \b
+      iblai infra setup-env <name> -f .env   # uses ProjectState from a
+                                              # provisioned env to derive
+                                              # target/ssh-key/domain/region
+      iblai infra setup-env -f .env          # free-standing — reads
+                                              # TARGET_HOST, SSH_PRIVATE_KEY_PATH,
+                                              # BASE_DOMAIN, PROJECT_NAME from .env
+
+    Copy .env.setup.example to .env, fill in values, then run this.
+    """
+    if not env_file.exists():
+        ui.error(f"No .env file found at: {env_file}")
+        ui.newline()
+        ui.info("To get started:")
+        ui.muted("  1. Copy [brand].env.setup.example[/brand] to [brand].env[/brand]")
+        ui.muted("  2. Fill in your values")
+        ui.muted("  3. Run [brand]iblai infra setup-env[/brand]")
+        ui.newline()
+        raise typer.Exit(1)
+
+    from iblai_infra.ansible.runner import AnsibleRunner
+    from iblai_infra.env_setup import (
+        build_bootstrap_state_from_env,
+        build_setup_config_from_env,
+    )
+
+    # Show the same private-access notice the interactive flow uses,
+    # but as an informational banner — no confirmation. Operators
+    # running this in CI should already know what they need.
+    ui.private_access_notice()
+
+    env = load_env_file(env_file)
+
+    if name:
+        state = load_state(name)
+        if state is None:
+            ui.error(f"Project '{name}' not found.")
+            ui.muted("Run [brand]iblai infra list[/brand] to see available projects.")
+            raise typer.Exit(1)
+        if state.status != "created":
+            ui.error(
+                f"Project '{name}' has status '{state.status}', expected 'created'."
+            )
+            raise typer.Exit(1)
+        if not (state.outputs or {}).get("instance_public_ip"):
+            ui.error(f"Project '{name}' has no instance_public_ip in outputs.")
+            raise typer.Exit(1)
+        if state.setup_status == "completed":
+            # Heads-up — the wizard prompts at this point; non-interactive
+            # flows just warn and proceed (most ansible roles are idempotent).
+            ui.warning(
+                f"Project '{name}' setup already completed. Re-running will "
+                "re-apply the playbook (idempotent for most roles)."
+            )
+    else:
+        state = build_bootstrap_state_from_env(env)
+
+    setup_config = build_setup_config_from_env(env, state=state)
+
+    rows = [
+        ("Mode", "Provisioned" if name else "Free-standing"),
+        ("Project", state.name),
+        ("Target", setup_config.target_host),
+        ("SSH key", str(setup_config.ssh_private_key_path)),
+        ("Domain", setup_config.base_domain),
+        ("Region", setup_config.aws_default_region),
+        ("CLI ops tag", setup_config.cli_ops_release_tag),
+        ("edX version", setup_config.edx_version),
+        ("Admin", f"{setup_config.admin_username} ({setup_config.admin_email})"),
+        ("AWS key", mask(setup_config.aws_access_key_id)),
+        ("Git token", mask(setup_config.git_access_token)),
+    ]
+    integrations = []
+    if setup_config.smtp_enabled:
+        integrations.append("SMTP")
+    if setup_config.stripe_enabled:
+        integrations.append(f"Stripe ({setup_config.stripe_mode})")
+    if setup_config.google_sso_enabled:
+        integrations.append("Google SSO")
+    if setup_config.microsoft_sso_enabled:
+        integrations.append("Microsoft SSO")
+    rows.append(("Integrations", ", ".join(integrations) if integrations else "(none)"))
+    ui.summary_panel("Setup Configuration", rows)
+
+    ui.newline()
+    ui.console.print("  [brand]Running platform setup...[/brand]")
+
+    runner = AnsibleRunner(state, setup_config)
+    if not runner.preflight():
+        ui.newline()
+        ui.muted("Fix the issue above and re-run.")
+        raise typer.Exit(1)
+
+    runner.setup()
+
+    try:
+        success = runner.run()
+    except KeyboardInterrupt:
+        from datetime import datetime, timezone
+        ui.newline()
+        state.setup_status = "failed"
+        state.updated_at = datetime.now(timezone.utc)
+        save_state(state)
+        ui.muted(f"Setup interrupted. Re-run [brand]iblai infra setup-env {state.name} -f {env_file}[/brand]")
+        raise typer.Exit(1)
+
+    if success:
+        ui.newline()
+        ui.success(f"Platform bootstrapped on [highlight]{setup_config.target_host}[/highlight]")
+        key_flag = f"-i {setup_config.ssh_private_key_path} "
+        ui.info(f"SSH: [highlight]ssh {key_flag}{setup_config.ssh_user}@{setup_config.target_host}[/highlight]")
+        ui.newline()
+    else:
+        ui.newline()
+        ui.muted("Setup failed. See errors above.")
+        raise typer.Exit(1)
 
 
 def _run_launch(

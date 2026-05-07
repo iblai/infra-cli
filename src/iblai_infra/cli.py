@@ -947,6 +947,13 @@ def setup_env(
         if not (state.outputs or {}).get("instance_public_ip"):
             ui.error(f"Project '{name}' has no instance_public_ip in outputs.")
             raise typer.Exit(1)
+        if state.setup_status == "completed":
+            # Heads-up — the wizard prompts at this point; non-interactive
+            # flows just warn and proceed (most ansible roles are idempotent).
+            ui.warning(
+                f"Project '{name}' setup already completed. Re-running will "
+                "re-apply the playbook (idempotent for most roles)."
+            )
     else:
         state = build_bootstrap_state_from_env(env)
 

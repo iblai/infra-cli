@@ -284,6 +284,16 @@ class TestIntegrationTriggers:
         assert config.microsoft_sso_enabled is True
         assert config.microsoft_sso_tenant_id == "11111111-1111-1111-1111-111111111111"
 
+    def test_smtp_port_invalid_int_raises(self, project_state):
+        env = _required_env(SMTP_HOST="smtp.example.com", SMTP_PORT="abc")
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(env, state=project_state)
+
+    def test_smtp_port_custom_value(self, project_state):
+        env = _required_env(SMTP_HOST="smtp.example.com", SMTP_PORT="2525")
+        config = build_setup_config_from_env(env, state=project_state)
+        assert config.smtp_port == 2525
+
 
 # ---------------------------------------------------------------------------
 # Free-standing mode (build_bootstrap_state_from_env + build_setup_config)
@@ -346,3 +356,13 @@ class TestFreeStandingMode:
         state = build_bootstrap_state_from_env(env)
         config = build_setup_config_from_env(env, state=state)
         assert config.aws_default_region == "ap-south-1"
+
+    def test_freestanding_resumes_existing_bootstrap_state(self, ssh_key, project_state):
+        # Pretend an existing bootstrap state already exists for this name.
+        project_state.name = "freestand"
+        project_state.provider = "bootstrap"
+        project_state.setup_status = "completed"
+        with patch("iblai_infra.env_setup.load_state", return_value=project_state):
+            state = build_bootstrap_state_from_env(_freestanding_env(ssh_key))
+        assert state is project_state  # reused, not clobbered
+        assert state.setup_status == "completed"

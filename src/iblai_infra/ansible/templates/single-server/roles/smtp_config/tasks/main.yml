@@ -20,53 +20,53 @@
 
 - name: Write SMTP config to staging + runtime config.yml
   become: false
-  shell: |
-    python3 - <<'PY'
-    import yaml, os
-    SMTP_KEYS = {
-        "IBL_SMTP_HOST":               "{{ smtp_host }}",
-        "IBL_SMTP_USER":               "{{ smtp_username }}",
-        "IBL_SMTP_PASSWORD":           "{{ smtp_password }}",
-        "IBL_SMTP_SENDER_MAIL":        "{{ smtp_sender_email }}",
-        "IBL_SMTP_SYSTEM_HOST":        "{{ smtp_host }}",
-        "IBL_SMTP_SYSTEM_USER":        "{{ smtp_username }}",
-        "IBL_SMTP_SYSTEM_PASSWORD":    "{{ smtp_password }}",
-        "IBL_SMTP_SYSTEM_SENDER_MAIL": "{{ smtp_sender_email }}",
-        "IBL_SMTP_SYSTEM_PORT":        "{{ smtp_port }}",  # canonical stg1 form: quoted string
-        "IBL_SMTP_SYSTEM_TLS":         {{ smtp_use_tls | bool }},
-        "IBL_SMTP_SYSTEM_EMAIL_USE_SSL": {{ smtp_use_ssl | bool }},
-    }
-    paths = [
-        "/home/{{ ansible_user }}/.local/share/ibl/config.yml",
-        "{{ ibl_root }}/config.yml",
-    ]
-    written = []
-    for path in paths:
-        if not os.path.exists(path):
-            continue
-        with open(path) as f:
-            cfg = yaml.safe_load(f) or {}
-        for key, value in SMTP_KEYS.items():
-            cfg[key] = value
-        with open(path, "w") as f:
-            yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
-        written.append(path)
-    print("SMTP_CONFIG_WRITTEN:", ",".join(written) if written else "no config.yml found")
-    PY
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      python3 - <<'PY'
+      import yaml, os
+      SMTP_KEYS = {
+          "IBL_SMTP_HOST":               "{{ smtp_host }}",
+          "IBL_SMTP_USER":               "{{ smtp_username }}",
+          "IBL_SMTP_PASSWORD":           "{{ smtp_password }}",
+          "IBL_SMTP_SENDER_MAIL":        "{{ smtp_sender_email }}",
+          "IBL_SMTP_SYSTEM_HOST":        "{{ smtp_host }}",
+          "IBL_SMTP_SYSTEM_USER":        "{{ smtp_username }}",
+          "IBL_SMTP_SYSTEM_PASSWORD":    "{{ smtp_password }}",
+          "IBL_SMTP_SYSTEM_SENDER_MAIL": "{{ smtp_sender_email }}",
+          "IBL_SMTP_SYSTEM_PORT":        "{{ smtp_port }}",  # canonical stg1 form: quoted string
+          "IBL_SMTP_SYSTEM_TLS":         {{ smtp_use_tls | bool }},
+          "IBL_SMTP_SYSTEM_EMAIL_USE_SSL": {{ smtp_use_ssl | bool }},
+      }
+      paths = [
+          "/home/{{ ansible_user }}/.local/share/ibl/config.yml",
+          "{{ ibl_root }}/config.yml",
+      ]
+      written = []
+      for path in paths:
+          if not os.path.exists(path):
+              continue
+          with open(path) as f:
+              cfg = yaml.safe_load(f) or {}
+          for key, value in SMTP_KEYS.items():
+              cfg[key] = value
+          with open(path, "w") as f:
+              yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+          written.append(path)
+      print("SMTP_CONFIG_WRITTEN:", ",".join(written) if written else "no config.yml found")
+      PY
     executable: /bin/bash
   when: smtp_enabled | default(false) | bool
   no_log: true  # rendered shell body contains the SMTP password
 
 - name: Re-render templates so SMTP_* env vars land in compose files
   become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl config save
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:

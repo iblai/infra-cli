@@ -30,52 +30,52 @@
 
 - name: Create LMS browser superusers + student user for Playwright tests
   become: false
-  shell: |
-    docker exec -i ibl_prod_lms ./manage.py lms shell <<'PY'
-    from django.contrib.auth.models import User
-    from common.djangoapps.student.models import UserProfile
-    BROWSER_USERS = [
-        {"username": "iblaiuserchromenew",  "email": "iblaiuserchromenew@ibleducation.com",  "first": "iblaiuser", "last": "chrome"},
-        {"username": "iblaiuseredgenew",    "email": "iblaiuseredgenew@ibleducation.com",    "first": "iblaiuser", "last": "edge"},
-        {"username": "iblaiuserfirefoxnew", "email": "iblaiuserfirefoxnew@ibleducation.com", "first": "iblaiuser", "last": "firefox"},
-        {"username": "iblaiusersafarinew",  "email": "iblaiusersafarinew@ibleducation.com",  "first": "iblaiuser", "last": "safari"},
-    ]
-    STUDENT = {
-        "username": "{{ pw_env_prefix }}user_ibleducation_com",
-        "email":    "{{ pw_env_prefix }}user@ibleducation.com",
-        "first":    "{{ pw_env_prefix | capitalize }}User",
-        "last":     "Ibleducation Com",
-    }
-    PASSWORD = "{{ pw_test_password }}"
-    def ensure_user(cfg, *, is_super, is_staff):
-        u, created = User.objects.get_or_create(
-            username=cfg["username"],
-            defaults={"email": cfg["email"], "is_active": True,
-                      "is_staff": is_staff, "is_superuser": is_super,
-                      "first_name": cfg["first"], "last_name": cfg["last"]},
-        )
-        u.set_password(PASSWORD)
-        if u.email != cfg["email"]: u.email = cfg["email"]
-        if not u.is_active: u.is_active = True
-        if u.is_staff != is_staff: u.is_staff = is_staff
-        if u.is_superuser != is_super: u.is_superuser = is_super
-        if not u.first_name: u.first_name = cfg["first"]
-        if not u.last_name: u.last_name = cfg["last"]
-        u.save()
-        profile, _ = UserProfile.objects.get_or_create(
-            user=u,
-            defaults={"name": (cfg["first"] + " " + cfg["last"]).strip() or u.username},
-        )
-        if not profile.name or not profile.name.strip():
-            profile.name = (cfg["first"] + " " + cfg["last"]).strip() or u.username
-            profile.save()
-        print(f"PW_USER {'CREATED' if created else 'UPDATED'} {cfg['username']} super={is_super} staff={is_staff}")
-    for cfg in BROWSER_USERS:
-        ensure_user(cfg, is_super=True, is_staff=True)
-    ensure_user(STUDENT, is_super=False, is_staff=False)
-    print("PW_LMS_DONE")
-    PY
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i ibl_prod_lms ./manage.py lms shell <<'PY'
+      from django.contrib.auth.models import User
+      from common.djangoapps.student.models import UserProfile
+      BROWSER_USERS = [
+          {"username": "iblaiuserchromenew",  "email": "iblaiuserchromenew@ibleducation.com",  "first": "iblaiuser", "last": "chrome"},
+          {"username": "iblaiuseredgenew",    "email": "iblaiuseredgenew@ibleducation.com",    "first": "iblaiuser", "last": "edge"},
+          {"username": "iblaiuserfirefoxnew", "email": "iblaiuserfirefoxnew@ibleducation.com", "first": "iblaiuser", "last": "firefox"},
+          {"username": "iblaiusersafarinew",  "email": "iblaiusersafarinew@ibleducation.com",  "first": "iblaiuser", "last": "safari"},
+      ]
+      STUDENT = {
+          "username": "{{ pw_env_prefix }}user_ibleducation_com",
+          "email":    "{{ pw_env_prefix }}user@ibleducation.com",
+          "first":    "{{ pw_env_prefix | capitalize }}User",
+          "last":     "Ibleducation Com",
+      }
+      PASSWORD = "{{ pw_test_password }}"
+      def ensure_user(cfg, *, is_super, is_staff):
+          u, created = User.objects.get_or_create(
+              username=cfg["username"],
+              defaults={"email": cfg["email"], "is_active": True,
+                        "is_staff": is_staff, "is_superuser": is_super,
+                        "first_name": cfg["first"], "last_name": cfg["last"]},
+          )
+          u.set_password(PASSWORD)
+          if u.email != cfg["email"]: u.email = cfg["email"]
+          if not u.is_active: u.is_active = True
+          if u.is_staff != is_staff: u.is_staff = is_staff
+          if u.is_superuser != is_super: u.is_superuser = is_super
+          if not u.first_name: u.first_name = cfg["first"]
+          if not u.last_name: u.last_name = cfg["last"]
+          u.save()
+          profile, _ = UserProfile.objects.get_or_create(
+              user=u,
+              defaults={"name": (cfg["first"] + " " + cfg["last"]).strip() or u.username},
+          )
+          if not profile.name or not profile.name.strip():
+              profile.name = (cfg["first"] + " " + cfg["last"]).strip() or u.username
+              profile.save()
+          print(f"PW_USER {'CREATED' if created else 'UPDATED'} {cfg['username']} super={is_super} staff={is_staff}")
+      for cfg in BROWSER_USERS:
+          ensure_user(cfg, is_super=True, is_staff=True)
+      ensure_user(STUDENT, is_super=False, is_staff=False)
+      print("PW_LMS_DONE")
+      PY
     executable: /bin/bash
   register: pw_lms_result
   changed_when: "'PW_USER' in (pw_lms_result.stdout | default(''))"
@@ -87,13 +87,13 @@
 # didn't propagate without losing the platforms that were already created.
 - name: Sync Playwright test users from edX to DM
   become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl edx sync-with-manager --users
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl edx sync-with-manager --users
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
@@ -104,10 +104,10 @@
 
 - name: Copy Playwright platform setup script into DM container
   become: false
-  shell: |
-    docker cp "{{ role_path }}/files/setup_playwright_platforms.py" \
-      ibl_dm_pro_web:/code/dl_manager/utilities/setup_playwright_platforms.py
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      docker cp "{{ role_path }}/files/setup_playwright_platforms.py" \
+        ibl_dm_pro_web:/code/dl_manager/utilities/setup_playwright_platforms.py
     executable: /bin/bash
   changed_when: true
 
@@ -117,10 +117,10 @@
   # step changed when ANY platform was created. The follow-up debug task is
   # what actually surfaces the passwords to the operator.
   become: false
-  shell: |
-    docker exec -w /code/dl_manager ibl_dm_pro_web \
-      python utilities/setup_playwright_platforms.py --env-prefix "{{ pw_env_prefix }}"
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -w /code/dl_manager ibl_dm_pro_web \
+        python utilities/setup_playwright_platforms.py --env-prefix "{{ pw_env_prefix }}"
     executable: /bin/bash
   register: pw_dm_result
   changed_when: "'\"platforms_created\": []' not in (pw_dm_result.stdout | default(''))"

@@ -34,10 +34,10 @@
 
 - name: Wait for LMS container to be ready
   become: false
-  shell: |
-    docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' ibl_prod_lms 2>/dev/null | grep -q true && \
-    docker exec ibl_prod_lms echo "LMS ready"
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' ibl_prod_lms 2>/dev/null | grep -q true && \
+      docker exec ibl_prod_lms echo "LMS ready"
     executable: /bin/bash
   register: lms_ready
   until: lms_ready.rc == 0
@@ -47,45 +47,45 @@
 
 - name: Patch /ibl/config.yml with IBL_EDX_BASE_OAUTH_SSO_BACKEND block
   become: false
-  shell: |
-    python3 <<'PY'
-    import yaml
+  ansible.builtin.shell:
+    cmd: |
+      python3 <<'PY'
+      import yaml
 
-    PATH = "{{ ibl_root }}/config.yml"
-    PLATFORM_NAME = "{{ platform_name | default('main') }}"
-    TENANT_ID = "{{ microsoft_sso_tenant_id }}"
-    BASE_DOMAIN = "{{ base_domain }}"
-    BACKEND_NAME = PLATFORM_NAME + "-oauth2"
+      PATH = "{{ ibl_root }}/config.yml"
+      PLATFORM_NAME = "{{ platform_name | default('main') }}"
+      TENANT_ID = "{{ microsoft_sso_tenant_id }}"
+      BASE_DOMAIN = "{{ base_domain }}"
+      BACKEND_NAME = PLATFORM_NAME + "-oauth2"
 
-    desired = {
-        "ENABLE_EDX_BASE_OAUTH_SSO_BACKEND": True,
-        "IBL_OAUTH_SSO_NAME": BACKEND_NAME,
-        "TRACKED_PROVIDERS": [BACKEND_NAME],
-        "IBL_OAUTH_SSO_OIDC_ENDPOINT": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0",
-        "IBL_OAUTH_SSO_JWKS_URI": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0/.well-known",
-        "IBL_OAUTH_USE_IDP_USERNAME": False,
-        "IBL_OAUTH_SSO_JWT_DECODE_OPTIONS": {"verify_nbf": False},
-        "SOCIAL_AUTH_REDIRECT_IS_HTTPS": True,
-        "IBL_OAUTH_SSO_USE_IDTOKEN_FIELDS": True,
-        "LEARNER_PORTAL_URL_ROOT": "https://mentor." + BASE_DOMAIN,
-    }
+      desired = {
+          "ENABLE_EDX_BASE_OAUTH_SSO_BACKEND": True,
+          "IBL_OAUTH_SSO_NAME": BACKEND_NAME,
+          "TRACKED_PROVIDERS": [BACKEND_NAME],
+          "IBL_OAUTH_SSO_OIDC_ENDPOINT": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0",
+          "IBL_OAUTH_SSO_JWKS_URI": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0/.well-known",
+          "IBL_OAUTH_USE_IDP_USERNAME": False,
+          "IBL_OAUTH_SSO_JWT_DECODE_OPTIONS": {"verify_nbf": False},
+          "SOCIAL_AUTH_REDIRECT_IS_HTTPS": True,
+          "IBL_OAUTH_SSO_USE_IDTOKEN_FIELDS": True,
+          "LEARNER_PORTAL_URL_ROOT": "https://mentor." + BASE_DOMAIN,
+      }
 
-    try:
-        with open(PATH) as f:
-            cfg = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        cfg = {}
+      try:
+          with open(PATH) as f:
+              cfg = yaml.safe_load(f) or {}
+      except FileNotFoundError:
+          cfg = {}
 
-    current = cfg.get("IBL_EDX", {}).get("IBL_EDX_BASE_OAUTH_SSO_BACKEND")
-    if current == desired:
-        print("CONFIG_UNCHANGED")
-    else:
-        cfg.setdefault("IBL_EDX", {})["IBL_EDX_BASE_OAUTH_SSO_BACKEND"] = desired
-        with open(PATH, "w") as f:
-            yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
-        print("CONFIG_PATCHED")
-    PY
-  args:
+      current = cfg.get("IBL_EDX", {}).get("IBL_EDX_BASE_OAUTH_SSO_BACKEND")
+      if current == desired:
+          print("CONFIG_UNCHANGED")
+      else:
+          cfg.setdefault("IBL_EDX", {})["IBL_EDX_BASE_OAUTH_SSO_BACKEND"] = desired
+          with open(PATH, "w") as f:
+              yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+          print("CONFIG_PATCHED")
+      PY
     executable: /bin/bash
   register: config_patch
   changed_when: "'CONFIG_PATCHED' in (config_patch.stdout | default(''))"
@@ -94,13 +94,13 @@
 
 - name: Save platform config (regenerate LMS settings + compose files)
   become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl config save
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
@@ -112,13 +112,13 @@
 
 - name: Stop edX (so settings reload picks up new IBL_EDX_BASE_OAUTH_SSO_BACKEND)
   become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl edx stop
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl edx stop
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
@@ -130,13 +130,13 @@
 
 - name: Start edX
   become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl edx start -d
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl edx start -d
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
@@ -148,10 +148,10 @@
 
 - name: Wait for LMS container ready after edX restart
   become: false
-  shell: |
-    docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' ibl_prod_lms 2>/dev/null | grep -q true && \
-    docker exec ibl_prod_lms echo "LMS ready"
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' ibl_prod_lms 2>/dev/null | grep -q true && \
+      docker exec ibl_prod_lms echo "LMS ready"
     executable: /bin/bash
   register: lms_ready_post_restart
   until: lms_ready_post_restart.rc == 0
@@ -163,90 +163,90 @@
 
 - name: Configure Microsoft SSO in LMS (OAuth2ProviderConfig)
   become: false
-  shell: |
-    docker exec -i ibl_prod_lms python manage.py lms shell <<'PY'
-    import json
-    from django.contrib.sites.models import Site
-    from common.djangoapps.third_party_auth.models import OAuth2ProviderConfig
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i ibl_prod_lms python manage.py lms shell <<'PY'
+      import json
+      from django.contrib.sites.models import Site
+      from common.djangoapps.third_party_auth.models import OAuth2ProviderConfig
 
-    BASE_DOMAIN = "{{ base_domain }}"
-    LMS_HOST = "learn." + BASE_DOMAIN
-    PLATFORM_NAME = "{{ platform_name | default('main') }}"
-    BACKEND_NAME = PLATFORM_NAME + "-oauth2"
-    SLUG = "azuread-oauth2"
-    TENANT_ID = "{{ microsoft_sso_tenant_id }}"
-    CLIENT_ID = "{{ microsoft_sso_client_id }}"
-    CLIENT_SECRET = "{{ microsoft_sso_client_secret }}"
-    ORG_SHORT_NAME = "{{ microsoft_sso_organization }}"
+      BASE_DOMAIN = "{{ base_domain }}"
+      LMS_HOST = "learn." + BASE_DOMAIN
+      PLATFORM_NAME = "{{ platform_name | default('main') }}"
+      BACKEND_NAME = PLATFORM_NAME + "-oauth2"
+      SLUG = "azuread-oauth2"
+      TENANT_ID = "{{ microsoft_sso_tenant_id }}"
+      CLIENT_ID = "{{ microsoft_sso_client_id }}"
+      CLIENT_SECRET = "{{ microsoft_sso_client_secret }}"
+      ORG_SHORT_NAME = "{{ microsoft_sso_organization }}"
 
-    # 1. Resolve the Site this provider config attaches to.
-    site, _ = Site.objects.get_or_create(
-        domain=LMS_HOST,
-        defaults={"name": LMS_HOST},
-    )
+      # 1. Resolve the Site this provider config attaches to.
+      site, _ = Site.objects.get_or_create(
+          domain=LMS_HOST,
+          defaults={"name": LMS_HOST},
+      )
 
-    # 2. Optional Organization — only attach when supplied AND it exists.
-    #    Don't auto-create organizations from this role.
-    org = None
-    if ORG_SHORT_NAME:
-        try:
-            from organizations.models import Organization
-            org = Organization.objects.filter(short_name=ORG_SHORT_NAME).first()
-        except Exception:
-            org = None
+      # 2. Optional Organization — only attach when supplied AND it exists.
+      #    Don't auto-create organizations from this role.
+      org = None
+      if ORG_SHORT_NAME:
+          try:
+              from organizations.models import Organization
+              org = Organization.objects.filter(short_name=ORG_SHORT_NAME).first()
+          except Exception:
+              org = None
 
-    # 3. Build the Microsoft-specific other_settings JSON. The shape mirrors
-    #    what the IBL plugin's AzureADOAuth2 patch reads at login time.
-    other_settings = json.dumps({
-        "platform_key": PLATFORM_NAME,
-        "backend_uri": "/auth/login/" + BACKEND_NAME,
-        "logout_url": "https://login.microsoftonline.com/" + TENANT_ID + "/oauth2/v2.0/logout",
-    }, indent=4)
+      # 3. Build the Microsoft-specific other_settings JSON. The shape mirrors
+      #    what the IBL plugin's AzureADOAuth2 patch reads at login time.
+      other_settings = json.dumps({
+          "platform_key": PLATFORM_NAME,
+          "backend_uri": "/auth/login/" + BACKEND_NAME,
+          "logout_url": "https://login.microsoftonline.com/" + TENANT_ID + "/oauth2/v2.0/logout",
+      }, indent=4)
 
-    # 4. Idempotency check — same pattern as google_sso_config. ConfigurationModel
-    #    revisions are append-only; we skip the save when the latest matches.
-    existing = OAuth2ProviderConfig.current(SLUG)
-    already_correct = bool(
-        existing
-        and existing.enabled
-        and existing.key == CLIENT_ID
-        and existing.secret == CLIENT_SECRET
-        and existing.site_id == site.id
-        and existing.backend_name == BACKEND_NAME
-        and (existing.organization_id == (org.id if org else None))
-    )
+      # 4. Idempotency check — same pattern as google_sso_config. ConfigurationModel
+      #    revisions are append-only; we skip the save when the latest matches.
+      existing = OAuth2ProviderConfig.current(SLUG)
+      already_correct = bool(
+          existing
+          and existing.enabled
+          and existing.key == CLIENT_ID
+          and existing.secret == CLIENT_SECRET
+          and existing.site_id == site.id
+          and existing.backend_name == BACKEND_NAME
+          and (existing.organization_id == (org.id if org else None))
+      )
 
-    if already_correct:
-        print("MICROSOFT_SSO_RESULT:UNCHANGED pk=" + str(existing.pk))
-    else:
-        cfg = OAuth2ProviderConfig(
-            backend_name=BACKEND_NAME,
-            slug=SLUG,
-            name="Microsoft",
-            enabled=True,
-            visible=True,
-            site=site,
-            organization=org,
-            key=CLIENT_ID,
-            secret=CLIENT_SECRET,
-            icon_class="fa-sign-in",
-            secondary=False,
-            skip_hinted_login_dialog=True,
-            skip_registration_form=True,
-            skip_email_verification=True,
-            send_welcome_email=False,
-            send_to_registration_first=False,
-            sync_learner_profile_data=True,
-            enable_sso_id_verification=False,
-            disable_for_enterprise_sso=False,
-            max_session_length=None,
-            other_settings=other_settings,
-        )
-        cfg.save()
-        print("MICROSOFT_SSO_RESULT:CREATED pk=" + str(cfg.pk))
-    print("MICROSOFT_SSO_DONE")
-    PY
-  args:
+      if already_correct:
+          print("MICROSOFT_SSO_RESULT:UNCHANGED pk=" + str(existing.pk))
+      else:
+          cfg = OAuth2ProviderConfig(
+              backend_name=BACKEND_NAME,
+              slug=SLUG,
+              name="Microsoft",
+              enabled=True,
+              visible=True,
+              site=site,
+              organization=org,
+              key=CLIENT_ID,
+              secret=CLIENT_SECRET,
+              icon_class="fa-sign-in",
+              secondary=False,
+              skip_hinted_login_dialog=True,
+              skip_registration_form=True,
+              skip_email_verification=True,
+              send_welcome_email=False,
+              send_to_registration_first=False,
+              sync_learner_profile_data=True,
+              enable_sso_id_verification=False,
+              disable_for_enterprise_sso=False,
+              max_session_length=None,
+              other_settings=other_settings,
+          )
+          cfg.save()
+          print("MICROSOFT_SSO_RESULT:CREATED pk=" + str(cfg.pk))
+      print("MICROSOFT_SSO_DONE")
+      PY
     executable: /bin/bash
   register: microsoft_sso_result
   changed_when: "'CREATED' in (microsoft_sso_result.stdout | default(''))"

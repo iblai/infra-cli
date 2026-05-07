@@ -1,36 +1,36 @@
 ---
 - name: Seed DM flows
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_flows
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_flows
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
 
 - name: Seed LLM registry
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_llm_registry
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_llm_registry
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
 
 - name: Seed base mentors
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_base_mentors
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_base_mentors
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
 
 - name: Seed tools
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_tools
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_tools
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
@@ -42,14 +42,14 @@
 # `tutor local do importdemocourse` — it inherits IBL_ROOT-aware paths.
 - name: Seed Open edX demo course
   become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"
-    eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl tutor local do importdemocourse
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"
+      eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl tutor local do importdemocourse
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
@@ -64,40 +64,40 @@
 # touches rows where the field is empty.
 - name: Backfill empty first_name / last_name / UserProfile.name on LMS users
   become: false
-  shell: |
-    docker exec ibl_prod_lms ./manage.py lms shell -c "
-    from django.contrib.auth.models import User
-    from common.djangoapps.student.models import UserProfile
+  ansible.builtin.shell:
+    cmd: |
+      docker exec ibl_prod_lms ./manage.py lms shell -c "
+      from django.contrib.auth.models import User
+      from common.djangoapps.student.models import UserProfile
 
-    fixed_user = 0
-    fixed_profile = 0
-    for u in User.objects.all():
-        parts = u.username.replace('_', ' ').replace('-', ' ').replace('.', ' ').title().split()
-        first = parts[0] if parts else 'User'
-        last = ' '.join(parts[1:]) if len(parts) > 1 else u.username
-        changed = False
-        if not u.first_name:
-            u.first_name = first
-            changed = True
-        if not u.last_name:
-            u.last_name = last
-            changed = True
-        if changed:
-            u.save()
-            fixed_user += 1
-        profile, was_created = UserProfile.objects.get_or_create(
-            user=u,
-            defaults={'name': f'{u.first_name} {u.last_name}'.strip() or u.username},
-        )
-        if not profile.name or not profile.name.strip():
-            profile.name = f'{u.first_name} {u.last_name}'.strip() or u.username
-            profile.save()
-            fixed_profile += 1
-        elif was_created:
-            fixed_profile += 1
-    print(f'Backfilled: {fixed_user} auth_user rows, {fixed_profile} UserProfile rows')
-    "
-  args:
+      fixed_user = 0
+      fixed_profile = 0
+      for u in User.objects.all():
+          parts = u.username.replace('_', ' ').replace('-', ' ').replace('.', ' ').title().split()
+          first = parts[0] if parts else 'User'
+          last = ' '.join(parts[1:]) if len(parts) > 1 else u.username
+          changed = False
+          if not u.first_name:
+              u.first_name = first
+              changed = True
+          if not u.last_name:
+              u.last_name = last
+              changed = True
+          if changed:
+              u.save()
+              fixed_user += 1
+          profile, was_created = UserProfile.objects.get_or_create(
+              user=u,
+              defaults={'name': f'{u.first_name} {u.last_name}'.strip() or u.username},
+          )
+          if not profile.name or not profile.name.strip():
+              profile.name = f'{u.first_name} {u.last_name}'.strip() or u.username
+              profile.save()
+              fixed_profile += 1
+          elif was_created:
+              fixed_profile += 1
+      print(f'Backfilled: {fixed_user} auth_user rows, {fixed_profile} UserProfile rows')
+      "
     executable: /bin/bash
 
 # Magic-link login uses LMS email templates (subject + HTML body) for sending
@@ -111,13 +111,13 @@
 # safely idempotent across re-runs.
 - name: Seed magic-link login default email templates
   become: false
-  shell: |
-    docker exec -i ibl_prod_lms ./manage.py lms shell <<'PY'
-    from ibl_edx_magic_link_login.management.commands.setup_default_templates import Command
-    Command().handle(force=True)
-    print("MAGIC_LINK_TEMPLATES_DONE")
-    PY
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i ibl_prod_lms ./manage.py lms shell <<'PY'
+      from ibl_edx_magic_link_login.management.commands.setup_default_templates import Command
+      Command().handle(force=True)
+      print("MAGIC_LINK_TEMPLATES_DONE")
+      PY
     executable: /bin/bash
   register: magic_link_templates_result
   changed_when: "'MAGIC_LINK_TEMPLATES_DONE' in (magic_link_templates_result.stdout | default(''))"
@@ -128,18 +128,18 @@
 # the correct role/permission mappings for anything seeded after it.
 - name: Seed RBAC data
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_rbac_data
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_rbac_data
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
 
 - name: Setup TimescaleDB views
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && echo "y" | docker compose exec -T web ./manage.py setup_timescale_views --full-setup
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && echo "y" | docker compose exec -T web ./manage.py setup_timescale_views --full-setup
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
@@ -147,18 +147,18 @@
 
 - name: Recreate analytics views
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py refresh_analytics_views --recreate
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py refresh_analytics_views --recreate
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
 
 - name: Refresh analytics views
   become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py refresh_analytics_views
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py refresh_analytics_views
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"

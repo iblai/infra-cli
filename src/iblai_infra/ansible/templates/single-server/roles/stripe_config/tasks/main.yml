@@ -20,10 +20,10 @@
 
 - name: Wait for DM web container to be ready
   become: false
-  shell: |
-    docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' ibl_dm_pro_web 2>/dev/null | grep -q true && \
-    docker exec ibl_dm_pro_web echo "DM ready"
-  args:
+  ansible.builtin.shell:
+    cmd: |
+      docker inspect --format='{{ '{{' }}.State.Running{{ '}}' }}' ibl_dm_pro_web 2>/dev/null | grep -q true && \
+      docker exec ibl_dm_pro_web echo "DM ready"
     executable: /bin/bash
   register: dm_ready
   until: dm_ready.rc == 0
@@ -33,67 +33,67 @@
 
 - name: Configure Stripe billing in DM
   become: false
-  shell: |
-    docker exec -i ibl_dm_pro_web python manage.py shell <<'PY'
-    from core.models import Platform, GlobalConfiguration
-    from dl_iblai_services_app.models import StripeAPIKey
-    SECRET_KEY = "{{ stripe_secret_key }}"
-    PUB_KEY = "{{ stripe_pub_key }}"
-    PRICING_TABLE_ID = "{{ stripe_pricing_table_id }}"
-    PRICING_TABLE_ID_RETURNING = "{{ stripe_pricing_table_id_returning }}"
-    WEBHOOK_SECRET = "{{ stripe_webhook_secret }}"
-    CONNECT_WEBHOOK_SECRET = "{{ stripe_connect_webhook_secret }}"
-    STRIPE_MODE = "{{ stripe_mode }}"
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i ibl_dm_pro_web python manage.py shell <<'PY'
+      from core.models import Platform, GlobalConfiguration
+      from dl_iblai_services_app.models import StripeAPIKey
+      SECRET_KEY = "{{ stripe_secret_key }}"
+      PUB_KEY = "{{ stripe_pub_key }}"
+      PRICING_TABLE_ID = "{{ stripe_pricing_table_id }}"
+      PRICING_TABLE_ID_RETURNING = "{{ stripe_pricing_table_id_returning }}"
+      WEBHOOK_SECRET = "{{ stripe_webhook_secret }}"
+      CONNECT_WEBHOOK_SECRET = "{{ stripe_connect_webhook_secret }}"
+      STRIPE_MODE = "{{ stripe_mode }}"
 
-    # Build the pricing-table HTML embed when an ID is provided. Literal
-    # {client_reference_id} / {customer-email} braces are placeholders the
-    # SPA interpolates at render time — keep them as-is, not Python format()
-    # placeholders.
-    def build_pricing_js(table_id, pub_key, with_refs=True):
-        if not table_id or not pub_key:
-            return ""
-        if with_refs:
-            return (
-                '<script async src="https://js.stripe.com/v3/pricing-table.js"></script>\r\n'
-                '<stripe-pricing-table pricing-table-id="' + table_id + '"\r\n'
-                'publishable-key="' + pub_key + '"\r\n'
-                'client-reference-id={client_reference_id}\r\n'
-                'customer-email={customer-email}\r\n'
-                '>\r\n'
-                '</stripe-pricing-table>'
-            )
-        return (
-            '<script async src="https://js.stripe.com/v3/pricing-table.js"></script>\r\n'
-            '<stripe-pricing-table pricing-table-id="' + table_id + '"\r\n'
-            'publishable-key="' + pub_key + '">\r\n'
-            '</stripe-pricing-table>'
-        )
+      # Build the pricing-table HTML embed when an ID is provided. Literal
+      # {client_reference_id} / {customer-email} braces are placeholders the
+      # SPA interpolates at render time — keep them as-is, not Python format()
+      # placeholders.
+      def build_pricing_js(table_id, pub_key, with_refs=True):
+          if not table_id or not pub_key:
+              return ""
+          if with_refs:
+              return (
+                  '<script async src="https://js.stripe.com/v3/pricing-table.js"></script>\r\n'
+                  '<stripe-pricing-table pricing-table-id="' + table_id + '"\r\n'
+                  'publishable-key="' + pub_key + '"\r\n'
+                  'client-reference-id={client_reference_id}\r\n'
+                  'customer-email={customer-email}\r\n'
+                  '>\r\n'
+                  '</stripe-pricing-table>'
+              )
+          return (
+              '<script async src="https://js.stripe.com/v3/pricing-table.js"></script>\r\n'
+              '<stripe-pricing-table pricing-table-id="' + table_id + '"\r\n'
+              'publishable-key="' + pub_key + '">\r\n'
+              '</stripe-pricing-table>'
+          )
 
-    main_platform = Platform.objects.get(key="main")
-    sak, created = StripeAPIKey.objects.update_or_create(
-        platform=main_platform,
-        defaults={
-            "secret_key": SECRET_KEY,
-            "pub_key": PUB_KEY,
-            "pricing_table_id": PRICING_TABLE_ID,
-            "pricing_table_js": build_pricing_js(PRICING_TABLE_ID, PUB_KEY, with_refs=True),
-            "pricing_table_id_returning": PRICING_TABLE_ID_RETURNING,
-            "pricing_table_js_returning": build_pricing_js(PRICING_TABLE_ID_RETURNING, PUB_KEY, with_refs=False),
-            "webhook_secret": WEBHOOK_SECRET or None,
-            "connect_webhook_secret": CONNECT_WEBHOOK_SECRET or None,
-            "stripe_mode": STRIPE_MODE,
-        },
-    )
-    print("STRIPE_API_KEY_RESULT:" + ("CREATED" if created else "UPDATED") + " pk=" + str(sak.pk))
+      main_platform = Platform.objects.get(key="main")
+      sak, created = StripeAPIKey.objects.update_or_create(
+          platform=main_platform,
+          defaults={
+              "secret_key": SECRET_KEY,
+              "pub_key": PUB_KEY,
+              "pricing_table_id": PRICING_TABLE_ID,
+              "pricing_table_js": build_pricing_js(PRICING_TABLE_ID, PUB_KEY, with_refs=True),
+              "pricing_table_id_returning": PRICING_TABLE_ID_RETURNING,
+              "pricing_table_js_returning": build_pricing_js(PRICING_TABLE_ID_RETURNING, PUB_KEY, with_refs=False),
+              "webhook_secret": WEBHOOK_SECRET or None,
+              "connect_webhook_secret": CONNECT_WEBHOOK_SECRET or None,
+              "stripe_mode": STRIPE_MODE,
+          },
+      )
+      print("STRIPE_API_KEY_RESULT:" + ("CREATED" if created else "UPDATED") + " pk=" + str(sak.pk))
 
-    gc, gc_created = GlobalConfiguration.objects.update_or_create(
-        key="IBL_CURRENT_STRIPE_MODE",
-        defaults={"value": STRIPE_MODE},
-    )
-    print("GLOBAL_CONFIG_RESULT:" + ("CREATED" if gc_created else "UPDATED") + " pk=" + str(gc.pk) + " value=" + repr(gc.value))
-    print("STRIPE_CONFIG_DONE")
-    PY
-  args:
+      gc, gc_created = GlobalConfiguration.objects.update_or_create(
+          key="IBL_CURRENT_STRIPE_MODE",
+          defaults={"value": STRIPE_MODE},
+      )
+      print("GLOBAL_CONFIG_RESULT:" + ("CREATED" if gc_created else "UPDATED") + " pk=" + str(gc.pk) + " value=" + repr(gc.value))
+      print("STRIPE_CONFIG_DONE")
+      PY
     executable: /bin/bash
   register: stripe_result
   changed_when: "'CREATED' in (stripe_result.stdout | default('')) or 'UPDATED' in (stripe_result.stdout | default(''))"

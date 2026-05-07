@@ -40,7 +40,7 @@ from iblai_infra.models import (
     SSHKeyMethod,
 )
 from iblai_infra.prompts.setup import validate_key_permissions
-from iblai_infra.terraform.state import WORKSPACE_ROOT, save_state
+from iblai_infra.terraform.state import WORKSPACE_ROOT, load_state, save_state
 
 
 ALWAYS_REQUIRED: tuple[str, ...] = (
@@ -106,6 +106,17 @@ def build_bootstrap_state_from_env(env: dict[str, str]) -> ProjectState:
             f"PROJECT_NAME={project_name!r} is invalid.",
             hint="Use lowercase a-z, 0-9, hyphen, underscore (≤ 32 chars).",
         )
+
+    # Idempotency: if a bootstrap state already exists for this project,
+    # reuse it rather than clobbering setup_status / created_at. Mirrors
+    # `_run_setup_interactive` (cli.py ~line 1850).
+    existing = load_state(project_name)
+    if existing is not None and existing.provider == "bootstrap":
+        ui.info(
+            f"Resuming existing bootstrap state for [highlight]{project_name}[/highlight] "
+            f"(setup_status={existing.setup_status or 'pending'})"
+        )
+        return existing
 
     ssh_path = Path(env["SSH_PRIVATE_KEY_PATH"]).expanduser()
     if not ssh_path.exists():
@@ -225,6 +236,11 @@ def build_setup_config_from_env(
     # SMTP block — disabled unless host is set.
     smtp_host = (env.get("SMTP_HOST") or "").strip()
     smtp_enabled = bool(smtp_host)
+    smtp_port_raw = (env.get("SMTP_PORT") or "587").strip() or "587"
+    try:
+        smtp_port = int(smtp_port_raw)
+    except ValueError:
+        raise _fail(f"SMTP_PORT={smtp_port_raw!r} is not an integer.")
 
     # Stripe block — disabled unless secret key is set.
     stripe_secret_key = (env.get("STRIPE_SECRET_KEY") or "").strip()
@@ -263,7 +279,7 @@ def build_setup_config_from_env(
         # SMTP
         smtp_enabled=smtp_enabled,
         smtp_host=smtp_host,
-        smtp_port=int((env.get("SMTP_PORT") or "587").strip() or "587"),
+        smtp_port=smtp_port,
         smtp_username=(env.get("SMTP_USERNAME") or "").strip(),
         smtp_password=(env.get("SMTP_PASSWORD") or ""),
         smtp_sender_email=(env.get("SMTP_SENDER_EMAIL") or "").strip(),

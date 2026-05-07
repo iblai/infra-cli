@@ -80,7 +80,7 @@ def run_provision_wizard(show_banner: bool = True) -> None:
     runner.setup()
 
     # Show workspace directory with files
-    _show_workspace(runner.ws)
+    show_workspace(runner.ws)
 
     runner.init()
     add_count = runner.plan()
@@ -92,13 +92,13 @@ def run_provision_wizard(show_banner: bool = True) -> None:
     outputs = runner.apply()
 
     # ----- Show results -----
-    _show_results(config, outputs, runner.ws)
+    show_results(config, outputs, runner.ws)
 
     # ----- Offer setup -----
     _offer_setup(config, runner.state)
 
 
-def _show_workspace(ws: Path) -> None:
+def show_workspace(ws: Path) -> None:
     """Show the user where Terraform files live."""
     ui.newline()
 
@@ -122,7 +122,7 @@ def _show_workspace(ws: Path) -> None:
     ui.summary_panel("Terraform Workspace", rows)
 
 
-def _show_results(config: InfraConfig, outputs: dict, ws: Path) -> None:
+def show_results(config: InfraConfig, outputs: dict, ws: Path) -> None:
     """Display the final infrastructure results."""
     rows: list[tuple[str, str]] = []
 

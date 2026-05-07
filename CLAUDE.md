@@ -156,6 +156,16 @@ Accepts `--domain <domain>` or `--ingress <name>` (resolved from the ingress reg
 
 Sets `state.provider = "launch"` to distinguish from interactive provisioning.
 
+### Provision-Env Command
+
+`iblai infra provision-env -f .env` — non-interactive counterpart to the `provision` wizard. Single-server only, no AMI required. Reads every answer from a `.env` file and runs Terraform end-to-end (no Ansible — operator follows up with `iblai infra setup <name>`).
+
+**Schema** (`.env.provision.example` is the source of truth). Required: `AWS_ACCESS_KEY_ID`+`AWS_SECRET_ACCESS_KEY` (or `AWS_PROFILE`), `PROJECT_NAME`, `DOMAIN`, `VPN_IP` (`auto` → uses `detect_current_ip()`). Optional with sane defaults: `AWS_DEFAULT_REGION`, `ENVIRONMENT` (dev/staging/prod), `INSTANCE_TYPE`, `VOLUME_SIZE`/`VOLUME_TYPE`, `VPC_CIDR`, `SSH_KEY_METHOD` (`generate`/`existing_file`/`aws_keypair`), `CERT_METHOD` (`auto`/`acm`/`upload`/`none`), `HOSTED_ZONE_ID`, `AUTO_DELETE_CONFLICTING_DNS` (default `true`).
+
+**Implementation:** `src/iblai_infra/env_provision.py::build_infra_config_from_env(env, *, auto_delete_cnames)` — pure builder that validates, resolves AWS creds via STS, runs `find_conflicting_records` + `delete_route53_records` for CNAME conflicts when ACM is in use, then returns an `InfraConfig`. The CLI wrapper at `cli.py::provision_env` plumbs that into `TerraformRunner`. Shared helpers (`load_env_file`, `mask`, `parse_bool`) live in `src/iblai_infra/env_utils.py`. Sets `state.provider = "provision-env"`.
+
+**Multi-server / call-server are explicitly rejected** with a hint pointing at the wizard — keeps the schema small and the failure mode obvious.
+
 ### Service Update Command
 
 `iblai infra service-update` — updates container images and restarts services without infrastructure changes or secret rotation. Two modes:
@@ -386,7 +396,7 @@ Three Terraform topologies selected via `DeploymentType` enum:
 
 ## Testing
 
-- **442 tests**, all via pytest: `uv run pytest tests/ -v`
+- **507 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

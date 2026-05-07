@@ -12,6 +12,7 @@ import typer
 from rich.table import Table
 
 from iblai_infra import __version__, ui
+from iblai_infra.env_utils import load_env_file, mask
 from iblai_infra.terraform.state import (
     add_ingress,
     claim_ingress,
@@ -227,6 +228,7 @@ def infra_root(ctx: typer.Context) -> None:
         ("iblai infra retry <name>", "Retry a failed provisioning run"),
         ("iblai infra setup", "Set up the IBL platform on a server"),
         ("iblai infra resetup <name>", "Re-setup with new domain and secrets"),
+        ("iblai infra provision-env", "Provision a fresh single-server from .env (no AMI)"),
         ("iblai infra launch-env", "Launch from .env file (interactive confirm)"),
         ("iblai infra launch --ami-id ...", "Launch from AMI (non-interactive, CI/CD)"),
         ("iblai infra service-update", "Update images and restart services"),
@@ -468,8 +470,8 @@ def _run_retry(name: str) -> None:
 
     outputs = runner.apply()
 
-    from iblai_infra.app import _show_results, _offer_setup
-    _show_results(state.config, outputs, ws)
+    from iblai_infra.app import show_results, _offer_setup
+    show_results(state.config, outputs, ws)
     _offer_setup(state.config, runner.state)
 
 
@@ -637,29 +639,6 @@ def launch(
     )
 
 
-def _load_env_file(path: Path) -> dict[str, str]:
-    """Parse a .env file into a dict. Skips comments and blank lines."""
-    env = {}
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        # Strip optional quotes
-        value = value.strip().strip('"').strip("'")
-        env[key.strip()] = value
-    return env
-
-
-def _mask(value: str) -> str:
-    """Mask a secret value for display."""
-    if len(value) <= 8:
-        return "****"
-    return value[:4] + "****" + value[-4:]
-
-
 @infra_app.command(name="launch-env")
 def launch_env(
     env_file: Path = typer.Option(
@@ -680,7 +659,7 @@ def launch_env(
         ui.newline()
         raise typer.Exit(1)
 
-    env = _load_env_file(env_file)
+    env = load_env_file(env_file)
 
     # Required variables
     required = {
@@ -771,7 +750,7 @@ def launch_env(
         ("Environment", environment),
         ("VPN IP", vpn_ip),
         ("SSH key", str(ssh_key)),
-        ("AWS key", _mask(aws_key_id)),
+        ("AWS key", mask(aws_key_id)),
         ("Admin", f"{admin_username} ({admin_email})"),
         ("AI features", "Enabled" if enable_ai else "Disabled"),
     ]
@@ -824,6 +803,82 @@ def launch_env(
         microsoft_sso_tenant_id=microsoft_sso_tenant_id,
         microsoft_sso_organization=microsoft_sso_organization,
     )
+
+
+@infra_app.command(name="provision-env")
+def provision_env(
+    env_file: Path = typer.Option(
+        Path(".env"), "--env-file", "-f",
+        help="Path to .env file (default: .env in current directory)",
+    ),
+) -> None:
+    """Provision a fresh single-server from a .env file (Terraform only).
+
+    Mirrors the interactive `provision` wizard but reads every answer from
+    a .env file. Single-server only — multi-server / call-server still
+    require the wizard. After this completes, run
+    [brand]iblai infra setup <name>[/brand] to bootstrap the VM.
+
+    Copy .env.provision.example to .env, fill in values, then run this.
+    """
+    if not env_file.exists():
+        ui.error(f"No .env file found at: {env_file}")
+        ui.newline()
+        ui.info("To get started:")
+        ui.muted("  1. Copy [brand].env.provision.example[/brand] to [brand].env[/brand]")
+        ui.muted("  2. Fill in your values")
+        ui.muted("  3. Run [brand]iblai infra provision-env[/brand]")
+        ui.newline()
+        raise typer.Exit(1)
+
+    from iblai_infra.app import show_results, show_workspace
+    from iblai_infra.env_provision import build_infra_config_from_env
+    from iblai_infra.terraform.runner import TerraformRunner
+
+    env = load_env_file(env_file)
+    config = build_infra_config_from_env(env)
+
+    # Summary panel — mirrors launch-env's shape, masks the AWS key.
+    rows = [
+        ("Project", f"{config.project_name}-{config.environment.value}"),
+        ("Region", config.credentials.region),
+        ("Instance", config.compute.instance_type),
+        ("Volume", f"{config.compute.volume_size} GB ({config.compute.volume_type})"),
+        ("VPC CIDR", config.network.vpc_cidr),
+        ("VPN IP", f"{config.network.vpn_ip}/32"),
+        ("Domain", config.dns.base_domain),
+        ("Cert", config.certificates.method.value),
+        ("SSH", f"{config.ssh.method.value} ({config.ssh.key_name})"),
+    ]
+    if config.credentials.access_key_id:
+        rows.append(("AWS key", mask(config.credentials.access_key_id)))
+    elif config.credentials.profile:
+        rows.append(("AWS profile", config.credentials.profile))
+    ui.summary_panel("Provision Configuration", rows)
+
+    ui.newline()
+    ui.console.print("  [brand]Provisioning infrastructure...[/brand]")
+
+    runner = TerraformRunner(config)
+    # Mark provider so future `iblai infra list` / destroy can tell this
+    # apart from interactive (`aws`) and AMI (`launch`) provisions.
+    runner.state.provider = "provision-env"
+    runner.setup()
+    show_workspace(runner.ws)
+    runner.init()
+
+    add_count = runner.plan()
+    if add_count == 0:
+        ui.warning("No resources to create. Infrastructure may already exist.")
+        return
+
+    outputs = runner.apply()
+    show_results(config, outputs, runner.ws)
+
+    ui.muted(
+        f"Run [brand]iblai infra setup {config.project_name}[/brand] to bootstrap the VM."
+    )
+    ui.newline()
 
 
 def _run_launch(

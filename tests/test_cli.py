@@ -587,6 +587,25 @@ class TestLaunchCommand:
 
 
 # ---------------------------------------------------------------------------
+# provision-env command
+# ---------------------------------------------------------------------------
+
+
+class TestProvisionEnvCommand:
+    def test_help_shows_provision_env(self):
+        result = runner.invoke(app, ["infra", "provision-env", "--help"])
+        assert result.exit_code == 0
+        assert "--env-file" in result.stdout
+        assert ".env" in result.stdout
+
+    def test_missing_env_file_errors(self, tmp_path):
+        result = runner.invoke(
+            app, ["infra", "provision-env", "-f", str(tmp_path / "nope.env")]
+        )
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # service-update command
 # ---------------------------------------------------------------------------
 

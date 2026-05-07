@@ -11,8 +11,9 @@ wheels/
 
 # Environment files (never commit real credentials)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.provision.example
 
 # Terraform
 .terraform/

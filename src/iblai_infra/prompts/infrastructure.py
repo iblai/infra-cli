@@ -475,7 +475,7 @@ def prompt_network_and_ssh(
     private_key_path = None
 
     if ssh_method == SSHKeyMethod.GENERATE:
-        private_key_path, public_key = _generate_keypair(key_name)
+        private_key_path, public_key = generate_keypair(key_name)
         ui.success(f"Key pair generated: [highlight]{private_key_path}[/highlight]")
 
     elif ssh_method == SSHKeyMethod.EXISTING_FILE:
@@ -553,7 +553,7 @@ def _validate_cidr(value: str) -> bool | str:
         return "Enter a valid CIDR block (e.g. 10.0.0.0/16)"
 
 
-def _generate_keypair(name: str) -> tuple[Path, str]:
+def generate_keypair(name: str) -> tuple[Path, str]:
     """Generate an Ed25519 SSH key pair and return (private_path, public_key_str)."""
     keys_dir = WORKSPACE_DIR / "keys"
     keys_dir.mkdir(parents=True, exist_ok=True)

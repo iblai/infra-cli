@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from iblai_infra.app import _show_results, _show_workspace, _offer_setup
+from iblai_infra.app import show_results, show_workspace, _offer_setup
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
@@ -43,7 +43,7 @@ def _make_config(**kwargs) -> InfraConfig:
 
 
 # ---------------------------------------------------------------------------
-# _show_workspace
+# show_workspace
 # ---------------------------------------------------------------------------
 
 
@@ -51,28 +51,28 @@ class TestShowWorkspace:
     def test_existing_workspace(self, tmp_path):
         (tmp_path / "main.tf").write_text("resource {}")
         (tmp_path / "terraform.tfvars").write_text("foo = bar")
-        _show_workspace(tmp_path)  # Should not raise
+        show_workspace(tmp_path)  # Should not raise
 
     def test_empty_workspace(self, tmp_path):
         ws = tmp_path / "empty"
         ws.mkdir()
-        _show_workspace(ws)  # No files, returns early
+        show_workspace(ws)  # No files, returns early
 
     def test_nonexistent_workspace(self, tmp_path):
         ws = tmp_path / "nonexistent"
-        _show_workspace(ws)  # Should not raise
+        show_workspace(ws)  # Should not raise
 
     def test_file_sizes_bytes(self, tmp_path):
         (tmp_path / "small.tf").write_text("x")
-        _show_workspace(tmp_path)
+        show_workspace(tmp_path)
 
     def test_file_sizes_kb(self, tmp_path):
         (tmp_path / "large.tf").write_text("x" * 2048)
-        _show_workspace(tmp_path)
+        show_workspace(tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# _show_results — all output field combinations
+# show_results — all output field combinations
 # ---------------------------------------------------------------------------
 
 
@@ -91,16 +91,16 @@ class TestShowResults:
             "s3_bucket_static": "test-static",
             "application_url": "https://example.com",
         }
-        _show_results(config, outputs, tmp_path)
+        show_results(config, outputs, tmp_path)
 
     def test_minimal_outputs(self, tmp_path):
         config = _make_config()
         outputs = {"instance_public_ip": "1.2.3.4"}
-        _show_results(config, outputs, tmp_path)
+        show_results(config, outputs, tmp_path)
 
     def test_empty_outputs(self, tmp_path):
         config = _make_config()
-        _show_results(config, {}, tmp_path)
+        show_results(config, {}, tmp_path)
 
     def test_ssh_command_in_outputs(self, tmp_path):
         config = _make_config()
@@ -108,7 +108,7 @@ class TestShowResults:
             "instance_public_ip": "1.2.3.4",
             "ssh_command": "ssh -i key.pem ubuntu@1.2.3.4",
         }
-        _show_results(config, outputs, tmp_path)
+        show_results(config, outputs, tmp_path)
 
     def test_ssh_command_generated_with_key(self, tmp_path):
         config = _make_config(ssh=SSHConfig(
@@ -116,12 +116,12 @@ class TestShowResults:
             private_key_path=Path("/home/user/.ssh/key.pem"),
         ))
         outputs = {"instance_public_ip": "1.2.3.4"}
-        _show_results(config, outputs, tmp_path)
+        show_results(config, outputs, tmp_path)
 
     def test_ssh_command_generated_without_key(self, tmp_path):
         config = _make_config()
         outputs = {"instance_public_ip": "1.2.3.4"}
-        _show_results(config, outputs, tmp_path)
+        show_results(config, outputs, tmp_path)
 
 
 # ---------------------------------------------------------------------------

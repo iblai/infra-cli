@@ -208,6 +208,13 @@
   retries: 2
   delay: 5
 
+# Budget: 30 × 15s = 450s (7.5 min). SPA images don't ship with
+# node_modules baked in — the container runs `pnpm install` on first
+# boot (~80–120s observed) before Next.js can start. Combined with
+# `docker compose pull` and image-extraction overhead, cold start can
+# easily exceed the older 10-retry / 150s budget on a slower instance
+# or marginal network. 450s comfortably covers that without making
+# real failures take an unreasonable amount of time to surface.
 - name: Wait for Auth SPA to be ready
   become: false
   shell: |
@@ -216,7 +223,7 @@
     executable: /bin/bash
   register: auth_health
   until: auth_health.rc == 0
-  retries: 10
+  retries: 30
   delay: 15
 
 - name: Launch Mentor SPA
@@ -232,6 +239,9 @@
   delay: 5
 
 - name: Wait for Mentor SPA to be ready
+  # Same 450s cold-start budget rationale as the Auth SPA wait above —
+  # node_modules install on first boot pushes ready-time past the older
+  # 150s budget on slower hosts.
   become: false
   shell: |
     curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null | grep -qE '^(200|301|302)$'
@@ -239,7 +249,7 @@
     executable: /bin/bash
   register: mentor_health
   until: mentor_health.rc == 0
-  retries: 10
+  retries: 30
   delay: 15
 
 - name: Launch Skills SPA
@@ -255,6 +265,9 @@
   delay: 5
 
 - name: Wait for Skills SPA to be ready
+  # Same 450s cold-start budget rationale as the Auth SPA wait above —
+  # node_modules install on first boot pushes ready-time past the older
+  # 150s budget on slower hosts.
   become: false
   shell: |
     curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/ 2>/dev/null | grep -qE '^(200|301|302)$'
@@ -262,7 +275,7 @@
     executable: /bin/bash
   register: skills_health
   until: skills_health.rc == 0
-  retries: 10
+  retries: 30
   delay: 15
 
 - name: Save config and reload proxy after SPA launch

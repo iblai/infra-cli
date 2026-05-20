@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.10.1] — 2026-05-20
+
+### Fixed
+- **SPA-ready wait budget bumped from `10×15s` (150s) to `30×15s` (450s)** across all six SPA wait tasks (Auth / Mentor / Skills in both `ibl_spa` — initial setup — and `ibl_launch_services` — AMI launch / launch-env). Root cause: the SPA container images do NOT ship with `node_modules` baked in, so `pnpm install` runs inside the container on first boot (~80–120s observed in the field), then Next.js starts. Combined with `docker compose pull` + image-extraction overhead, cold-start can comfortably exceed the older 150s budget on a slower instance or marginal network — the wait task gives up, the playbook bails, but the SPA finishes installing seconds later and serves `200`. False-negative failure. The new 450s budget covers the worst-case cold-start with comfortable headroom without making real failures take an unreasonable amount of time to surface. Each task gets an inline comment explaining the budget so a future maintainer doesn't shrink it without re-tracing this. A future image-level prebake of `node_modules` in `iblai-prod-images` would make this faster end-to-end, but the ansible wait is now robust to the current image shape regardless.
+
 ## [1.10.0] — 2026-05-20
 
 ### Added

@@ -182,6 +182,10 @@
   delay: 5
 
 - name: Wait for Auth SPA to be ready
+  # 30 × 15s = 450s. The SPA image runs `pnpm install` on first boot
+  # before Next.js starts, which can push cold-start past the older
+  # 150s budget on slower hosts. See ibl_spa role for the long-form
+  # comment.
   become: false
   shell: |
     curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ 2>/dev/null | grep -qE '^(200|301|302)$'
@@ -189,7 +193,7 @@
     executable: /bin/bash
   register: auth_health
   until: auth_health.rc == 0
-  retries: 10
+  retries: 30
   delay: 15
 
 - name: Restart Mentor SPA
@@ -204,6 +208,7 @@
   delay: 5
 
 - name: Wait for Mentor SPA to be ready
+  # 450s cold-start budget — same rationale as the Auth SPA wait above.
   become: false
   shell: |
     curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null | grep -qE '^(200|301|302)$'
@@ -211,7 +216,7 @@
     executable: /bin/bash
   register: mentor_health
   until: mentor_health.rc == 0
-  retries: 10
+  retries: 30
   delay: 15
 
 - name: Restart Skills SPA
@@ -226,6 +231,7 @@
   delay: 5
 
 - name: Wait for Skills SPA to be ready
+  # 450s cold-start budget — same rationale as the Auth SPA wait above.
   become: false
   shell: |
     curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/ 2>/dev/null | grep -qE '^(200|301|302)$'
@@ -233,7 +239,7 @@
     executable: /bin/bash
   register: skills_health
   until: skills_health.rc == 0
-  retries: 10
+  retries: 30
   delay: 15
 
 # ---------------------------------------------------------------------------

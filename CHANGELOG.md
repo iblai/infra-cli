@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.10.2] — 2026-05-20
+
+### Added
+- **`docs/develoment.md`** — developer guide for testing in-progress iblai apps against a local `ibl edx` (Tutor) stack via a `docker-compose.override.yml` at `/ibl/app/ibl-edx/ibl-edx-pro/env/local/`. Covers: cloning the app branch into `~/github/<app-name>`, the **Sumac** mount path (`/openedx/edx-platform/requirements/<app>/src/<pkg>`, unversioned) vs. the **Olive** mount path (`/openedx/requirements/<app>-<version>/src/<pkg>`, version-pinned — discoverable via `ibl tutor local run lms bash` + `pip list | grep <app>`), the first-time apply (`ibl edx stop && ibl edx start -d`) vs. iteration loop (`ibl tutor local restart lms cms`), and selective mounting across `lms` / `cms` / `lms-worker` / `cms-worker`. Resolves [#1770](https://github.com/iblai/iblai-infra-cli/issues/1770).
+
 ## [1.10.1] — 2026-05-20
 
 ### Fixed

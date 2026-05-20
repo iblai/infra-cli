@@ -2,8 +2,6 @@
 
 This guide documents how to develop and test an iblai app (e.g. `ibl-edx-magic-link-login-app`) against a locally running `ibl edx` (Tutor) deployment by **bind-mounting your working tree into the LMS/CMS containers**. Code changes on the host are reflected inside the running containers without rebuilding the image.
 
-> Tracks issue [#1770](https://github.com/iblai/iblai-infra-cli/issues/1770).
-
 ## 1. Layout the host directory
 
 Keep all in-development app sources in a single, predictable directory on the host so override paths are stable across machines:
@@ -45,6 +43,16 @@ Tutor reads a per-environment `docker-compose.override.yml` from:
 Create the file there (or edit it if it already exists). The override is merged on top of Tutor's generated `docker-compose.yml`, so you only need to declare the services and volumes you want to add.
 
 The **right-hand side** of each volume (the in-container path) depends on the Tutor release. See §3 and §4.
+
+### Which release am I on?
+
+Before picking between the Sumac (§3) and Olive (§4) override, confirm the release running on the host:
+
+```bash
+ibl config printvalue IBL_EDX.VERSION
+```
+
+Prints either `sumac` or `olive` — that decides which section applies. Use the Sumac block for `sumac`, the Olive block for `olive`. The mount paths are not interchangeable.
 
 ## 3. Sumac override
 

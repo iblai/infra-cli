@@ -37,7 +37,7 @@ The following are installed as Python package dependencies when you install ibla
 
 The setup phase installs and configures the following on the provisioned EC2 instance:
 
-- **[iblai-cli-ops](https://github.com/iblai/ibl-cli-ops)** -- the IBL platform management CLI, cloned and installed inside a pyenv virtualenv on the server. This is a required dependency for all service launches. **Note:** This is a private repository -- unauthenticated users or those without access will see a 404.
+- **[iblai-cli-ops](https://github.com/iblai/iblai-cli-ops)** -- the IBL platform management CLI, installed inside a pyenv virtualenv on the server. Required by every service launch. **Private repository — unauthenticated requests see a 404.**
 - **Docker Engine** with docker compose
 - **pyenv** with Python 3.11.8
 - **AWS CLI v2** for ECR authentication and S3 access
@@ -112,10 +112,13 @@ iblai infra provision
 Interactive wizard that walks you through:
 
 1. **AWS credentials** -- profile, access keys, or environment variables
-2. **Project & compute** -- name, environment (dev/staging/prod), instance type, volume size
-3. **Network & SSH** -- VPC CIDR, VPN IP for SSH access, SSH key setup
-4. **Domain & certificates** -- base domain, Route53 integration, certificate method (ACM, upload, or none)
-5. **Review** -- full summary before applying
+2. **Deployment topology** -- single-server, multi-server (N app servers + 1 services server), or call-server (standalone LiveKit)
+3. **Project & compute** -- name, environment (dev/staging/prod), instance type, volume size
+4. **Network & SSH** -- VPC CIDR, VPN IP for SSH access, SSH key setup
+5. **Domain & certificates** -- base domain, Route53 integration, certificate method (ACM, upload, or none)
+6. **Review** -- full summary before applying
+
+Sizing guidance: single / multi-server require a **100 GB minimum** root volume. Picking a 32 GB-RAM instance prints a non-blocking heads-up suggesting 64 GB (e.g. `m5.4xlarge` / `r5.2xlarge`) when AI features will be enabled.
 
 Terraform runs with real-time progress showing each resource as it's created.
 
@@ -131,54 +134,38 @@ Both paths run the same Ansible playbook. The difference is where the inputs com
 - **With a project name** -- auto-populates IP, domain, SSH key, and AWS credentials from the Terraform state
 - **Without a project name** -- prompts for server IP, SSH key, domain, image tags, and credentials interactively. No Terraform required.
 
-The playbook runs 9 sequential roles:
+The playbook runs sequential roles grouped by concern:
 
-| Role | What it does |
-|------|-------------|
-| `docker` | Installs Docker Engine, docker compose, and apache2-utils |
-| `awscli` | Installs AWS CLI v2 for ECR and S3 access |
-| `python` | Installs pyenv and Python 3.11.8 |
-| `ibl_cli_ops` | Installs [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (which includes iblai-cli-ops and pinned image versions) via `uv pip install` |
-| `ibl_platform` | Configures base domain, environment, image tags, CORS, RBAC, unified API gateway, and service defaults |
-| `ibl_dm` | Launches iblai-dm-pro (PostgreSQL with pgvector, Redis, Django, Celery, Langfuse, Minio) |
-| `ibl_edx` | Launches iblai-edx-pro (LMS, CMS, MySQL, MongoDB, Redis, Elasticsearch, MFE) |
-| `ibl_spa` | Creates OAuth2 apps, configures and launches Auth, Mentor AI, and Skills AI SPAs |
-| `final_steps` | Reloads proxy, OAuth/OIDC setup, syncs edX with DM, creates super admins, seeds CSRF domains, flows, LLM registry, mentors, and RBAC data |
+| Phase | Roles | What it does |
+|---|---|---|
+| Host setup | `docker`, `awscli`, `python` | Docker Engine + compose, AWS CLI v2, pyenv + Python 3.11.8 |
+| Platform install | `ibl_cli_ops`, `ibl_platform` | Installs [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (pins `iblai-cli-ops` + image versions); configures base domain, CORS, RBAC, gateway, defaults |
+| Core services | `ibl_dm`, `ibl_edx`, `ibl_spa` | Launches DM (Django + Postgres + Redis + Celery + Flowise + Langfuse), edX (LMS / CMS / MySQL / MongoDB / Elasticsearch / Forum), and the Auth / Mentor / Skills SPAs |
+| Finalization | `integrations`, `admin_setup`, `data_seeding`, `ibl_tenant_platform` | OAuth/OIDC setup, syncs edX with DM, creates super admin, seeds CSRF / flows / LLM registry / mentors / RBAC; launches a tenant `Platform` via `run_launch_steps` when `PLATFORM_NAME` is set to anything other than `main` |
+| Optional integrations | `smtp_config`, `stripe_config`, `google_sso_config`, `microsoft_sso_config` | Each role no-ops unless its trigger key (`SMTP_HOST` / `STRIPE_SECRET_KEY` / `GOOGLE_SSO_CLIENT_ID` / `MICROSOFT_SSO_CLIENT_ID`) is set |
+| Post-tasks | `ibl global-proxy reload` | Final nginx reload so any SSO-driven edX/SPA restarts are picked up before exit |
 
-The setup wizard prompts for:
-- Target host IP and SSH key path
-- Base domain and environment config
-- iblai-cli-ops release tag (image versions are pinned by [iblai-prod-images](https://github.com/iblai/iblai-prod-images))
-- Whether to enable AI features
-- OpenAI API key (optional)
-- Super admin credentials (username, email, password)
-- GitHub PAT and AWS credentials for the VM
+The setup wizard prompts for: target host + SSH key, base domain, tenant platform name (blank for `main` — `main` itself is reserved), `iblai-cli-ops` release tag, enable-AI toggle, OpenAI key, super admin credentials, GitHub PAT, and AWS credentials. Reserved usernames (e.g. `ibl_admin`) are rejected — the new default suggestion is `platform_admin`. Stripe billing UI and advertising are **off by default**; enable Stripe by passing `STRIPE_SECRET_KEY`.
 
 ### 4. Non-interactive provision + setup (`.env` file)
 
-Skip the wizards. Same Terraform + same 9-role Ansible playbook as the interactive flow, just driven from a `.env` file. **Single-server only** (multi/call still use the wizard).
+Skip the wizards. Same Terraform + same Ansible roles as the interactive flow, driven from a `.env` file. **Single-server only** (multi / call still use the wizard).
 
 ```bash
 # Provision (Terraform) — fresh single-server, no AMI required
-cp .env.provision.example .env.provision
-$EDITOR .env.provision                       # fill in PROJECT_NAME, DOMAIN, AWS creds, etc.
+cp .env.provision.example .env.provision && $EDITOR .env.provision
 iblai infra provision-env -f .env.provision
 
-# Bootstrap (Ansible) — runs against the project just provisioned
-cp .env.setup.example .env.setup
-$EDITOR .env.setup                           # fill in GIT_TOKEN, admin creds, etc.
+# Bootstrap (Ansible) — against the just-provisioned project
+cp .env.setup.example .env.setup && $EDITOR .env.setup
 iblai infra setup-env <project-name> -f .env.setup
 ```
 
-**Free-standing server (any cloud, no Terraform):** omit the project name and add `TARGET_HOST`, `SSH_PRIVATE_KEY_PATH`, `BASE_DOMAIN`, `PROJECT_NAME` to your `.env.setup`:
+**Free-standing server** (any cloud, no Terraform): omit the project name and add `TARGET_HOST`, `SSH_PRIVATE_KEY_PATH`, `BASE_DOMAIN`, `PROJECT_NAME` to `.env.setup`, then `iblai infra setup-env -f .env.setup`.
 
-```bash
-iblai infra setup-env -f .env.setup          # builds a synthetic ProjectState, runs Ansible
-```
+**Schema:** `.env.provision.example` and `.env.setup.example` document every key inline (required vs. optional, defaults, integration triggers).
 
-**`.env` schema:** `.env.provision.example` and `.env.setup.example` document every key with synthetic placeholders. Required vs. optional, defaults, and integration triggers (SMTP / Stripe / Google SSO / Microsoft SSO — each enabled when its trigger key is set) are inline.
-
-**Security note:** populated `.env` files are gitignored by default (`.gitignore` blocks `.env.*` except the `*.example` templates). Never commit a real `.env`. The CLI never persists secrets to `state.json` — they ride `--extra-vars` into Ansible at run time only.
+**Security:** populated `.env` files are gitignored (`.env.*` blocked except `*.example`). The CLI never persists secrets to `state.json` — they ride `--extra-vars` into Ansible at run time only.
 
 ### 5. Re-setup an existing environment
 
@@ -192,66 +179,25 @@ Use this when you need to change the domain or rotate credentials on a running e
 
 ### 6. Launch from AMI
 
-**Simplest way — using a `.env` file:**
+One-shot Terraform + Ansible from a pre-built AMI. Two equivalent entry points — `.env` for ergonomics, flags for CI/CD.
 
 ```bash
-cp .env.example .env      # Copy the template
-vim .env                   # Fill in your values
-iblai infra launch-env     # Review summary, confirm, launch
-```
+# .env-driven (review + confirm)
+cp .env.example .env && $EDITOR .env
+iblai infra launch-env
 
-The CLI reads `.env` from the current directory, shows a summary of what will be launched, and asks for confirmation before proceeding.
-
-**Non-interactive (CI/CD) — using flags:**
-
-```bash
+# Fully non-interactive (CI/CD pipelines)
 iblai infra launch \
-  --ami-id $AMI_ID \
-  --domain $DOMAIN \
-  --hosted-zone-id $HOSTED_ZONE_ID \
-  --aws-key-id $AWS_ACCESS_KEY_ID \
-  --aws-secret-key $AWS_SECRET_ACCESS_KEY \
-  --ssh-public-key "$SSH_PUBLIC_KEY" \
-  --ssh-key $SSH_KEY_PATH \
-  --git-token $GIT_TOKEN \
-  --admin-email $ADMIN_EMAIL \
-  --admin-password $ADMIN_PASSWORD \
-  --vpn-ip $VPN_IP
+  --ami-id $AMI_ID --domain $DOMAIN --hosted-zone-id $HOSTED_ZONE_ID \
+  --aws-key-id $AWS_ACCESS_KEY_ID --aws-secret-key $AWS_SECRET_ACCESS_KEY \
+  --ssh-public-key "$SSH_PUBLIC_KEY" --ssh-key $SSH_KEY_PATH \
+  --git-token $GIT_TOKEN --vpn-ip $VPN_IP \
+  --admin-email $ADMIN_EMAIL --admin-password $ADMIN_PASSWORD
 ```
 
-Fully non-interactive command for CI/CD pipelines (e.g. GitHub Actions). Provisions AWS infrastructure from a pre-built AMI via Terraform, then configures the platform via Ansible — all in one step.
+**Flow:** Terraform creates VPC / ALB / ACM / Route53 and launches EC2 from the AMI → Ansible sets the domain, rotates secrets, syncs DB passwords, restarts services, runs OAuth + admin + seeding → final `ibl global-proxy reload`.
 
-**What it does:**
-1. **Terraform** -- creates VPC, ALB, ACM certificates, Route53 DNS records, and launches EC2 from the specified AMI
-2. **Ansible** -- sets domain, rotates secrets, syncs database passwords, restarts all services (DM, edX, SPAs), runs final setup (OAuth, admin creation, data seeding)
-
-**Cleanup:**
-
-```bash
-iblai infra destroy <name>    # Tears down all Terraform resources
-```
-
-**Using a `.env` file:**
-
-Copy `.env.example` to `.env`, fill in real values, then:
-
-```bash
-source .env
-iblai infra launch \
-  --ami-id $AMI_ID \
-  --domain $DOMAIN \
-  --hosted-zone-id $HOSTED_ZONE_ID \
-  --aws-key-id $AWS_ACCESS_KEY_ID \
-  --aws-secret-key $AWS_SECRET_ACCESS_KEY \
-  --ssh-public-key "$SSH_PUBLIC_KEY" \
-  --ssh-key $SSH_KEY_PATH \
-  --git-token $GIT_TOKEN \
-  --admin-email $ADMIN_EMAIL \
-  --admin-password $ADMIN_PASSWORD \
-  --vpn-ip $VPN_IP
-```
-
-See `iblai infra launch --help` for all optional flags (instance type, volume size, region, AI features, etc.).
+See `iblai infra launch --help` for optional flags (instance type, volume size, region, `--platform-name`, SMTP / Stripe / SSO toggles, `--enable-ai`).
 
 ### 7. Service update (image updates, CI/CD)
 
@@ -369,15 +315,19 @@ iblai-infra-ops/
 │   ├── app.py                  # Application logic
 │   ├── models.py               # Pydantic models
 │   ├── ui.py                   # Rich terminal UI
+│   ├── env_provision.py        # .env → InfraConfig (provision-env)
+│   ├── env_setup.py            # .env → SetupConfig  (setup-env)
 │   ├── prompts/                # Interactive questionary prompts
 │   ├── providers/              # AWS provider (STS, EC2, S3)
-│   ├── terraform/              # Terraform runner and templates
-│   │   └── templates/aws/single-server/
-│   └── ansible/                # Ansible runner and templates
+│   ├── terraform/              # Terraform runner + templates
+│   │   └── templates/aws/      # single-server, multi-server, call-server
+│   └── ansible/                # Ansible runner + templates
 │       └── templates/single-server/
-│           ├── playbook.yml
-│           └── roles/          # 9 Ansible roles
-├── tests/                      # 357 tests
+│           ├── playbook.yml             # interactive setup + setup-env
+│           ├── launch_playbook.yml      # AMI launch + launch-env
+│           ├── service_update_playbook.yml
+│           └── roles/                   # ansible roles (see playbook table)
+├── tests/                      # 562 tests, ~1.3s
 ├── docs/                       # Architecture diagrams
 └── pyproject.toml
 ```

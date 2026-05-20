@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.11.0] — 2026-05-20
+
+### Added
+- **Post-provision runtime IAM helper** (`src/iblai_infra/runtime_iam.py`). After `provision` / `provision-env` succeeds, the CLI prints the exact minimum-privilege IAM policy JSON the operator needs to attach to a scoped runtime user in their own AWS account — and writes the same JSON to `<workspace>/runtime-iam-policy.json` so it can be piped into `aws iam put-user-policy --policy-document file://...`. The policy scopes S3 to the literal bucket ARNs Terraform just created (no wildcards) and grants ECR auth + pull verbs against IBL's image registry. Skipped automatically for `DeploymentType.CALL` (no S3 buckets, different credential flow).
+- **Three copy-paste `aws iam` commands** in the post-provision output (`create-user`, `put-user-policy`, `create-access-key`) using the resolved project / environment as the user name — operator pastes the resulting `AccessKeyId` + `SecretAccessKey` directly into `.env.setup`.
+- **README sub-section** under "Provision infrastructure" documenting the runtime IAM step + the scope table.
+
+### Changed
+- **`.env.setup.example`** — the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` comment block now explicitly directs the operator to use the runtime user the post-provision step mints, not their provisioning admin keys.
+- **Section 4 of the README** (non-interactive `.env` flow) renumbered as a 3-step sequence (provision → mint runtime user → setup) so the IAM step isn't missed.
+
 ## [1.10.0] — 2026-05-20
 
 ### Added

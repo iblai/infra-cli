@@ -160,6 +160,13 @@ def show_results(config: InfraConfig, outputs: dict, ws: Path) -> None:
         ui.info(f"SSH key:   [highlight]{config.ssh.private_key_path}[/highlight]")
     ui.newline()
 
+    # Print the post-provision IAM-user setup. Operator needs to create a
+    # scoped runtime user in their own AWS account before `setup-env` runs
+    # — see src/iblai_infra/runtime_iam.py for the policy shape + why.
+    # Skipped for call-server (no S3 buckets, different credential flow).
+    from iblai_infra.runtime_iam import render_runtime_access_instructions
+    render_runtime_access_instructions(config, outputs, ws)
+
 
 def _offer_setup(config: InfraConfig, state) -> None:
     """After successful provision, offer to run platform setup."""

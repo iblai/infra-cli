@@ -122,6 +122,30 @@ Sizing guidance: single / multi-server require a **100 GB minimum** root volume.
 
 Terraform runs with real-time progress showing each resource as it's created.
 
+#### After provision succeeds — create a runtime IAM user
+
+The platform server bakes a single AWS access key into `/ibl/config.yml` for two ongoing purposes: **ECR pulls** (IBL's image registry, cross-account) and **S3 read/write** on the three buckets Terraform just created. Reusing your provisioning admin keys here is overkill — instead, mint a scoped runtime user in your own account.
+
+When `provision` / `provision-env` finishes it prints the exact IAM policy JSON (also saved to `<workspace>/runtime-iam-policy.json`) plus three `aws` commands to copy-paste:
+
+```bash
+aws iam create-user --user-name <project>-<env>-runtime
+aws iam put-user-policy \
+    --user-name <project>-<env>-runtime \
+    --policy-name iblai-runtime \
+    --policy-document file://<workspace>/runtime-iam-policy.json
+aws iam create-access-key --user-name <project>-<env>-runtime
+```
+
+Paste the resulting `AccessKeyId` + `SecretAccessKey` into `.env.setup` (`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`). The policy scope is tight:
+
+| | Resource | Verbs |
+|---|---|---|
+| S3 | The three buckets Terraform created (no wildcards) | `Get/Put/Delete/Acl/ListBucket` |
+| ECR | IBL's `arn:aws:ecr:<region>:<iblai-account>:repository/*` | `GetAuthorizationToken`, `BatchGetImage`, `BatchCheckLayerAvailability`, `GetDownloadUrlForLayer` |
+
+No bucket-policy mutation, no lifecycle config, no IAM rights. Safe to leave on the box for the lifetime of the deployment. Skipped automatically for `--deployment-type call-server` (no S3 buckets).
+
 ### 3. Setup the platform
 
 ```bash
@@ -152,11 +176,15 @@ The setup wizard prompts for: target host + SSH key, base domain, tenant platfor
 Skip the wizards. Same Terraform + same Ansible roles as the interactive flow, driven from a `.env` file. **Single-server only** (multi / call still use the wizard).
 
 ```bash
-# Provision (Terraform) — fresh single-server, no AMI required
+# 1. Provision (Terraform) — fresh single-server, no AMI required
 cp .env.provision.example .env.provision && $EDITOR .env.provision
 iblai infra provision-env -f .env.provision
 
-# Bootstrap (Ansible) — against the just-provisioned project
+# 2. Create the runtime IAM user (one-time) — run the 3 `aws iam ...`
+#    commands printed by step 1, then paste the resulting AccessKeyId +
+#    SecretAccessKey into .env.setup as AWS_ACCESS_KEY_ID / _SECRET_.
+
+# 3. Bootstrap (Ansible) — against the just-provisioned project
 cp .env.setup.example .env.setup && $EDITOR .env.setup
 iblai infra setup-env <project-name> -f .env.setup
 ```

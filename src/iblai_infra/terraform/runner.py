@@ -104,6 +104,70 @@ class TerraformRunner:
         save_state(self.state)
         ui.success(f"Workspace ready  [muted]{self.ws}[/muted]")
 
+    def reapply(self) -> dict:
+        """Re-run Terraform on an existing workspace with the latest ``state.config``.
+
+        Used by post-provision feature toggles (e.g. ``iblai infra waf
+        enable``) where the caller has mutated ``state.config`` and wants
+        Terraform to converge to the new desired state.
+
+        Re-copies ``.tf`` templates so template fixes propagate, then reads
+        the existing ``terraform.tfvars`` to extract the original
+        ``bucket_suffix`` (so the S3 bucket names stay stable across re-runs
+        — see :meth:`_generate_tfvars`), regenerates the rest of tfvars from
+        ``state.config``, and runs ``init`` → ``plan`` → ``apply``.
+
+        Returns the parsed Terraform outputs (same shape as
+        :meth:`_get_outputs`). When the plan is a no-op, returns the current
+        outputs without running apply.
+
+        Callers are responsible for:
+          - confirming the workspace exists and is in the right state,
+          - mutating ``self.state.config`` BEFORE calling,
+          - merging the returned outputs into ``self.state.outputs`` and
+            persisting via ``save_state``.
+        """
+        self._check_terraform_installed()
+        if not self.ws.exists() or not (self.ws / "main.tf").exists():
+            raise FileNotFoundError(
+                f"Terraform workspace not found at {self.ws}. "
+                "Run `iblai infra provision` to create the stack first."
+            )
+
+        pinned_suffix = self._read_existing_bucket_suffix()
+
+        self._copy_templates()
+        ui.success(f"Templates refreshed  [muted]{self.ws}[/muted]")
+
+        self._generate_tfvars(bucket_suffix=pinned_suffix)
+
+        self.init()
+        change_count = self.plan()
+        if change_count == 0:
+            ui.info("No infrastructure changes required.")
+            return self._get_outputs()
+
+        return self.apply()
+
+    def _read_existing_bucket_suffix(self) -> str | None:
+        """Parse ``bucket_suffix = "..."`` from the workspace tfvars file.
+
+        Returns the string value if present (possibly empty), or ``None``
+        when the line is absent. ``None`` triggers AWS-side resolution in
+        :meth:`_generate_tfvars`; empty string pins to no suffix.
+        """
+        tfvars_path = self.ws / "terraform.tfvars"
+        if not tfvars_path.exists():
+            return None
+        for line in tfvars_path.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("bucket_suffix"):
+                _, _, value = stripped.partition("=")
+                return value.strip().strip('"')
+        # No bucket_suffix line means the first apply found bucket names were
+        # available — pin to "" so we don't unexpectedly add a suffix now.
+        return ""
+
     def init(self) -> None:
         """Run terraform init."""
         with Status("  [info]Initializing Terraform...[/info]", console=ui.console):
@@ -453,16 +517,26 @@ class TerraformRunner:
             pass
         return ""
 
-    def _generate_tfvars(self) -> None:
-        """Generate terraform.tfvars from InfraConfig."""
+    def _generate_tfvars(self, bucket_suffix: str | None = None) -> None:
+        """Generate terraform.tfvars from InfraConfig.
+
+        When ``bucket_suffix`` is None, resolve it from AWS (today's behaviour
+        — used by the first ``setup()`` call). When provided, use the pinned
+        value. Used by :meth:`reapply` so re-runs against the same project
+        keep the same S3 bucket names even after the date-stamp window has
+        rolled over.
+        """
         c = self.config
         lines: list[str] = []
 
-        def tf(key: str, value: str | int | bool) -> None:
+        def tf(key: str, value: str | int | bool | list[str]) -> None:
             if isinstance(value, bool):
                 lines.append(f"{key} = {str(value).lower()}")
             elif isinstance(value, int):
                 lines.append(f"{key} = {value}")
+            elif isinstance(value, list):
+                items = ", ".join(json.dumps(v) for v in value)
+                lines.append(f"{key} = [{items}]")
             else:
                 lines.append(f'{key} = "{value}"')
 
@@ -498,8 +572,12 @@ class TerraformRunner:
             (self.ws / "terraform.tfvars").write_text("\n".join(lines) + "\n")
             return
 
-        # S3 bucket uniqueness — check if default names are taken
-        bucket_suffix = self._resolve_bucket_suffix(c)
+        # S3 bucket uniqueness — pinned by caller (reapply path) or resolved
+        # from AWS on first apply. The pinned path is what prevents bucket
+        # rename / destroy on subsequent applies once the date-stamp window
+        # has rolled over.
+        if bucket_suffix is None:
+            bucket_suffix = self._resolve_bucket_suffix(c)
         if bucket_suffix:
             tf("bucket_suffix", bucket_suffix)
 
@@ -543,6 +621,17 @@ class TerraformRunner:
             if ms.enable_redis:
                 tf("redis_instance_type", ms.redis_instance_type)
                 tf("redis_auth_token", ms.redis_auth_token or "")
+
+        # WAF (single-server only — multi-server ALB and call-server have no
+        # WAF wiring in their templates today). When disabled, emit
+        # `enable_waf = false` so the variable always has a value and the
+        # waf.tf locals don't reference an undefined input.
+        if c.deployment_type == DeploymentType.SINGLE:
+            if c.waf and c.waf.enabled:
+                tf("enable_waf", True)
+                tf("waf_allowed_ips", c.waf.allowed_ips)
+            else:
+                tf("enable_waf", False)
 
         (self.ws / "terraform.tfvars").write_text("\n".join(lines) + "\n")
 

@@ -243,6 +243,25 @@ REQUIRED_IAM_POLICY = {
                 "iam:ListServerCertificates",
                 "iam:CreateServiceLinkedRole",
                 "sts:GetCallerIdentity",
+                # WAFv2 — only consumed when ENABLE_WAF=true. Listed here so
+                # `iblai infra permissions` shows the full surface up-front
+                # rather than failing mid-apply.
+                "wafv2:CreateIPSet",
+                "wafv2:DeleteIPSet",
+                "wafv2:GetIPSet",
+                "wafv2:UpdateIPSet",
+                "wafv2:ListIPSets",
+                "wafv2:CreateWebACL",
+                "wafv2:DeleteWebACL",
+                "wafv2:GetWebACL",
+                "wafv2:UpdateWebACL",
+                "wafv2:ListWebACLs",
+                "wafv2:AssociateWebACL",
+                "wafv2:DisassociateWebACL",
+                "wafv2:GetWebACLForResource",
+                "wafv2:TagResource",
+                "wafv2:UntagResource",
+                "wafv2:ListTagsForResource",
             ],
             "Resource": "*",
         }
@@ -259,6 +278,7 @@ _PERMISSION_CHECKS: list[tuple[str, str, str]] = [
     ("ACM", "acm", "SSL/TLS certificate provisioning"),
     ("Route 53", "route53", "DNS hosted zones and records"),
     ("IAM", "iam", "Server certificate upload (for cert upload mode)"),
+    ("WAFv2", "wafv2", "Web ACL + IPSet (only required when ENABLE_WAF=true)"),
     ("STS", "sts", "Caller identity verification"),
 ]
 
@@ -302,6 +322,9 @@ def check_permissions(session: boto3.Session) -> list[PermissionCheckResult]:
             elif service == "iam":
                 client = session.client("iam")
                 client.list_server_certificates(MaxItems=1)
+            elif service == "wafv2":
+                client = session.client("wafv2")
+                client.list_web_acls(Scope="REGIONAL", Limit=1)
             elif service == "sts":
                 client = session.client("sts")
                 client.get_caller_identity()

@@ -116,7 +116,8 @@ Interactive wizard that walks you through:
 3. **Project & compute** -- name, environment (dev/staging/prod), instance type, volume size
 4. **Network & SSH** -- VPC CIDR, VPN IP for SSH access, SSH key setup
 5. **Domain & certificates** -- base domain, Route53 integration, certificate method (ACM, upload, or none)
-6. **Review** -- full summary before applying
+6. **WAF (optional)** -- single-server only; attach an AWS WAFv2 Web ACL to the ALB with admin-only allow rules for Swagger UI / edX Studio / `/admin/` / DM `/data` plus AWS managed rule groups. Default off. Skip here and add it later with `iblai infra waf enable <name>`.
+7. **Review** -- full summary before applying
 
 Sizing guidance: single / multi-server require a **100 GB minimum** root volume. Picking a 32 GB-RAM instance prints a non-blocking heads-up suggesting 64 GB (e.g. `m5.4xlarge` / `r5.2xlarge`) when AI features will be enabled.
 
@@ -177,7 +178,20 @@ Re-configures a previously set up environment with a new domain and fresh secret
 
 Use this when you need to change the domain or rotate credentials on a running environment without reprovisioning the infrastructure.
 
-### 6. Launch from AMI
+### 6. Manage optional features post-provision
+
+Some features (currently WAF; more to follow — SMTP, Stripe, SSO providers) can be turned on or off against an already-provisioned stack without re-running the wizard or destroying anything. Each feature gets its own subgroup under `iblai infra <feature>`:
+
+```bash
+iblai infra waf enable [<name>]              # interactive: prompts for admin IPs/CIDRs
+iblai infra waf enable-env [<name>] -f .env  # non-interactive: reads WAF_ALLOWED_IPS
+iblai infra waf disable <name> [--yes]       # removes Web ACL + IPSet; ALB stays intact
+iblai infra waf status [<name>]              # table of all eligible stacks, or detail panel for one
+```
+
+Running `enable` on a stack that already has WAF on prompts to update the allowlist (current IPs pre-filled for easy edit). Single-server only — multi-server / call-server / bootstrap projects are rejected with a clear error. Each toggle re-runs Terraform on the existing workspace; the original S3 bucket names and other resources are preserved.
+
+### 7. Launch from AMI
 
 One-shot Terraform + Ansible from a pre-built AMI. Two equivalent entry points — `.env` for ergonomics, flags for CI/CD.
 
@@ -199,7 +213,7 @@ iblai infra launch \
 
 See `iblai infra launch --help` for optional flags (instance type, volume size, region, `--platform-name`, SMTP / Stripe / SSO toggles, `--enable-ai`).
 
-### 7. Service update (image updates, CI/CD)
+### 8. Service update (image updates, CI/CD)
 
 Update container images and restart services on an existing server or a freshly launched AMI. No infrastructure provisioning, no secret rotation.
 
@@ -229,7 +243,7 @@ iblai infra service-update \
 
 What it does: installs latest `iblai-prod-images` (new image versions) → edX stop/start → DM update → DM migrations → SPA restart → nginx restart.
 
-### 8. Manage environments
+### 9. Manage environments
 
 ```bash
 iblai infra list                # List all managed environments
@@ -274,6 +288,7 @@ Your session is saved after authentication and reused across commands until you 
 - Security groups (SSH restricted to VPN CIDR, HTTP/HTTPS from ALB only)
 - 3 S3 buckets with server-side encryption (backups, media, static)
 - Route53 hosted zone with 19 subdomain A-records
+- *Optional:* AWS WAFv2 Web ACL attached to the ALB with admin-IP allowlist, six AWS managed rule groups, and a path-traversal block (opt-in via the wizard or `iblai infra waf enable`)
 
 ### Platform Services (Ansible)
 
@@ -318,16 +333,18 @@ iblai-infra-ops/
 │   ├── env_provision.py        # .env → InfraConfig (provision-env)
 │   ├── env_setup.py            # .env → SetupConfig  (setup-env)
 │   ├── prompts/                # Interactive questionary prompts
-│   ├── providers/              # AWS provider (STS, EC2, S3)
+│   ├── providers/              # AWS provider (STS, EC2, S3, WAFv2)
+│   ├── features/               # Post-provision feature toggles (`iblai infra <feature> <action>`)
+│   │   └── waf.py              #   `iblai infra waf` — enable / enable-env / disable / status
 │   ├── terraform/              # Terraform runner + templates
-│   │   └── templates/aws/      # single-server, multi-server, call-server
+│   │   └── templates/aws/      # single-server (incl. optional waf.tf), multi-server, call-server
 │   └── ansible/                # Ansible runner + templates
 │       └── templates/single-server/
 │           ├── playbook.yml             # interactive setup + setup-env
 │           ├── launch_playbook.yml      # AMI launch + launch-env
 │           ├── service_update_playbook.yml
 │           └── roles/                   # ansible roles (see playbook table)
-├── tests/                      # 562 tests, ~1.3s
+├── tests/                      # 648 tests, ~2s
 ├── docs/                       # Architecture diagrams
 └── pyproject.toml
 ```

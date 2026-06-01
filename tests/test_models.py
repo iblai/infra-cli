@@ -27,6 +27,7 @@ from iblai_infra.models import (
     SSHConfig,
     SSHKeyMethod,
     SetupConfig,
+    WAFConfig,
     generate_password,
 )
 
@@ -390,6 +391,78 @@ class TestCallServerConfig:
     def test_call_server_defaults_none(self, infra_config):
         """InfraConfig.call_server defaults to None for non-call deployments."""
         assert infra_config.call_server is None
+
+
+# ---------------------------------------------------------------------------
+# WAFConfig
+# ---------------------------------------------------------------------------
+
+
+class TestWAFConfig:
+    def test_disabled_by_default(self):
+        cfg = WAFConfig()
+        assert cfg.enabled is False
+        assert cfg.allowed_ips == []
+
+    def test_disabled_with_empty_ips_ok(self):
+        # No ips required when disabled
+        cfg = WAFConfig(enabled=False, allowed_ips=[])
+        assert cfg.enabled is False
+
+    def test_enabled_requires_ips(self):
+        with pytest.raises(ValidationError, match="allowed_ips is empty"):
+            WAFConfig(enabled=True, allowed_ips=[])
+
+    def test_bare_ip_normalised_to_slash_32(self):
+        cfg = WAFConfig(enabled=True, allowed_ips=["203.0.113.7"])
+        assert cfg.allowed_ips == ["203.0.113.7/32"]
+
+    def test_cidr_passes_through(self):
+        cfg = WAFConfig(enabled=True, allowed_ips=["10.0.0.0/16"])
+        assert cfg.allowed_ips == ["10.0.0.0/16"]
+
+    def test_mixed_bare_and_cidr(self):
+        cfg = WAFConfig(
+            enabled=True,
+            allowed_ips=["198.51.100.7", "10.0.0.0/24", "192.0.2.42"],
+        )
+        assert cfg.allowed_ips == [
+            "198.51.100.7/32",
+            "10.0.0.0/24",
+            "192.0.2.42/32",
+        ]
+
+    def test_invalid_token_raises(self):
+        with pytest.raises(ValidationError, match="Invalid IP or CIDR"):
+            WAFConfig(enabled=True, allowed_ips=["not-an-ip"])
+
+    def test_blank_tokens_are_filtered(self):
+        cfg = WAFConfig(enabled=True, allowed_ips=["", "  ", "203.0.113.7"])
+        assert cfg.allowed_ips == ["203.0.113.7/32"]
+
+    def test_cidr_host_bits_zeroed(self):
+        # strict=False on ip_network — input with host bits becomes the network
+        cfg = WAFConfig(enabled=True, allowed_ips=["10.0.0.42/24"])
+        assert cfg.allowed_ips == ["10.0.0.0/24"]
+
+    def test_attaches_to_infra_config(self, aws_credentials):
+        infra = InfraConfig(
+            project_name="wafenv",
+            environment=Environment.PROD,
+            credentials=aws_credentials,
+            network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip="203.0.113.1"),
+            compute=ComputeConfig(),
+            ssh=SSHConfig(method=SSHKeyMethod.GENERATE, key_name="waf"),
+            certificates=CertificateConfig(method=CertMethod.NONE),
+            dns=DNSConfig(base_domain="example.com"),
+            waf=WAFConfig(enabled=True, allowed_ips=["203.0.113.7"]),
+        )
+        assert infra.waf is not None
+        assert infra.waf.enabled is True
+        assert infra.waf.allowed_ips == ["203.0.113.7/32"]
+
+    def test_waf_defaults_none_on_infra_config(self, infra_config):
+        assert infra_config.waf is None
 
 
 # ---------------------------------------------------------------------------

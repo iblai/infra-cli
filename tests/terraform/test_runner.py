@@ -17,6 +17,7 @@ from iblai_infra.models import (
     DeploymentType,
     Environment,
     SSHKeyMethod,
+    WAFConfig,
 )
 from iblai_infra.terraform.runner import (
     RESOURCE_LABELS,
@@ -373,6 +374,265 @@ class TestGenerateTfvarsCallServer:
         assert "enable_sip = false" in tfvars
         # empty hosted_zone_id is still written (so terraform can read ""), but with no cert the R53 A record will be skipped
         assert 'hosted_zone_id = ""' in tfvars
+
+
+# ---------------------------------------------------------------------------
+# TerraformRunner._generate_tfvars — WAF
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateTfvarsWAF:
+    """WAF tfvars are emitted only for single-server. Disabled by default."""
+
+    def test_no_waf_emits_enable_false(self, infra_config, tmp_path):
+        # single-server (the fixture default), no waf
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix", return_value=""):
+            runner._generate_tfvars()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "enable_waf = false" in tfvars
+        assert "waf_allowed_ips" not in tfvars
+
+    def test_waf_enabled_emits_ip_list(self, infra_config, tmp_path):
+        infra_config.waf = WAFConfig(
+            enabled=True,
+            allowed_ips=["203.0.113.7", "10.0.0.0/16"],
+        )
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix", return_value=""):
+            runner._generate_tfvars()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "enable_waf = true" in tfvars
+        # list is JSON-encoded for HCL safety
+        assert 'waf_allowed_ips = ["203.0.113.7/32", "10.0.0.0/16"]' in tfvars
+
+    def test_multi_server_skips_waf_block_entirely(self, infra_config, tmp_path):
+        # Even if a WAFConfig is attached, multi-server topology must NOT
+        # emit `enable_waf` (the multi template has no such variable).
+        from iblai_infra.models import MultiServerConfig
+
+        infra_config.deployment_type = DeploymentType.MULTI
+        infra_config.multi_server = MultiServerConfig()
+        infra_config.waf = WAFConfig(enabled=True, allowed_ips=["203.0.113.7"])
+
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix", return_value=""):
+            runner._generate_tfvars()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "enable_waf" not in tfvars
+        assert "waf_allowed_ips" not in tfvars
+
+    def test_call_server_skips_waf_block_entirely(self, infra_config, tmp_path):
+        infra_config.deployment_type = DeploymentType.CALL
+        infra_config.call_server = CallServerConfig()
+        infra_config.certificates = CertificateConfig(method=CertMethod.NONE)
+        # The CLI shouldn't construct this combo but the runner still gates
+        # by deployment_type defensively.
+        infra_config.waf = WAFConfig(enabled=True, allowed_ips=["203.0.113.7"])
+
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        runner._generate_tfvars()
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "enable_waf" not in tfvars
+        assert "waf_allowed_ips" not in tfvars
+
+    def test_tf_helper_handles_list_quoting(self, infra_config, tmp_path):
+        """Embedded special chars (e.g. quotes) are safely JSON-encoded.
+
+        IP/CIDR strings won't contain quotes today, but the helper's contract
+        is "safe HCL list emission" so verify it stays robust.
+        """
+        infra_config.waf = WAFConfig(
+            enabled=True,
+            allowed_ips=["192.0.2.1", "198.51.100.0/24"],
+        )
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix", return_value=""):
+            runner._generate_tfvars()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        # All entries quoted; comma-separated; brackets present
+        assert '"192.0.2.1/32"' in tfvars
+        assert '"198.51.100.0/24"' in tfvars
+        assert tfvars.count("waf_allowed_ips = [") == 1
+
+
+# ---------------------------------------------------------------------------
+# TerraformRunner._generate_tfvars — pinned bucket_suffix
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateTfvarsBucketSuffixPinning:
+    """The pinned-bucket_suffix path lets post-provision feature toggles
+    re-emit tfvars without renaming S3 buckets. Critical safety guarantee."""
+
+    def test_default_calls_aws(self, infra_config, tmp_path):
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix", return_value="15042026") as mock_resolve:
+            runner._generate_tfvars()
+            mock_resolve.assert_called_once_with(infra_config)
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert 'bucket_suffix = "15042026"' in tfvars
+
+    def test_pinned_skips_aws(self, infra_config, tmp_path):
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix") as mock_resolve:
+            runner._generate_tfvars(bucket_suffix="03012025")
+            mock_resolve.assert_not_called()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        # Pinned value, NOT today's date
+        assert 'bucket_suffix = "03012025"' in tfvars
+
+    def test_pinned_empty_string_omits_line(self, infra_config, tmp_path):
+        # An empty pinned suffix means "no suffix" (the original apply found
+        # default bucket names available). The line must NOT appear at all
+        # so terraform uses the variable's default of "".
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+
+        with patch.object(runner, "_resolve_bucket_suffix") as mock_resolve:
+            runner._generate_tfvars(bucket_suffix="")
+            mock_resolve.assert_not_called()
+
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "bucket_suffix" not in tfvars
+
+
+# ---------------------------------------------------------------------------
+# TerraformRunner.reapply + _read_existing_bucket_suffix
+# ---------------------------------------------------------------------------
+
+
+class TestReadExistingBucketSuffix:
+    def test_reads_quoted_value(self, infra_config, tmp_path):
+        (tmp_path / "terraform.tfvars").write_text(
+            'project_name = "x"\nbucket_suffix = "31122025"\n'
+        )
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+        assert runner._read_existing_bucket_suffix() == "31122025"
+
+    def test_missing_line_returns_empty(self, infra_config, tmp_path):
+        (tmp_path / "terraform.tfvars").write_text(
+            'project_name = "x"\n'
+        )
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+        # Empty string (NOT None) means "first apply had no suffix; keep it
+        # that way" — pinning to "" prevents an unexpected suffix on re-apply.
+        assert runner._read_existing_bucket_suffix() == ""
+
+    def test_no_file_returns_none(self, infra_config, tmp_path):
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = tmp_path
+        # No tfvars file at all — fall back to AWS resolution
+        assert runner._read_existing_bucket_suffix() is None
+
+
+class TestReapply:
+    """reapply() is the load-bearing helper for post-provision feature toggles."""
+
+    def _stub_runner(self, infra_config, ws):
+        runner = TerraformRunner.__new__(TerraformRunner)
+        runner.config = infra_config
+        runner.ws = ws
+        runner.state = MagicMock()
+        return runner
+
+    def test_missing_workspace_raises(self, infra_config, tmp_path):
+        runner = self._stub_runner(infra_config, tmp_path / "nope")
+        with patch.object(runner, "_check_terraform_installed"):
+            with pytest.raises(FileNotFoundError):
+                runner.reapply()
+
+    def test_no_main_tf_raises(self, infra_config, tmp_path):
+        runner = self._stub_runner(infra_config, tmp_path)
+        # tmp_path exists but no main.tf
+        with patch.object(runner, "_check_terraform_installed"):
+            with pytest.raises(FileNotFoundError):
+                runner.reapply()
+
+    def test_happy_path_pins_suffix_and_runs(self, infra_config, tmp_path):
+        # Pre-populate workspace with main.tf + existing tfvars carrying a suffix
+        (tmp_path / "main.tf").write_text("# stub")
+        (tmp_path / "terraform.tfvars").write_text(
+            'project_name = "x"\nbucket_suffix = "29022024"\n'
+        )
+        runner = self._stub_runner(infra_config, tmp_path)
+        runner.config.waf = WAFConfig(enabled=True, allowed_ips=["203.0.113.7"])
+
+        with patch.object(runner, "_check_terraform_installed"), \
+             patch.object(runner, "_copy_templates") as mock_copy, \
+             patch.object(runner, "_resolve_bucket_suffix") as mock_resolve, \
+             patch.object(runner, "init") as mock_init, \
+             patch.object(runner, "plan", return_value=3) as mock_plan, \
+             patch.object(runner, "apply", return_value={"waf_web_acl_arn": "arn:..."}) as mock_apply:
+            outputs = runner.reapply()
+
+        # The pinned suffix path: NEVER calls AWS-side resolution
+        mock_resolve.assert_not_called()
+        # All the phases ran in order
+        mock_copy.assert_called_once()
+        mock_init.assert_called_once()
+        mock_plan.assert_called_once()
+        mock_apply.assert_called_once()
+        # Outputs from apply propagate to caller
+        assert outputs == {"waf_web_acl_arn": "arn:..."}
+
+        # tfvars was regenerated from state.config (now includes WAF)
+        tfvars = (tmp_path / "terraform.tfvars").read_text()
+        assert "enable_waf = true" in tfvars
+        assert '"203.0.113.7/32"' in tfvars
+        # AND the original bucket_suffix is preserved
+        assert 'bucket_suffix = "29022024"' in tfvars
+
+    def test_noop_plan_skips_apply_returns_existing_outputs(self, infra_config, tmp_path):
+        (tmp_path / "main.tf").write_text("# stub")
+        (tmp_path / "terraform.tfvars").write_text('bucket_suffix = ""\n')
+        runner = self._stub_runner(infra_config, tmp_path)
+
+        with patch.object(runner, "_check_terraform_installed"), \
+             patch.object(runner, "_copy_templates"), \
+             patch.object(runner, "init"), \
+             patch.object(runner, "plan", return_value=0), \
+             patch.object(runner, "apply") as mock_apply, \
+             patch.object(runner, "_get_outputs", return_value={"alb_dns_name": "alb-1"}):
+            outputs = runner.reapply()
+
+        # plan returned 0 → apply must NOT run
+        mock_apply.assert_not_called()
+        # Caller still gets the current outputs so it can refresh state
+        assert outputs == {"alb_dns_name": "alb-1"}
 
 
 # ---------------------------------------------------------------------------

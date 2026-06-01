@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.0] — 2026-06-01
+
+### Added
+- **Optional AWS WAFv2 on the single-server ALB** — opt-in at provision time via the wizard (a new sub-step of "Domain & Certificates" — default off), `provision-env` (`ENABLE_WAF=true` + `WAF_ALLOWED_IPS=…` in the `.env`), or `launch` / `launch-env` (`--enable-waf` + `--waf-allowed-ips`, or matching env keys). Attaches a Regional WAFv2 Web ACL to the ALB with rules tuned for ibl.ai's subdomain layout: admin-only allow rules (gated on an operator IP allowlist) for DM Swagger UI, edX Studio (CMS), Django `/admin/`, and DM `/data`; public allow rule for `learn.<base>` and `apps.learn.<base>`; six AWS managed rule groups (IpReputation, KnownBadInputs, Common, SQLi, WordPress, PHP); and a path-traversal block for `.git` / `.env` / `.htaccess` / `.svn` / `.hg` / `.DS_Store`. Total estimated WCU ≈ 1355 (under the 1500 default). Allowlist accepts both bare IPs (auto-suffixed `/32`) and CIDR.
+- **`iblai infra waf` post-provision subgroup** — toggle WAFv2 on an already-provisioned single-server stack without re-running the wizard. Four commands: `enable [<name>]` (interactive; on a project that already has WAF on, warns and prompts to update the allowlist with current IPs pre-filled), `enable-env [<name>] -f .env` (non-interactive, reads `WAF_ALLOWED_IPS`), `disable <name> [--yes]` (Y/N confirm by default; `--yes` for CI; removes the Web ACL + IPSet + association, leaves the ALB intact), `status [<name>]` (table of all WAF-eligible projects with no arg, detail panel with one). Rejects multi-server, call-server, bootstrap, and non-`created` projects up-front with a clear error. Subgroup module lives at `src/iblai_infra/features/waf.py`; the `features/` package docstring documents the pattern for the next optional-feature toggles (SMTP, Stripe, SSO providers) so they can drop in with the same `enable / enable-env / disable / status` shape.
+- **`TerraformRunner.reapply()`** — shared helper for re-running Terraform on an existing workspace with the latest `state.config`. Re-copies `.tf` templates (so template fixes propagate), reads the existing `terraform.tfvars` to pin the original `bucket_suffix` (prevents accidental S3 bucket renames once the date-stamp window has rolled over), regenerates the rest of tfvars from `state.config`, then runs `init` → `plan` → `apply`. Returns parsed outputs. Used by both the new `iblai infra waf <action>` commands and the refactored `iblai infra retry`.
+- **WAFv2 entries in `REQUIRED_IAM_POLICY`** + a `wafv2:ListWebACLs` smoke check in `check_permissions()` so `iblai infra permissions [--check]` surfaces WAF readiness up-front instead of failing mid-apply.
+
+### Changed
+- **`_generate_tfvars(self, bucket_suffix: str | None = None)`** — accepts an optional pinned suffix. When `None` (today's default for first `setup()`), resolves the suffix from AWS as before. When provided, uses the pinned value. Load-bearing change for the new `reapply()` helper.
+- **`iblai infra retry`** now uses `TerraformRunner.reapply()` instead of inlining template-copy + init/plan/apply, removing a drift point with the new WAF subgroup. Behaviour is unchanged for operators: the existing failure-recovery guards and Route 53 CNAME conflict cleanup still run.
+
 ## [1.10.2] — 2026-05-20
 
 ### Added

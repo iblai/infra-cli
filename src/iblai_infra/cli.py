@@ -83,6 +83,15 @@ ingress_app = typer.Typer(
 )
 infra_app.add_typer(ingress_app, name="ingress")
 
+# ---------------------------------------------------------------------------
+# Subcommand groups: `iblai infra <feature>` (post-provision feature toggles)
+# See `iblai_infra/features/__init__.py` for the pattern.
+# ---------------------------------------------------------------------------
+
+from iblai_infra.features.waf import waf_app
+
+infra_app.add_typer(waf_app, name="waf")
+
 
 @ingress_app.command("list")
 def ingress_list() -> None:
@@ -451,25 +460,25 @@ def _run_retry(name: str) -> None:
 
         ui.newline()
 
-    # Reuse the existing workspace — re-copy .tf templates to pick up any fixes,
-    # but preserve the existing terraform.tfvars (avoids re-generating bucket names).
+    # Reuse the shared post-provision reapply helper. It re-copies templates
+    # so retry picks up template fixes, regenerates tfvars (with the original
+    # bucket_suffix pinned so S3 buckets keep their names), and runs
+    # init/plan/apply. On a real apply, apply() already sets
+    # status="created" + outputs; on the no-op branch we set status here.
     runner = TerraformRunner(state.config)
     runner.ws = ws
     runner.state = state
-    runner._copy_templates()
-    ui.success(f"Templates updated  [muted]{ws}[/muted]")
+    outputs = runner.reapply()
 
-    runner.init()
-    add_count = runner.plan()
-
-    if add_count == 0:
-        ui.info("No changes needed. All resources are up to date.")
+    if state.status != "created":
         state.status = "created"
+        if outputs:
+            state.outputs = {**(state.outputs or {}), **outputs}
         _save_state(state)
+
+    if not outputs:
         ui.success(f"Infrastructure '{name}' is now in created state.")
         return
-
-    outputs = runner.apply()
 
     from iblai_infra.app import show_results, _offer_setup
     show_results(state.config, outputs, ws)
@@ -565,6 +574,17 @@ def launch(
     enable_postgres: bool = typer.Option(False, "--enable-postgres/--no-postgres", help="Enable managed PostgreSQL RDS (multi-server only)"),
     enable_redis: bool = typer.Option(False, "--enable-redis/--no-redis", help="Enable managed Redis ElastiCache (multi-server only)"),
     enable_sip: bool = typer.Option(False, "--enable-sip/--no-sip", help="Open LiveKit SIP ports (call-server only)"),
+    enable_waf: bool = typer.Option(
+        False, "--enable-waf/--no-waf",
+        help="Attach an AWS WAFv2 Web ACL to the ALB (single-server only)",
+    ),
+    waf_allowed_ips: str = typer.Option(
+        "", "--waf-allowed-ips",
+        help=(
+            "Comma-separated admin IPs/CIDRs (e.g. 203.0.113.7,10.0.0.0/16). "
+            "Required when --enable-waf. Bare IPs are auto-suffixed with /32."
+        ),
+    ),
 ) -> None:
     """Launch IBL platform from a pre-built AMI. Non-interactive, CI/CD-friendly.
 
@@ -621,6 +641,23 @@ def launch(
             raise typer.Exit(1)
     # Resolve None → 'main' downstream so SetupConfig + ansible see a value.
     platform_name = (platform_name or "main").strip().lower()
+
+    # WAF is single-server-only today; reject combos with multi/call up-front so
+    # the operator gets a clear error instead of a confusing Terraform plan.
+    if enable_waf and deployment_type != "single-server":
+        ui.error(
+            f"--enable-waf is only supported with --deployment-type single-server "
+            f"(got {deployment_type!r})."
+        )
+        ui.muted(
+            "Multi-server and call-server WAF wiring is not yet implemented. "
+            "Re-run without --enable-waf or switch to single-server."
+        )
+        raise typer.Exit(1)
+    if enable_waf and not waf_allowed_ips.strip():
+        ui.error("--enable-waf requires --waf-allowed-ips with at least one IP/CIDR.")
+        ui.muted("Example: --waf-allowed-ips 203.0.113.7,10.0.0.0/16")
+        raise typer.Exit(1)
 
     # Heads-up if the operator picked a 32 GB box AND wants AI on. Not blocking —
     # they can still proceed. Skipped for call-server (LiveKit has different
@@ -680,6 +717,8 @@ def launch(
         enable_postgres=enable_postgres,
         enable_redis=enable_redis,
         enable_sip=enable_sip,
+        enable_waf=enable_waf,
+        waf_allowed_ips=waf_allowed_ips,
     )
 
 
@@ -811,6 +850,11 @@ def launch_env(
     microsoft_sso_client_secret = env.get("MICROSOFT_SSO_CLIENT_SECRET", "")
     microsoft_sso_tenant_id = env.get("MICROSOFT_SSO_TENANT_ID", "")
     microsoft_sso_organization = env.get("MICROSOFT_SSO_ORGANIZATION", "")
+    enable_waf = env.get("ENABLE_WAF", "false").lower() in ("true", "1", "yes")
+    waf_allowed_ips = env.get("WAF_ALLOWED_IPS", "")
+    if enable_waf and not waf_allowed_ips.strip():
+        ui.error("ENABLE_WAF=true requires WAF_ALLOWED_IPS (comma-separated IPs/CIDRs).")
+        raise typer.Exit(1)
 
     # Show summary
     project_name = name or domain.replace(".", "-")
@@ -889,6 +933,8 @@ def launch_env(
         microsoft_sso_client_secret=microsoft_sso_client_secret,
         microsoft_sso_tenant_id=microsoft_sso_tenant_id,
         microsoft_sso_organization=microsoft_sso_organization,
+        enable_waf=enable_waf,
+        waf_allowed_ips=waf_allowed_ips,
     )
 
 
@@ -1178,6 +1224,8 @@ def _run_launch(
     enable_postgres: bool = False,
     enable_redis: bool = False,
     enable_sip: bool = False,
+    enable_waf: bool = False,
+    waf_allowed_ips: str = "",
 ) -> None:
     """Provision infrastructure from AMI and configure platform. Non-interactive."""
     import os
@@ -1202,6 +1250,7 @@ def _run_launch(
         SetupConfig,
         SSHConfig,
         SSHKeyMethod,
+        WAFConfig,
         generate_password,
     )
     from iblai_infra.terraform.runner import TerraformRunner
@@ -1258,6 +1307,17 @@ def _run_launch(
             enable_sip=enable_sip,
         )
 
+    # WAF — single-server only (the launch command rejected non-single + WAF
+    # earlier, so we only need to build the config when both are aligned).
+    waf_config: WAFConfig | None = None
+    if deploy_type == DeploymentType.SINGLE and enable_waf:
+        tokens = [t.strip() for t in (waf_allowed_ips or "").split(",") if t.strip()]
+        try:
+            waf_config = WAFConfig(enabled=True, allowed_ips=tokens)
+        except ValueError as exc:
+            ui.error(f"Invalid --waf-allowed-ips: {exc}")
+            raise typer.Exit(1)
+
     # Check prerequisites
     if shutil.which("terraform") is None:
         ui.error("terraform not found. Install from https://www.terraform.io/downloads")
@@ -1304,6 +1364,7 @@ def _run_launch(
             use_route53=True,
             hosted_zone_id=hosted_zone_id,
         ),
+        waf=waf_config,
     )
 
     ui.info(f"Launching platform from AMI [highlight]{ami_id}[/highlight]")

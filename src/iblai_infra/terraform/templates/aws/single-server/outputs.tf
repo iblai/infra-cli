@@ -71,3 +71,13 @@ output "application_url" {
     var.certificate_method == "acm" ? "https://learn.${var.base_domain}" : "https://${aws_lb.main.dns_name}"
   ) : "http://${aws_lb.main.dns_name}"
 }
+
+output "waf_web_acl_arn" {
+  description = "WAFv2 Web ACL ARN (empty when WAF disabled)"
+  value       = var.enable_waf ? aws_wafv2_web_acl.main[0].arn : ""
+}
+
+output "waf_ip_set_arn" {
+  description = "WAFv2 admin IPSet ARN (empty when WAF disabled)"
+  value       = var.enable_waf ? aws_wafv2_ip_set.admins[0].arn : ""
+}

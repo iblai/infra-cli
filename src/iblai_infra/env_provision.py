@@ -28,6 +28,7 @@ from iblai_infra.models import (
     NetworkConfig,
     SSHConfig,
     SSHKeyMethod,
+    WAFConfig,
 )
 from iblai_infra.providers.aws import (
     delete_route53_records,
@@ -122,6 +123,7 @@ def build_infra_config_from_env(
         env, credentials, auto_delete_cnames=auto_delete_cnames
     )
     ssh = _build_ssh(env, credentials, project_name, environment)
+    waf = _build_waf(env)
 
     return InfraConfig(
         project_name=project_name,
@@ -133,6 +135,7 @@ def build_infra_config_from_env(
         ssh=ssh,
         certificates=certificates,
         dns=dns,
+        waf=waf,
     )
 
 
@@ -421,6 +424,28 @@ def _handle_dns_conflicts(
         f"Removing {len(conflicts)} conflicting CNAME record(s) in zone {zone_id}"
     )
     delete_route53_records(session, zone_id, conflicts)
+
+
+def _build_waf(env: dict[str, str]) -> WAFConfig:
+    """Parse ENABLE_WAF + WAF_ALLOWED_IPS into a WAFConfig.
+
+    WAF_ALLOWED_IPS is required when ENABLE_WAF=true. Accepts bare IPs and
+    CIDR; the model's validator handles /32 normalisation and rejects
+    invalid tokens with a clear error.
+    """
+    enabled = parse_bool(env.get("ENABLE_WAF"), default=False)
+    raw_ips = (env.get("WAF_ALLOWED_IPS") or "").strip()
+    tokens = [t.strip() for t in raw_ips.split(",") if t.strip()]
+    try:
+        return WAFConfig(enabled=enabled, allowed_ips=tokens)
+    except ValueError as exc:
+        raise _fail(
+            f"Invalid WAF configuration: {exc}",
+            hint=(
+                "When ENABLE_WAF=true, set WAF_ALLOWED_IPS to a comma-separated "
+                "list of IPs/CIDRs (e.g. 203.0.113.7,10.0.0.0/16)."
+            ),
+        )
 
 
 def _load_uploaded_cert(env: dict[str, str]) -> CertificateConfig:

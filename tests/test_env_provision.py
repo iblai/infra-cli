@@ -383,3 +383,50 @@ class TestDnsConflicts:
         patched_aws["find_conflicting_records"].return_value = []
         build_infra_config_from_env(_minimal_env(CERT_METHOD="acm"))
         patched_aws["delete_route53_records"].assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# WAF (.env-driven)
+# ---------------------------------------------------------------------------
+
+class TestWafFromEnv:
+    def test_waf_default_disabled(self, patched_aws):
+        config = build_infra_config_from_env(_minimal_env())
+        # WAFConfig is always built; enabled defaults to False
+        assert config.waf is not None
+        assert config.waf.enabled is False
+        assert config.waf.allowed_ips == []
+
+    def test_waf_enabled_with_bare_ips(self, patched_aws):
+        env = _minimal_env(
+            ENABLE_WAF="true",
+            WAF_ALLOWED_IPS="203.0.113.7,198.51.100.0/24",
+        )
+        config = build_infra_config_from_env(env)
+        assert config.waf.enabled is True
+        assert config.waf.allowed_ips == ["203.0.113.7/32", "198.51.100.0/24"]
+
+    def test_waf_enabled_without_ips_errors(self, patched_aws):
+        env = _minimal_env(ENABLE_WAF="true", WAF_ALLOWED_IPS="")
+        with pytest.raises(typer.Exit):
+            build_infra_config_from_env(env)
+
+    def test_waf_enabled_with_only_whitespace_errors(self, patched_aws):
+        env = _minimal_env(ENABLE_WAF="true", WAF_ALLOWED_IPS=" , ,  ")
+        with pytest.raises(typer.Exit):
+            build_infra_config_from_env(env)
+
+    def test_waf_enabled_invalid_token_errors(self, patched_aws):
+        env = _minimal_env(ENABLE_WAF="true", WAF_ALLOWED_IPS="203.0.113.7,not-an-ip")
+        with pytest.raises(typer.Exit):
+            build_infra_config_from_env(env)
+
+    def test_waf_disabled_ignores_ips(self, patched_aws):
+        # Operator left ENABLE_WAF unset but accidentally populated the list —
+        # WAFConfig accepts and normalises but stays disabled. The Terraform
+        # runner only emits enable_waf=true when the flag is on.
+        env = _minimal_env(WAF_ALLOWED_IPS="203.0.113.7")
+        config = build_infra_config_from_env(env)
+        assert config.waf.enabled is False
+        # Normalisation still runs (cheap and lets us reuse the same model)
+        assert config.waf.allowed_ips == ["203.0.113.7/32"]

@@ -13,7 +13,7 @@ import typer
 from typer.testing import CliRunner
 
 from iblai_infra import __version__
-from iblai_infra.cli import app, _run_setup_provisioned, _run_resetup, _interactive_setup, _interactive_resetup, _resolve_credentials
+from iblai_infra.cli import app, _run_setup_provisioned, _run_resetup, _interactive_setup, _interactive_resetup, _resolve_credentials, _run_retry
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
@@ -63,6 +63,62 @@ class TestNoArgs:
         # no_args_is_help may return exit code 0 or 2 depending on Typer version
         assert result.exit_code in (0, 2)
         assert "infra" in result.stdout or "help" in result.stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# _run_retry — regression after refactor to use TerraformRunner.reapply()
+# ---------------------------------------------------------------------------
+
+
+class TestRunRetry:
+    """Sanity tests for the refactored retry flow.
+
+    These don't exercise the full terraform-init/plan/apply path (covered by
+    TestReapply in terraform/test_runner.py); they just confirm that the
+    guards still fire and that the happy path calls reapply().
+    """
+
+    def test_missing_project(self):
+        with patch("iblai_infra.cli.load_state", return_value=None):
+            with pytest.raises(_EXIT_EXCEPTIONS):
+                _run_retry("nope")
+
+    def test_already_created_bails(self, project_state):
+        project_state.status = "created"
+        with patch("iblai_infra.cli.load_state", return_value=project_state):
+            with pytest.raises(_EXIT_EXCEPTIONS):
+                _run_retry(project_state.name)
+
+    def test_destroyed_rejected(self, project_state):
+        project_state.status = "destroyed"
+        with patch("iblai_infra.cli.load_state", return_value=project_state):
+            with pytest.raises(_EXIT_EXCEPTIONS):
+                _run_retry(project_state.name)
+
+    def test_missing_workspace_rejected(self, project_state, tmp_path):
+        project_state.status = "failed"
+        project_state.workspace_path = str(tmp_path / "nope")
+        with patch("iblai_infra.cli.load_state", return_value=project_state):
+            with pytest.raises(_EXIT_EXCEPTIONS):
+                _run_retry(project_state.name)
+
+    def test_failed_state_calls_reapply(self, project_state, tmp_path):
+        project_state.status = "failed"
+        project_state.workspace_path = str(tmp_path)
+        (tmp_path / "main.tf").write_text("# stub")
+        project_state.config.dns.use_route53 = False  # skip the R53 CNAME check
+        # TerraformRunner is imported locally inside _run_retry — patch at source
+        with patch("iblai_infra.cli.load_state", return_value=project_state), \
+             patch("iblai_infra.terraform.state.save_state"), \
+             patch("iblai_infra.terraform.runner.TerraformRunner") as mock_tf_cls, \
+             patch("iblai_infra.app.show_results"), \
+             patch("iblai_infra.app._offer_setup"):
+            mock_tf_cls.return_value.reapply.return_value = {
+                "instance_public_ip": "1.2.3.4",
+                "alb_dns_name": "alb-1.us-east-1.elb.amazonaws.com",
+            }
+            _run_retry(project_state.name)
+        mock_tf_cls.return_value.reapply.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

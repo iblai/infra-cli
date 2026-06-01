@@ -13,6 +13,7 @@ from iblai_infra.models import (
     CertMethod,
     DNSConfig,
     IBL_SUBDOMAINS,
+    WAFConfig,
 )
 from iblai_infra.providers.aws import (
     delete_route53_records,
@@ -346,3 +347,108 @@ def _validate_domain(value: str) -> bool:
         part and part.replace("-", "").isalnum()
         for part in parts
     )
+
+
+# ---------------------------------------------------------------------------
+# WAF sub-flow (called from the wizard after DNS/certs, single-server only)
+# ---------------------------------------------------------------------------
+
+
+def _validate_ip_or_cidr(token: str) -> bool:
+    """Return True if ``token`` parses as an IPv4 address or CIDR network."""
+    import ipaddress
+    s = (token or "").strip()
+    if not s:
+        return False
+    try:
+        ipaddress.ip_address(s)
+        return True
+    except ValueError:
+        pass
+    try:
+        ipaddress.ip_network(s, strict=False)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_ip_csv(value: str) -> bool | str:
+    """questionary-compatible validator for a comma-separated IP/CIDR list."""
+    s = (value or "").strip()
+    if not s:
+        return "Provide at least one IP or CIDR"
+    tokens = [t.strip() for t in s.split(",") if t.strip()]
+    if not tokens:
+        return "Provide at least one IP or CIDR"
+    bad = [t for t in tokens if not _validate_ip_or_cidr(t)]
+    if bad:
+        return f"Invalid IP/CIDR: {', '.join(bad)}"
+    return True
+
+
+def _prompt_waf_ips(default: list[str] | None = None) -> list[str]:
+    """Prompt for the WAF admin allowlist (comma-separated IPs/CIDRs).
+
+    Pre-fills the prompt with ``default`` (joined as comma-separated) when
+    provided — used by the post-provision ``iblai infra waf enable`` flow
+    to let the operator edit the existing list. Returns the raw token list
+    (caller wraps it in ``WAFConfig`` so validator-normalisation runs).
+    """
+    pre = ", ".join(default or [])
+    raw = questionary.text(
+        "Admin IPs/CIDRs (comma-separated, e.g. 203.0.113.7,10.0.0.0/16):",
+        default=pre,
+        validate=_validate_ip_csv,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if raw is None:
+        ui.abort()
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
+def prompt_waf(base_domain: str) -> WAFConfig:
+    """Optional WAFv2 prompt — gates an admin IP allowlist on the ALB.
+
+    Called from the wizard after DNS/certs for single-server deployments
+    only. Default is to skip; on opt-in, requires at least one IP or CIDR
+    for the admin allowlist (Swagger, Studio, /admin, /data).
+    """
+    ui.newline()
+    ui.console.rule("[brand]WAF (optional)[/brand]")
+    ui.info(
+        "Attaches an AWS WAFv2 Web ACL to the ALB. Allow-list IPs reach "
+        "admin surfaces (Swagger UI, edX Studio, /admin/, DM /data); "
+        "everyone else is blocked from those. learn." + base_domain +
+        " and apps.learn." + base_domain + " stay public."
+    )
+    ui.muted(
+        "  Includes AWS managed rule groups (Common, SQLi, KnownBadInputs, "
+        "IpReputation, WordPress, PHP) and a .git/.env path-traversal block."
+    )
+
+    enabled = questionary.confirm(
+        "Enable AWS WAFv2 protection?",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if enabled is None:
+        ui.abort()
+
+    if not enabled:
+        ui.success("WAF: [highlight]Skip[/highlight]")
+        return WAFConfig(enabled=False)
+
+    tokens = _prompt_waf_ips()
+    try:
+        cfg = WAFConfig(enabled=True, allowed_ips=tokens)
+    except ValueError as exc:
+        ui.error(str(exc))
+        ui.abort()
+
+    ui.success(
+        f"WAF: [highlight]Enabled[/highlight] "
+        f"({len(cfg.allowed_ips)} admin IP/CIDR)"
+    )
+    return cfg

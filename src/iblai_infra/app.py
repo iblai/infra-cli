@@ -7,7 +7,7 @@ from pathlib import Path
 from iblai_infra import ui
 from iblai_infra.models import DeploymentType, InfraConfig
 from iblai_infra.prompts.credentials import prompt_credentials
-from iblai_infra.prompts.dns_certs import prompt_dns_and_certs
+from iblai_infra.prompts.dns_certs import prompt_dns_and_certs, prompt_waf
 from iblai_infra.prompts.infrastructure import prompt_project_and_compute, prompt_network_and_ssh
 from iblai_infra.prompts.review import prompt_review
 from iblai_infra.terraform.runner import TerraformRunner
@@ -54,6 +54,12 @@ def run_provision_wizard(show_banner: bool = True) -> None:
         is_call_server=(deployment_type == DeploymentType.CALL),
     )
 
+    # Step 4b — WAF (single-server only; multi-server ALB and call-server
+    # are out of scope for this iteration)
+    waf = None
+    if deployment_type == DeploymentType.SINGLE:
+        waf = prompt_waf(dns.base_domain)
+
     # Assemble the full config
     config = InfraConfig(
         project_name=project_name,
@@ -67,6 +73,7 @@ def run_provision_wizard(show_banner: bool = True) -> None:
         ssh=ssh,
         certificates=certificates,
         dns=dns,
+        waf=waf,
     )
 
     # Step 5 — Review & confirm

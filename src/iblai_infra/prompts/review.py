@@ -115,6 +115,19 @@ def prompt_review(config: InfraConfig) -> bool:
         rows.append(("", "[bold]Storage[/bold]"))
         rows.append(("S3 buckets", "3 (backups, media, static)"))
 
+    # WAF (single-server only)
+    if config.waf and config.waf.enabled:
+        rows.append(("", ""))
+        rows.append(("", "[bold]WAF[/bold]"))
+        rows.append((
+            "Status",
+            f"Enabled · {len(config.waf.allowed_ips)} admin IP/CIDR",
+        ))
+        rows.append((
+            "Rules",
+            "10 custom + 6 AWS managed (~1355 WCU)",
+        ))
+
     ui.summary_panel("Infrastructure Summary", rows)
 
     # ----- Confirm -----

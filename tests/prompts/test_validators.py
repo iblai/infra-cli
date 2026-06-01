@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from iblai_infra.prompts.infrastructure import _validate_cidr, _validate_ip
-from iblai_infra.prompts.dns_certs import _validate_domain
+from iblai_infra.prompts.dns_certs import (
+    _validate_domain,
+    _validate_ip_csv,
+    _validate_ip_or_cidr,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -144,3 +148,68 @@ class TestValidateDomain:
 
     def test_numeric_parts(self):
         assert _validate_domain("123.456") is True
+
+
+# ---------------------------------------------------------------------------
+# WAF IP/CIDR validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidateIpOrCidr:
+    def test_bare_ip(self):
+        assert _validate_ip_or_cidr("203.0.113.7") is True
+
+    def test_cidr(self):
+        assert _validate_ip_or_cidr("10.0.0.0/16") is True
+
+    def test_slash_32_cidr(self):
+        assert _validate_ip_or_cidr("198.51.100.1/32") is True
+
+    def test_invalid_garbage(self):
+        assert _validate_ip_or_cidr("not-an-ip") is False
+
+    def test_empty_string(self):
+        assert _validate_ip_or_cidr("") is False
+
+    def test_only_whitespace(self):
+        assert _validate_ip_or_cidr("   ") is False
+
+    def test_invalid_prefix(self):
+        assert _validate_ip_or_cidr("10.0.0.0/33") is False
+
+
+class TestValidateIpCsv:
+    def test_single_bare_ip(self):
+        assert _validate_ip_csv("203.0.113.7") is True
+
+    def test_single_cidr(self):
+        assert _validate_ip_csv("10.0.0.0/16") is True
+
+    def test_mixed_csv(self):
+        assert _validate_ip_csv("203.0.113.7, 10.0.0.0/16, 192.0.2.1") is True
+
+    def test_trailing_comma_ok(self):
+        assert _validate_ip_csv("203.0.113.7,") is True
+
+    def test_whitespace_padding_ok(self):
+        assert _validate_ip_csv("  203.0.113.7 , 10.0.0.0/16  ") is True
+
+    def test_empty_string_rejected(self):
+        result = _validate_ip_csv("")
+        assert isinstance(result, str)
+        assert "at least one" in result.lower()
+
+    def test_only_commas_rejected(self):
+        result = _validate_ip_csv(",,,")
+        assert isinstance(result, str)
+        assert "at least one" in result.lower()
+
+    def test_one_bad_token_in_list_reported(self):
+        result = _validate_ip_csv("203.0.113.7,not-an-ip,10.0.0.0/16")
+        assert isinstance(result, str)
+        assert "not-an-ip" in result
+
+    def test_all_bad_tokens_reported(self):
+        result = _validate_ip_csv("foo,bar")
+        assert isinstance(result, str)
+        assert "foo" in result and "bar" in result

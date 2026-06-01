@@ -135,3 +135,17 @@ variable "certificate_chain_file" {
   type        = string
   default     = ""
 }
+
+# --- WAF (optional) ---
+
+variable "enable_waf" {
+  description = "Enable AWS WAFv2 Web ACL on the ALB"
+  type        = bool
+  default     = false
+}
+
+variable "waf_allowed_ips" {
+  description = "Admin IP/CIDR whitelist (CIDR form, e.g. 203.0.113.7/32). Used by allow-rules for Swagger, Studio, /admin, and /data."
+  type        = list(string)
+  default     = []
+}

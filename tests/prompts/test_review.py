@@ -19,6 +19,7 @@ from iblai_infra.models import (
     NetworkConfig,
     SSHConfig,
     SSHKeyMethod,
+    WAFConfig,
 )
 from iblai_infra.prompts.review import prompt_review
 
@@ -154,3 +155,50 @@ class TestPromptReview:
         with patch("questionary.confirm") as mock_confirm:
             mock_confirm.return_value.ask.return_value = True
             prompt_review(config)
+
+    # ----- WAF row -----
+
+    def test_waf_row_omitted_when_disabled(self):
+        config = _make_config()
+        assert config.waf is None  # default
+        with patch("iblai_infra.prompts.review.ui.summary_panel") as mock_panel, \
+             patch("questionary.confirm") as mock_confirm:
+            mock_confirm.return_value.ask.return_value = True
+            prompt_review(config)
+            rows = mock_panel.call_args[0][1]
+            assert not any(
+                label == "Status" and isinstance(val, str) and "Enabled" in val
+                and rows[i - 1][1].lower().endswith("waf[/bold]")
+                for i, (label, val) in enumerate(rows)
+            )
+            # Also: no "WAF" section header at all
+            assert all("WAF" not in (cell or "") for _, cell in rows)
+
+    def test_waf_row_omitted_when_attached_but_disabled(self):
+        config = _make_config()
+        config.waf = WAFConfig(enabled=False, allowed_ips=[])
+        with patch("iblai_infra.prompts.review.ui.summary_panel") as mock_panel, \
+             patch("questionary.confirm") as mock_confirm:
+            mock_confirm.return_value.ask.return_value = True
+            prompt_review(config)
+            rows = mock_panel.call_args[0][1]
+            assert all("WAF" not in (cell or "") for _, cell in rows)
+
+    def test_waf_row_present_when_enabled(self):
+        config = _make_config()
+        config.waf = WAFConfig(
+            enabled=True,
+            allowed_ips=["203.0.113.7", "10.0.0.0/16"],
+        )
+        with patch("iblai_infra.prompts.review.ui.summary_panel") as mock_panel, \
+             patch("questionary.confirm") as mock_confirm:
+            mock_confirm.return_value.ask.return_value = True
+            prompt_review(config)
+            rows = mock_panel.call_args[0][1]
+            # Section header
+            assert any(cell == "[bold]WAF[/bold]" for _, cell in rows)
+            # IP count
+            assert any(
+                label == "Status" and "2 admin IP/CIDR" in (val or "")
+                for label, val in rows
+            )

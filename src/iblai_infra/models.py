@@ -286,6 +286,51 @@ class CallServerConfig(BaseModel):
         return v
 
 
+class WAFConfig(BaseModel):
+    """Optional AWS WAFv2 Web ACL attached to the single-server ALB.
+
+    `allowed_ips` accepts both bare IPv4 addresses (e.g. "203.0.113.7") and
+    CIDR blocks (e.g. "10.0.0.0/16"). Bare IPs are normalised to /32 at
+    validation time because AWS WAFv2 IPSets require CIDR form. When
+    `enabled=True`, at least one IP/CIDR must be supplied — an empty allowlist
+    would lock the operator out of admin surfaces (Swagger, Studio, /admin,
+    /data).
+    """
+    enabled: bool = False
+    allowed_ips: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_ips")
+    @classmethod
+    def _normalize_ips(cls, v: list[str]) -> list[str]:
+        import ipaddress
+        out: list[str] = []
+        for raw in v:
+            s = (raw or "").strip()
+            if not s:
+                continue
+            try:
+                ipaddress.ip_address(s)
+                out.append(f"{s}/32")
+                continue
+            except ValueError:
+                pass
+            try:
+                net = ipaddress.ip_network(s, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"Invalid IP or CIDR: {raw!r}") from exc
+            out.append(str(net))
+        return out
+
+    @model_validator(mode="after")
+    def _require_ips_when_enabled(self) -> "WAFConfig":
+        if self.enabled and not self.allowed_ips:
+            raise ValueError(
+                "WAF is enabled but allowed_ips is empty. Provide at least one "
+                "IP or CIDR for the admin allowlist, or disable WAF."
+            )
+        return self
+
+
 # ---------------------------------------------------------------------------
 # Top-level config — the single contract
 # ---------------------------------------------------------------------------
@@ -302,6 +347,10 @@ class InfraConfig(BaseModel):
     ssh: SSHConfig
     certificates: CertificateConfig
     dns: DNSConfig
+    # Optional WAFv2 protection on the ALB. Single-server only — multi-server
+    # also has an ALB but is out of scope for this iteration; call-server has
+    # no ALB. Defaults to None (no WAF).
+    waf: WAFConfig | None = None
 
     @field_validator("project_name")
     @classmethod

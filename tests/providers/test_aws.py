@@ -361,7 +361,7 @@ class TestCheckPermissions:
         session.client.side_effect = client_factory
         results = check_permissions(session)
         assert all(r.passed for r in results)
-        assert len(results) == 7
+        assert len(results) == 8
 
     def test_ec2_denied(self):
         session = MagicMock()
@@ -429,6 +429,8 @@ class TestCheckPermissions:
                 client.list_hosted_zones.side_effect = error
             elif service == "iam":
                 client.list_server_certificates.side_effect = error
+            elif service == "wafv2":
+                client.list_web_acls.side_effect = error
             elif service == "sts":
                 client.get_caller_identity.side_effect = error
             return client
@@ -436,7 +438,7 @@ class TestCheckPermissions:
         session.client.side_effect = client_factory
         results = check_permissions(session)
         assert all(not r.passed for r in results)
-        assert len(results) == 7
+        assert len(results) == 8
 
     def test_botocore_error_in_permission_check(self):
         from botocore.exceptions import BotoCoreError

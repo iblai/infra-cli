@@ -41,6 +41,23 @@
     var: pgvector_result.stdout_lines
   when: pgvector_result.stdout_lines is defined
 
+# TimescaleDB ships preloaded in the DM postgres image
+# (shared_preload_libraries=timescaledb) but the extension is never created
+# unless we do it here. Without it, `setup_timescale_views` (data_seeding)
+# silently degrades and analytics hypertables are never built. Idempotent.
+- name: Enable TimescaleDB extension
+  become: false
+  shell: |
+    docker exec ibl_dm_db bash -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"'
+  args:
+    executable: /bin/bash
+  register: timescaledb_result
+
+- name: Show TimescaleDB extension result
+  debug:
+    var: timescaledb_result.stdout_lines
+  when: timescaledb_result.stdout_lines is defined
+
 - name: Launch IBL Manager (ibl dm launch)
   become: false
   shell: |

@@ -11,8 +11,9 @@
 #      the LMS settings + compose files, then restart edX so the new
 #      Django settings actually take effect.
 #   2. An `OAuth2ProviderConfig` row on the LMS for the `azuread-oauth2`
-#      slug, with `backend_name` derived from `platform_name`
-#      (e.g. `main-oauth2`). Defaults set `sync_learner_profile_data=True`
+#      slug, with `backend_name` = `azuread-oauth2` (the standard Azure AD
+#      social-auth backend — must match the slug and the Azure-registered
+#      redirect URI). Defaults set `sync_learner_profile_data=True`
 #      because Microsoft id tokens carry profile fields we want to sync
 #      on every login.
 #      `other_settings` carries the Microsoft-specific
@@ -56,7 +57,11 @@
       PLATFORM_NAME = "{{ platform_name | default('main') }}"
       TENANT_ID = "{{ microsoft_sso_tenant_id }}"
       BASE_DOMAIN = "{{ base_domain }}"
-      BACKEND_NAME = PLATFORM_NAME + "-oauth2"
+      # Azure AD requires the standard `azuread-oauth2` social-auth backend.
+      # It must equal the OAuth2ProviderConfig slug AND the registered redirect
+      # URI (/auth/complete/azuread-oauth2/). The old `<platform>-oauth2` value
+      # was not a real Azure backend, so SSO never completed.
+      BACKEND_NAME = "azuread-oauth2"
 
       desired = {
           "ENABLE_EDX_BASE_OAUTH_SSO_BACKEND": True,
@@ -173,7 +178,11 @@
       BASE_DOMAIN = "{{ base_domain }}"
       LMS_HOST = "learn." + BASE_DOMAIN
       PLATFORM_NAME = "{{ platform_name | default('main') }}"
-      BACKEND_NAME = PLATFORM_NAME + "-oauth2"
+      # Azure AD requires the standard `azuread-oauth2` social-auth backend.
+      # It must equal the OAuth2ProviderConfig slug AND the registered redirect
+      # URI (/auth/complete/azuread-oauth2/). The old `<platform>-oauth2` value
+      # was not a real Azure backend, so SSO never completed.
+      BACKEND_NAME = "azuread-oauth2"
       SLUG = "azuread-oauth2"
       TENANT_ID = "{{ microsoft_sso_tenant_id }}"
       CLIENT_ID = "{{ microsoft_sso_client_id }}"
@@ -255,7 +264,10 @@
 
 - name: Confirm Microsoft SSO configuration applied
   ansible.builtin.debug:
-    msg: "Microsoft SSO configured for learn.{{ base_domain }} (platform={{ platform_name | default('main') }}, organization={{ microsoft_sso_organization or '(none)' }})"
+    msg:
+      - "Microsoft SSO configured for learn.{{ base_domain }} (platform={{ platform_name | default('main') }}, organization={{ microsoft_sso_organization or '(none)' }})"
+      - "ACTION REQUIRED (client): register this redirect URI in the Azure AD app registration ->"
+      - "  https://learn.{{ base_domain }}/auth/complete/azuread-oauth2/"
   when: microsoft_sso_enabled | default(false) | bool
 
 # ---------------------------------------------------------------------------
@@ -266,7 +278,7 @@
 #     auth host (so the Azure session is killed alongside ours).
 #   - IBL_DIRECT_SSO_URL       — the "Sign in with Microsoft" deep link the
 #     SPA renders. Points at the LMS python-social-auth login endpoint for
-#     this platform's backend (`<platform_name>-oauth2`), with an inner
+#     the `azuread-oauth2` backend, with an inner
 #     `?next=...` that completes the OAuth dance back into the SPA's
 #     /login/complete callback. The inner client_id MUST be the same
 #     EDX_SSO_CLIENT_ID the ibl_spa role minted for the `spa-sso`
@@ -294,7 +306,11 @@
       BASE_DOMAIN = "{{ base_domain }}"
       PLATFORM_NAME = "{{ platform_name | default('main') }}"
       TENANT_ID = "{{ microsoft_sso_tenant_id }}".strip() or "common"
-      BACKEND_NAME = PLATFORM_NAME + "-oauth2"
+      # Azure AD requires the standard `azuread-oauth2` social-auth backend.
+      # It must equal the OAuth2ProviderConfig slug AND the registered redirect
+      # URI (/auth/complete/azuread-oauth2/). The old `<platform>-oauth2` value
+      # was not a real Azure backend, so SSO never completed.
+      BACKEND_NAME = "azuread-oauth2"
 
       with open(PATH) as f:
           cfg = yaml.safe_load(f) or {}
@@ -385,7 +401,7 @@
   ansible.builtin.debug:
     msg: >-
       IBL_SPA.AUTH updated: EXTERNAL_IDP_LOGOUT_URL → login.microsoftonline.com/{{ microsoft_sso_tenant_id | default('common', true) }}/...,
-      IBL_DIRECT_SSO_URL → learn.{{ base_domain }}/auth/login/{{ platform_name | default('main') }}-oauth2/...
+      IBL_DIRECT_SSO_URL → learn.{{ base_domain }}/auth/login/azuread-oauth2/...
   when:
     - microsoft_sso_enabled | default(false) | bool
     - spa_auth_patch.changed | default(false)

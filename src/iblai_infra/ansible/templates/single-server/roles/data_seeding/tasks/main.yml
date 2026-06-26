@@ -143,7 +143,19 @@
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
-  ignore_errors: true
+  register: setup_timescale_result
+  # Surface the real failure instead of swallowing it (was `ignore_errors: true`,
+  # which hid the missing-`timescaledb`-extension case entirely). The extension is
+  # now created in the ibl_dm role, so this should succeed; fail loudly on a genuine
+  # error (Python traceback) while tolerating benign non-zero exits / idempotent re-runs.
+  failed_when: >-
+    setup_timescale_result.rc != 0 and
+    ('Traceback' in (setup_timescale_result.stdout | default('') ~ setup_timescale_result.stderr | default('')))
+
+- name: Show TimescaleDB views setup result
+  ansible.builtin.debug:
+    var: setup_timescale_result.stdout_lines
+  when: setup_timescale_result.stdout_lines is defined
 
 - name: Recreate analytics views
   become: false

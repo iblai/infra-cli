@@ -368,6 +368,7 @@
     pyenv activate "{{ venv_name }}"
     ibl config save --set 'IBL_DM.ENABLE_RBAC=true'
     ibl config save --set 'IBL_DM.ENABLE_RBAC_SEEDING=true'
+    ibl config save --set 'IBL_DM.ENABLE_RBAC_GROUP_MANAGEMENT=true'
     ibl config save --set 'IBL_DM.ENABLE_TIMESCALEDB=true'
   args:
     executable: /bin/bash

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.12.0] — 2026-06-26
+
+### Fixed
+- **TimescaleDB extension now created during DM bootstrap** — the DM postgres image ships TimescaleDB preloaded (`shared_preload_libraries=timescaledb`), but the flow only ever ran `CREATE EXTENSION vector`; `timescaledb` was never created, so `setup_timescale_views --full-setup` (which ran under `ignore_errors: true`) silently degraded and analytics hypertables were never built. The `ibl_dm` role now runs `CREATE EXTENSION IF NOT EXISTS timescaledb` right after pgvector (idempotent, postgres-superuser). Confirmed against a field environment whose DB had only `plpgsql` + `vector`.
+- **Microsoft SSO now uses the standard `azuread-oauth2` backend** — the `microsoft_sso_config` role derived the provider `backend_name` (and the `/auth/login` + `/auth/complete` SSO URLs) from `platform_name` (e.g. `main-oauth2`), which is not a registered Azure AD social-auth backend, so sign-in never completed and operators had to hand-fix the LMS `OAuth2ProviderConfig`. All backend references — `OAuth2ProviderConfig.backend_name`, the `IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND` block (`IBL_OAUTH_SSO_NAME` / `TRACKED_PROVIDERS`), `other_settings.backend_uri`, and `IBL_SPA.AUTH.IBL_DIRECT_SSO_URL` — now use the constant `azuread-oauth2`, matching the provider slug and the Azure-registered redirect URI. `other_settings.platform_key` still carries the tenant `platform_name`.
+- **`setup_timescale_views` failures now surface** — replaced the blanket `ignore_errors: true` on the data_seeding "Setup TimescaleDB views" task with a `register` + `failed_when` (fails on a genuine Python traceback, tolerates benign non-zero exits / idempotent re-runs) and a debug that prints the command output.
+
+### Added
+- **`IBL_DM.ENABLE_RBAC_GROUP_MANAGEMENT=true` set by default** — added to the `ibl_platform` "Enable DM RBAC" block alongside the existing `ENABLE_RBAC` / `ENABLE_RBAC_SEEDING` / `ENABLE_TIMESCALEDB` defaults (previously had to be set by hand).
+- **Azure AD redirect-URI prerequisite documented** — `.env.setup.example` and the `microsoft_sso_config` end-of-run confirmation now spell out the exact redirect URI the client must register in their Azure AD app: `https://learn.<BASE_DOMAIN>/auth/complete/azuread-oauth2/`.
+
 ## [1.11.0] — 2026-06-01
 
 ### Added

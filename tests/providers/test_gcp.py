@@ -164,10 +164,18 @@ class TestCheckPermissions:
 
 class TestRequiredRoles:
     def test_shape(self):
-        assert "roles" in gcp.REQUIRED_GCP_ROLES
-        assert "apis" in gcp.REQUIRED_GCP_ROLES
-        assert "roles/compute.admin" in gcp.REQUIRED_GCP_ROLES["roles"]
-        assert "compute.googleapis.com" in gcp.REQUIRED_GCP_ROLES["apis"]
+        # Exact equality (not substring/membership checks) — pins the full
+        # role/API surface and keeps CodeQL's URL-substring rule quiet.
+        assert sorted(gcp.REQUIRED_GCP_ROLES) == ["apis", "roles"]
+        assert gcp.REQUIRED_GCP_ROLES["roles"] == [
+            "roles/compute.admin",
+            "roles/dns.admin",
+            "roles/iam.serviceAccountUser",
+        ]
+        assert gcp.REQUIRED_GCP_ROLES["apis"] == [
+            "compute.googleapis.com",
+            "dns.googleapis.com",
+        ]
 
 
 class TestScopedCredentials:

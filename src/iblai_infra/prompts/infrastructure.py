@@ -17,11 +17,14 @@ from iblai_infra.models import (
     ComputeConfig,
     DeploymentType,
     Environment,
+    GCP_DISK_TYPES,
+    GCP_MACHINE_TYPES,
     INSTANCE_TYPES,
     MultiServerConfig,
     NetworkConfig,
     SSHConfig,
     SSHKeyMethod,
+    gcp_machine_ram_gb,
     generate_password,
     instance_ram_gb,
 )
@@ -213,6 +216,105 @@ def prompt_project_and_compute() -> (
         volume_type=volume_type,
     )
     return project_name, env, deployment_type, compute, multi_server, call_server
+
+
+def _warn_if_low_memory_gcp(machine_type: str) -> None:
+    """GCP analog of _warn_if_low_memory (uses GCP machine-type RAM lookup)."""
+    ram = gcp_machine_ram_gb(machine_type)
+    if ram is None or ram > 32:
+        return
+    ui.warning(f"Selected: [highlight]{machine_type}[/highlight] ({ram} GB RAM).")
+    ui.muted("  If you plan to enable AI features (the default for IBL deployments),")
+    ui.muted("  64 GB (e.g. [brand]e2-standard-16[/brand] or [brand]n2-highmem-8[/brand]) is strongly recommended.")
+
+
+def prompt_gcp_project_and_compute() -> tuple[str, Environment, ComputeConfig]:
+    """GCP single-server: project identity + machine type + disk.
+
+    No deployment-type choice — GCP is single-server only for now. Returns the
+    ComputeConfig with instance_type=machine type, volume_type=disk type.
+    """
+    ui.step_header(2, TOTAL_STEPS, "Project & Compute")
+
+    project_name = questionary.text(
+        "Project name:",
+        validate=lambda v: (
+            bool(v.strip()) and v.strip().replace("-", "").replace("_", "").isalnum()
+        )
+        or "Alphanumeric, hyphens, and underscores only",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if project_name is None:
+        ui.abort()
+    project_name = project_name.strip().lower()
+
+    env = questionary.select(
+        "Environment:",
+        choices=[
+            questionary.Choice("Production", value=Environment.PROD),
+            questionary.Choice("Staging", value=Environment.STAGING),
+            questionary.Choice("Development", value=Environment.DEV),
+        ],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if env is None:
+        ui.abort()
+
+    machine_labels = {f"{m}  — {desc}": m for m, desc in GCP_MACHINE_TYPES.items()}
+    machine_labels["Custom (enter manually)"] = "_custom"
+    selection = questionary.autocomplete(
+        "Machine type (type to filter):",
+        choices=list(machine_labels.keys()),
+        default=f"e2-standard-8  — {GCP_MACHINE_TYPES['e2-standard-8']}",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+        validate=lambda v: v in machine_labels or "Select a valid machine type from the list",
+    ).ask()
+    if selection is None:
+        ui.abort()
+    machine_type = machine_labels[selection]
+    if machine_type == "_custom":
+        machine_type = questionary.text(
+            "Enter machine type (e.g. n2-standard-8):",
+            validate=lambda v: bool(v.strip()) or "Required",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if machine_type is None:
+            ui.abort()
+
+    _warn_if_low_memory_gcp(machine_type)
+
+    volume_size = questionary.text(
+        "Boot disk size in GB:",
+        default="100",
+        validate=lambda v: (v.isdigit() and int(v) >= 100) or "Must be a number >= 100",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if volume_size is None:
+        ui.abort()
+
+    disk_type = questionary.select(
+        "Disk type:",
+        choices=[
+            questionary.Choice(f"{dt}  — {desc}", value=dt) for dt, desc in GCP_DISK_TYPES.items()
+        ],
+        default="pd-balanced",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if disk_type is None:
+        ui.abort()
+
+    compute = ComputeConfig(
+        instance_type=machine_type,
+        volume_size=int(volume_size),
+        volume_type=disk_type,
+    )
+    return project_name, env, compute
 
 
 def _prompt_multi_server_config() -> MultiServerConfig:
@@ -429,12 +531,18 @@ def _prompt_call_server_config() -> CallServerConfig:
 # ---------------------------------------------------------------------------
 
 def prompt_network_and_ssh(
-    credentials: AWSCredentials,
+    credentials: AWSCredentials | None,
     project_name: str,
     environment: Environment,
     default_vpc_cidr: str = "10.0.0.0/16",
+    allow_aws_keypair: bool = True,
 ) -> tuple[NetworkConfig, SSHConfig]:
-    """Prompt for network (VPC, VPN IP) and SSH key configuration."""
+    """Prompt for network (VPC/subnet CIDR, SSH source IP) and SSH key.
+
+    Provider-neutral except for the "existing AWS key pair" option, which is
+    only offered when ``allow_aws_keypair`` is True and ``credentials`` is an
+    AWSCredentials (GCP injects keys via metadata and passes allow_aws_keypair=False).
+    """
 
     ui.step_header(3, TOTAL_STEPS, "Network & Access")
 
@@ -480,16 +588,18 @@ def prompt_network_and_ssh(
         questionary.Choice("Provide an existing public key file", value=SSHKeyMethod.EXISTING_FILE),
     ]
 
-    # Check for existing AWS key pairs
-    session = get_session(credentials)
-    aws_keys = list_key_pairs(session)
-    if aws_keys:
-        ssh_choices.append(
-            questionary.Choice(
-                f"Use an existing AWS key pair ({len(aws_keys)} found)",
-                value=SSHKeyMethod.AWS_KEYPAIR,
+    # Check for existing AWS key pairs (AWS only — GCP injects keys via metadata)
+    aws_keys = []
+    if allow_aws_keypair and credentials is not None:
+        session = get_session(credentials)
+        aws_keys = list_key_pairs(session)
+        if aws_keys:
+            ssh_choices.append(
+                questionary.Choice(
+                    f"Use an existing AWS key pair ({len(aws_keys)} found)",
+                    value=SSHKeyMethod.AWS_KEYPAIR,
+                )
             )
-        )
 
     ssh_method: SSHKeyMethod = questionary.select(
         "SSH Key:",

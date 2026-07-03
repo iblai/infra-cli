@@ -15,10 +15,13 @@ from iblai_infra.models import (
     CallServerConfig,
     CertificateConfig,
     CertMethod,
+    CloudProvider,
     ComputeConfig,
     DeploymentType,
     DNSConfig,
     Environment,
+    GCPAuthMethod,
+    GCPCredentials,
     InfraConfig,
     NetworkConfig,
     ProjectState,
@@ -56,6 +59,42 @@ def infra_config(aws_credentials: AWSCredentials) -> InfraConfig:
         ),
         certificates=CertificateConfig(method=CertMethod.NONE),
         dns=DNSConfig(base_domain="example.com"),
+    )
+
+
+@pytest.fixture
+def gcp_credentials() -> GCPCredentials:
+    return GCPCredentials(
+        method=GCPAuthMethod.SERVICE_ACCOUNT_KEY,
+        project_id="test-gcp-project",
+        region="us-central1",
+        zone="us-central1-a",
+        credentials_file="/tmp/sa-key.json",
+        account="sa@test-gcp-project.iam.gserviceaccount.com",
+    )
+
+
+@pytest.fixture
+def gcp_infra_config(gcp_credentials: GCPCredentials) -> InfraConfig:
+    return InfraConfig(
+        project_name="testgcp",
+        environment=Environment.DEV,
+        cloud=CloudProvider.GCP,
+        gcp_credentials=gcp_credentials,
+        network=NetworkConfig(vpc_cidr="10.0.0.0/16", vpn_ip="203.0.113.42"),
+        compute=ComputeConfig(
+            instance_type="e2-standard-8", volume_size=100, volume_type="pd-balanced"
+        ),
+        ssh=SSHConfig(
+            method=SSHKeyMethod.GENERATE,
+            key_name="testgcp-dev",
+            public_key="ssh-ed25519 AAAATESTKEY test",
+            private_key_path=Path("/tmp/testgcp"),
+        ),
+        certificates=CertificateConfig(method=CertMethod.MANAGED),
+        dns=DNSConfig(
+            base_domain="example.com", dns_zone_name="example-zone", create_dns_zone=False
+        ),
     )
 
 

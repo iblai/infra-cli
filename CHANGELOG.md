@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.13.0] — 2026-07-03
+
+### Added
+- **GCP provider — single-server deployments on Google Cloud.** `iblai infra provision` now starts by asking which cloud; picking GCP walks the same wizard against a GCP project (project ID, region/zone, ADC or service-account-key auth — validated on the spot). The Terraform stack (`templates/gcp/single-server/`) provisions: a VPC with one regional subnet; firewall rules (SSH restricted to the operator IP, health checks from Google's probe ranges); a Compute Engine VM (Ubuntu 22.04, SSH keys via instance metadata, startup script mirroring the AWS user-data); an unmanaged instance group behind a **global external Application Load Balancer** (`EXTERNAL_MANAGED`) with a static IP, HTTP→HTTPS redirect at the edge, and a health check that probes the LMS heartbeat with a `learn.<domain>` Host header (GCP requires a literal 200; probing `/` hits the platform nginx catch-all's 301 and serves 503 "no healthy upstream" for everything — verified live and designed out); a **Google-managed SSL certificate** covering the base domain + all platform subdomains (validates asynchronously — the CLI says so and prints nameservers to delegate when it created the zone); and Cloud DNS A-records (existing zone auto-detected, or created via `CREATE_DNS_ZONE=true`). Multi-server and call-server remain AWS-only.
+- **`PROVIDER=gcp` non-interactive path** — `iblai infra provision-env -f .env` dispatches to a GCP builder (`gcp_env_provision.py`) with zone auto-detection (`CERT_METHOD=auto`), DNS-conflict cleanup, and the same validation UX as AWS. New `.env.provision.gcp.example` documents every key.
+- **`providers/gcp.py`** — GCP SDK helpers mirroring the AWS provider surface: credential validation (ADC or service-account key), Cloud DNS zone discovery, conflicting-record find/delete, and read-only permission probes. Google libraries ship as an optional extra: `uv sync --extra gcp` (AWS-only installs are unaffected; GCP entry points fail with a clear install hint when the extra is missing).
+- **`iblai infra permissions --provider gcp [--check --project <ID>]`** — prints the required roles (`compute.admin`, `dns.admin`, `iam.serviceAccountUser`) + APIs (`compute`, `dns`) with a copy-paste `gcloud services enable` line, and `--check` probes them against live credentials.
+- **`CloudProvider` axis on `InfraConfig`** — `cloud: aws|gcp` (default `aws`; existing `state.json` files deserialize unchanged) plus `GCPCredentials`; `credentials` is now optional with a per-cloud validator. `TerraformRunner` dispatches template tree, tfvars, and subprocess env (`GOOGLE_*`/`CLOUDSDK_*`) on it. `status`/`list` display the cloud.
+- **`docs/GCP.md`** — step-by-step GCP guide for new operators: prerequisites (project, APIs, auth), interactive + `.env` provisioning, DNS-delegation and async-certificate behavior, the AWS S3 storage convention, teardown, and a troubleshooting table.
+- **`iblai-cli-ops` version auto-resolved from the prod-images pin.** `iblai-prod-images`' `pyproject.toml` pins its `ibl-cli` dependency via `[tool.uv.sources]`, but uv ignores that table on git-URL installs — so the Ansible role must force-install `iblai-cli-ops` at an explicit tag, and operators previously had to *know* the right one. Setup/resetup now ask a single version question (**prod-images release tag**, default `main` — previously never prompted) and resolve the matching cli-ops tag from the pin via the GitHub API using the operator's PAT (`env_utils.resolve_pinned_cli_ops_tag`, monorepo-subdir aware), prompting manually only when the pin is unreadable. Same resolution in `setup-env` (`CLI_OPS_RELEASE_TAG` now optional) and `launch`/`launch-env` (`--cli-tag`/`CLI_TAG` now optional).
+
+### Changed
+- **Stale `cli_ops_release_tag` default (`3.19.0`) removed from every input layer** (model default, prompts, launch flags, `.env` parsing). **Behavior change:** flows that previously fell back to installing `iblai-cli-ops@3.19.0` when no tag was given now install the version pinned by the selected prod-images release (or `main` when the pin can't be read).
+- **GCP object storage stays on AWS S3 by design** — the GCP stack provisions no buckets; the platform keeps its existing S3 integration. Operators pre-create the three buckets on the standard naming convention and supply AWS credentials at the setup step (documented in `docs/GCP.md` and the review/summary panels).
+- **README restructured** — five-step Quick start, cloud-split prerequisites, GCP threaded through every relevant section, refreshed project structure.
+
+### Fixed
+- **`iblai infra setup <name>` crashed on GCP-provisioned states** (`AttributeError: 'NoneType' object has no attribute 'region'`) — the credentials step assumed every state carries AWS provisioning credentials to offer for reuse. GCP states (no AWS credential block) now skip the reuse offer and prompt for fresh S3/ECR keys; same guard applied to the `setup-env` region derivation.
+- **`iblai infra waf` on a non-AWS stack** now rejects with a clear "AWS WAFv2 only" error instead of silently no-oping, and GCP stacks are excluded from the eligible-project picker.
+- **GCP `provision-env` surfaces model-validation failures** (e.g. the 100 GB single-server volume floor) as clean one-line errors instead of a raw traceback.
+
+Test count: 749 passing.
+
 ## [1.12.0] — 2026-06-26
 
 ### Fixed

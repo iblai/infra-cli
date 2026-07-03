@@ -524,7 +524,7 @@ def launch(
     instance_type: str = typer.Option("t3.2xlarge", "--instance-type", help="EC2 instance type"),
     volume_size: int = typer.Option(200, "--volume-size", help="Root volume size in GB"),
     environment: str = typer.Option("staging", "--environment", help="Environment (dev, staging, prod)"),
-    cli_tag: str = typer.Option("3.19.0", "--cli-tag", help="iblai-cli-ops release tag"),
+    cli_tag: str = typer.Option("", "--cli-tag", help="iblai-cli-ops release tag (default: resolved from the prod-images [tool.uv.sources] pin)"),
     github_org: str = typer.Option("iblai", "--github-org", help="GitHub org owning the private CLI ops + prod images repos"),
     cli_ops_repo: str = typer.Option("iblai-cli-ops", "--cli-ops-repo", help="CLI ops repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
     prod_images_repo: str = typer.Option("iblai-prod-images", "--prod-images-repo", help="Prod images repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
@@ -787,7 +787,7 @@ def launch_env(
     instance_type = env.get("INSTANCE_TYPE", "t3.2xlarge")
     volume_size = int(env.get("VOLUME_SIZE", "200"))
     environment = env.get("ENVIRONMENT", "staging")
-    cli_tag = env.get("CLI_TAG", "3.19.0")
+    cli_tag = env.get("CLI_TAG", "")  # empty = resolve from the prod-images pin
     admin_username = env.get("ADMIN_USERNAME", "platform_admin").strip()
     from iblai_infra.models import (
         RESERVED_ADMIN_USERNAMES,
@@ -971,40 +971,57 @@ def provision_env(
     env = load_env_file(env_file)
     config = build_infra_config_from_env(env)
 
-    # Summary panel — mirrors launch-env's shape, masks the AWS key.
-    rows = [
-        ("Project", f"{config.project_name}-{config.environment.value}"),
-        ("Region", config.credentials.region),
-        ("Instance", config.compute.instance_type),
-        ("Volume", f"{config.compute.volume_size} GB ({config.compute.volume_type})"),
-        ("VPC CIDR", config.network.vpc_cidr),
-        ("VPN IP", f"{config.network.vpn_ip}/32"),
-        ("Domain", config.dns.base_domain),
-        ("Cert", config.certificates.method.value),
-        ("SSH", f"{config.ssh.method.value} ({config.ssh.key_name})"),
-    ]
-    if config.credentials.access_key_id:
-        rows.append(("AWS key", mask(config.credentials.access_key_id)))
-    elif config.credentials.profile:
-        rows.append(("AWS profile", config.credentials.profile))
+    # Summary panel — provider-aware (GCP has no `config.credentials`).
+    from iblai_infra.models import CloudProvider, gcp_machine_ram_gb, instance_ram_gb
+
+    if config.cloud == CloudProvider.GCP:
+        gc = config.gcp_credentials
+        rows = [
+            ("Project", f"{config.project_name}-{config.environment.value}"),
+            ("Cloud", "GCP"),
+            ("GCP project", gc.project_id if gc else ""),
+            ("Region/Zone", f"{gc.region} / {gc.zone}" if gc else ""),
+            ("Machine", config.compute.instance_type),
+            ("Disk", f"{config.compute.volume_size} GB ({config.compute.volume_type})"),
+            ("Subnet CIDR", config.network.vpc_cidr),
+            ("VPN IP", f"{config.network.vpn_ip}/32"),
+            ("Domain", config.dns.base_domain),
+            ("Cert", config.certificates.method.value),
+            ("SSH", f"{config.ssh.method.value} ({config.ssh.key_name})"),
+        ]
+        if config.dns.dns_zone_name:
+            verb = "create" if config.dns.create_dns_zone else "use"
+            rows.append(("DNS zone", f"{config.dns.dns_zone_name} ({verb})"))
+        rows.append(("Auth", "service-account key" if (gc and gc.credentials_file) else "ADC"))
+        ram = gcp_machine_ram_gb(config.compute.instance_type)
+    else:
+        rows = [
+            ("Project", f"{config.project_name}-{config.environment.value}"),
+            ("Region", config.credentials.region),
+            ("Instance", config.compute.instance_type),
+            ("Volume", f"{config.compute.volume_size} GB ({config.compute.volume_type})"),
+            ("VPC CIDR", config.network.vpc_cidr),
+            ("VPN IP", f"{config.network.vpn_ip}/32"),
+            ("Domain", config.dns.base_domain),
+            ("Cert", config.certificates.method.value),
+            ("SSH", f"{config.ssh.method.value} ({config.ssh.key_name})"),
+        ]
+        if config.credentials.access_key_id:
+            rows.append(("AWS key", mask(config.credentials.access_key_id)))
+        elif config.credentials.profile:
+            rows.append(("AWS profile", config.credentials.profile))
+        ram = instance_ram_gb(config.compute.instance_type)
+
     ui.summary_panel("Provision Configuration", rows)
 
-    # Same memory heads-up the interactive `provision` wizard and the launch
-    # flows surface. provision-env doesn't know whether AI will be enabled
-    # downstream (that's a setup-step decision), so we warn unconditionally
-    # on 32 GB boxes — the operator can ignore if they're sure AI stays off.
-    from iblai_infra.models import instance_ram_gb
-    ram = instance_ram_gb(config.compute.instance_type)
+    # Memory heads-up on 32 GB boxes — provision-env doesn't know whether AI
+    # will be enabled downstream (a setup-step decision), so warn unconditionally.
     if ram is not None and ram <= 32:
-        ui.warning(
-            f"INSTANCE_TYPE={config.compute.instance_type!r} has {ram} GB RAM."
-        )
+        ui.warning(f"{config.compute.instance_type!r} has {ram} GB RAM.")
         ui.muted(
             "  If you plan to enable AI features during setup (the default for IBL deployments),"
         )
-        ui.muted(
-            "  64 GB (e.g. m5.4xlarge or r5.2xlarge) is strongly recommended."
-        )
+        ui.muted("  64 GB is strongly recommended.")
 
     ui.newline()
     ui.console.print("  [brand]Provisioning infrastructure...[/brand]")
@@ -1408,6 +1425,25 @@ def _run_launch(
     # destroy` is the recovery.
     ui.private_access_notice()
     ui.newline()
+
+    # No explicit --cli-tag: resolve it from the prod-images pin (launch
+    # installs prod-images@main, so read main's [tool.uv.sources] rev).
+    if not cli_tag:
+        from iblai_infra.env_utils import resolve_pinned_cli_ops_tag
+        from iblai_infra.models import parse_repo_path
+
+        pi_repo, pi_subdir = parse_repo_path(prod_images_repo)
+        cli_tag = resolve_pinned_cli_ops_tag(
+            git_token, github_org, pi_repo, "main", subdir=pi_subdir
+        ) or ""
+        if cli_tag:
+            ui.info(f"iblai-cli-ops [highlight]{cli_tag}[/highlight] (pinned by {pi_repo}@main)")
+        else:
+            cli_tag = "main"
+            ui.warning(
+                f"Could not read the iblai-cli-ops pin from {pi_repo}@main; "
+                "falling back to 'main'. Pass --cli-tag to override."
+            )
 
     setup_config = SetupConfig(
         ssh_private_key_path=ssh_key,
@@ -2387,10 +2423,11 @@ def status(
     rows = [
         ("", "[bold]General[/bold]"),
         ("Name", state.name),
+        ("Cloud", state.config.cloud.value.upper()),
         ("Provider", state.provider.upper()),
         ("Status", f"[{sc}]{state.status.upper()}[/{sc}]"),
         ("Environment", state.config.environment.value.capitalize()),
-        ("Region", state.config.credentials.region),
+        ("Region", state.config.region),
         ("Domain", state.config.dns.base_domain),
         ("Created", state.created_at.strftime("%Y-%m-%d %H:%M UTC")),
         ("Updated", state.updated_at.strftime("%Y-%m-%d %H:%M UTC")),
@@ -2492,18 +2529,107 @@ def _resolve_credentials(
     return creds, identity_obj
 
 
+def _gcp_permissions(check: bool, project: str | None) -> None:
+    """Show (and optionally verify) the GCP roles + APIs provisioning needs."""
+    from iblai_infra.providers.gcp import REQUIRED_GCP_ROLES
+
+    ui.newline()
+    ui.info("Minimum GCP roles + APIs for [highlight]iblai infra provision[/highlight] (GCP)")
+    ui.newline()
+    ui.muted("Grant these roles to your user or service account:")
+    for r in REQUIRED_GCP_ROLES["roles"]:
+        ui.console.print(f"  • {r}")
+    ui.newline()
+    ui.muted("Enable these APIs:")
+    for a in REQUIRED_GCP_ROLES["apis"]:
+        ui.console.print(f"  • {a}")
+    ui.newline()
+    apis = " ".join(REQUIRED_GCP_ROLES["apis"])
+    ui.muted(f"  gcloud services enable {apis} --project <PROJECT_ID>")
+
+    if not check:
+        ui.newline()
+        ui.muted(
+            "Run [brand]iblai infra permissions --provider gcp --check --project <ID>[/brand]"
+            " to verify your credentials."
+        )
+        ui.newline()
+        return
+
+    if not project:
+        ui.newline()
+        ui.error("--check for GCP requires --project <PROJECT_ID>")
+        raise typer.Exit(1)
+
+    import os
+    from rich.status import Status
+
+    from iblai_infra.models import GCPAuthMethod, GCPCredentials
+    from iblai_infra.providers.gcp import check_permissions as gcp_check
+
+    key = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    creds = GCPCredentials(
+        method=GCPAuthMethod.SERVICE_ACCOUNT_KEY if key else GCPAuthMethod.ADC,
+        project_id=project,
+        region="us-central1",
+        zone="us-central1-a",
+        credentials_file=key,
+    )
+    ui.newline()
+    with Status("[info]Checking permissions...[/info]", console=ui.console):
+        results = gcp_check(creds)
+
+    table = Table(
+        title=f"[bold {ui.IBL_BLUE}]GCP Permission Check[/]",
+        border_style=ui.IBL_NAVY,
+        header_style=f"bold {ui.IBL_BLUE_LIGHT}",
+        padding=(0, 1),
+    )
+    table.add_column("Service", style="bold white", min_width=20)
+    table.add_column("Used For", style="dim", min_width=36)
+    table.add_column("Status", min_width=10, justify="center")
+    passed = failed = 0
+    for r in results:
+        if r.passed:
+            table.add_row(r.service, r.description, "[bold #3ECF6E]✓ OK[/]")
+            passed += 1
+        else:
+            table.add_row(r.service, r.description, "[bold #E85454]✗ FAIL[/]")
+            failed += 1
+    ui.console.print(table)
+    ui.newline()
+    if failed == 0:
+        ui.success(f"All {passed} checks passed. You're ready to provision on GCP.")
+    else:
+        ui.error(f"{failed} of {passed + failed} checks failed:")
+        for r in results:
+            if not r.passed:
+                ui.muted(f"  {r.service}: {r.error}")
+    ui.newline()
+
+
 @infra_app.command()
 def permissions(
     check: bool = typer.Option(
         False,
         "--check",
-        help="Dry-run against active AWS credentials to verify permissions.",
+        help="Dry-run against active credentials to verify permissions.",
+    ),
+    provider: str = typer.Option(
+        "aws",
+        "--provider",
+        help="Cloud provider: aws or gcp.",
     ),
     profile: str | None = typer.Option(
         None,
         "--profile",
         "-p",
-        help="AWS profile to check against (default: auto-detect).",
+        help="AWS profile to check against (aws only).",
+    ),
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        help="GCP project ID (required for gcp --check).",
     ),
     region: str = typer.Option(
         "us-east-1",
@@ -2512,7 +2638,11 @@ def permissions(
         help="AWS region for the check.",
     ),
 ) -> None:
-    """Show required IAM permissions. Use --check to verify against your credentials."""
+    """Show required cloud permissions. Use --check to verify against your credentials."""
+    if provider.strip().lower() == "gcp":
+        _gcp_permissions(check=check, project=project)
+        return
+
     import json
 
     from iblai_infra.providers.aws import REQUIRED_IAM_POLICY
@@ -2656,12 +2786,16 @@ def list_cmd() -> None:
             type_display = f"multi ({count})"
         else:
             type_display = "single"
+        # Mark GCP rows so AWS/GCP are distinguishable at a glance.
+        cloud = getattr(s.config, "cloud", None)
+        if cloud is not None and cloud.value == "gcp":
+            type_display = f"gcp · {type_display}"
 
         table.add_row(
             s.name,
             type_display,
             s.config.environment.value.capitalize(),
-            s.config.credentials.region,
+            s.config.region,
             s.config.dns.base_domain,
             f"[{sc}]{s.status}[/{sc}]",
             setup_display,

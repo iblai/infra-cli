@@ -475,7 +475,9 @@ class AnsibleRunner:
             "base_domain": self.config.base_domain,
             "edx_version": self.config.edx_version,
             "env_config": self.config.env_config,
-            "cli_ops_release_tag": self.config.cli_ops_release_tag,
+            # Empty tag = unresolved (e.g. programmatic SetupConfig) — fall
+            # back to the repo's main branch rather than emitting `@`.
+            "cli_ops_release_tag": self.config.cli_ops_release_tag or "main",
             "prod_images_tag": self.config.prod_images_tag,
             "is_resetup": self.config.is_resetup,
             "enable_ai": self.config.enable_ai,

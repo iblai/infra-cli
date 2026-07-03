@@ -83,6 +83,11 @@ def build_infra_config_from_env(
     Single-server only. Raises `typer.Exit(1)` on any validation failure
     after printing a human-readable error.
     """
+    # Provider dispatch: GCP has its own builder (different creds, DNS, certs).
+    if (env.get("PROVIDER") or "aws").strip().lower() == "gcp":
+        from iblai_infra.gcp_env_provision import build_gcp_infra_config_from_env
+        return build_gcp_infra_config_from_env(env, auto_delete_cnames=auto_delete_cnames)
+
     # Single-server is the only deployment type this command supports.
     # Catch operators who copy a launch-env file expecting it to work.
     deployment_raw = (env.get("DEPLOYMENT_TYPE") or "single-server").strip().lower()

@@ -67,6 +67,17 @@ def _no_chmod(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _pin_resolver():
+    """CLI_OPS_RELEASE_TAG unset → env_setup resolves the tag from the
+    prod-images pin over the network. Stub it for determinism/offline."""
+    with patch(
+        "iblai_infra.env_setup.resolve_pinned_cli_ops_tag",
+        return_value="5.39.0",
+    ) as m:
+        yield m
+
+
+@pytest.fixture(autouse=True)
 def _no_state_persistence(monkeypatch):
     """build_bootstrap_state_from_env writes state.json. Stub it."""
     monkeypatch.setattr("iblai_infra.env_setup.save_state", lambda state: None)
@@ -206,7 +217,8 @@ class TestOptionalDefaults:
         assert config.ssh_user == "ubuntu"
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.cli_ops_release_tag == "3.19.0"
+        # CLI_OPS_RELEASE_TAG unset -> resolved from the prod-images pin
+        assert config.cli_ops_release_tag == "5.39.0"
         assert config.prod_images_tag == "main"
         assert config.enable_ai is True
         assert config.create_playwright_platforms is False
@@ -366,3 +378,30 @@ class TestFreeStandingMode:
             state = build_bootstrap_state_from_env(_freestanding_env(ssh_key))
         assert state is project_state  # reused, not clobbered
         assert state.setup_status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# CLI_OPS_RELEASE_TAG resolution
+# ---------------------------------------------------------------------------
+
+class TestCliOpsTagResolution:
+    def test_explicit_tag_bypasses_resolver(self, project_state, _pin_resolver):
+        config = build_setup_config_from_env(
+            _required_env(CLI_OPS_RELEASE_TAG="4.0.0"), state=project_state
+        )
+        assert config.cli_ops_release_tag == "4.0.0"
+        _pin_resolver.assert_not_called()
+
+    def test_resolver_called_with_prod_images_tag(self, project_state, _pin_resolver):
+        config = build_setup_config_from_env(
+            _required_env(PROD_IMAGES_TAG="1.64.0"), state=project_state
+        )
+        assert config.cli_ops_release_tag == "5.39.0"
+        _pin_resolver.assert_called_once_with(
+            "test-pat-value", "iblai", "iblai-prod-images", "1.64.0", subdir=None
+        )
+
+    def test_unreadable_pin_falls_back_to_main(self, project_state, _pin_resolver):
+        _pin_resolver.return_value = None
+        config = build_setup_config_from_env(_required_env(), state=project_state)
+        assert config.cli_ops_release_tag == "main"

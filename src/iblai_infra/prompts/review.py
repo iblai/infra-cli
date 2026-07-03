@@ -5,7 +5,7 @@ from __future__ import annotations
 import questionary
 
 from iblai_infra import ui
-from iblai_infra.models import CertMethod, DeploymentType, InfraConfig, SSHKeyMethod
+from iblai_infra.models import CertMethod, CloudProvider, DeploymentType, InfraConfig, SSHKeyMethod
 
 TOTAL_STEPS = 5
 
@@ -24,12 +24,19 @@ def prompt_review(config: InfraConfig) -> bool:
     rows.append(("Environment", config.environment.value.capitalize()))
     rows.append(("Resource prefix", config.resource_prefix))
 
-    # AWS
+    # Cloud
     rows.append(("", ""))
-    rows.append(("", "[bold]AWS[/bold]"))
-    rows.append(("Region", config.credentials.region))
-    rows.append(("Account", config.credentials.account_id or "—"))
-    rows.append(("Auth method", config.credentials.method.value))
+    if config.cloud == CloudProvider.GCP:
+        gc = config.gcp_credentials
+        rows.append(("", "[bold]GCP[/bold]"))
+        rows.append(("Project", gc.project_id if gc else "—"))
+        rows.append(("Region / Zone", f"{gc.region} / {gc.zone}" if gc else "—"))
+        rows.append(("Auth method", gc.method.value if gc else "—"))
+    else:
+        rows.append(("", "[bold]AWS[/bold]"))
+        rows.append(("Region", config.credentials.region))
+        rows.append(("Account", config.credentials.account_id or "—"))
+        rows.append(("Auth method", config.credentials.method.value))
 
     # Deployment type
     rows.append(("", ""))
@@ -68,14 +75,18 @@ def prompt_review(config: InfraConfig) -> bool:
     rows.append(("", ""))
     rows.append(("", "[bold]Network[/bold]"))
     rows.append(("VPC CIDR", config.network.vpc_cidr))
-    if config.deployment_type == DeploymentType.MULTI:
+    if config.cloud == CloudProvider.GCP:
+        rows.append(("Subnet", "1 regional subnet"))
+    elif config.deployment_type == DeploymentType.MULTI:
         rows.append(("Subnets", "Public + Private + DB + Cache (multi-AZ)"))
     elif config.deployment_type == DeploymentType.CALL:
         rows.append(("Subnets", "2 public (multi-AZ, isolated VPC)"))
     else:
         rows.append(("Subnets", "2 public (multi-AZ)"))
     rows.append(("SSH access", f"{config.network.vpn_ip}/32 only"))
-    if config.deployment_type == DeploymentType.CALL:
+    if config.cloud == CloudProvider.GCP:
+        rows.append(("Load balancer", "Global external ALB"))
+    elif config.deployment_type == DeploymentType.CALL:
         rows.append(("Load balancer", "None — direct EIP (LiveKit needs UDP)"))
     elif config.deployment_type == DeploymentType.MULTI and config.multi_server:
         rows.append(("Load balancer", f"ALB ({config.multi_server.app_server_count} targets)"))
@@ -98,7 +109,12 @@ def prompt_review(config: InfraConfig) -> bool:
     rows.append(("", ""))
     rows.append(("", "[bold]Domain & Certificates[/bold]"))
     rows.append(("Domain", config.dns.base_domain))
-    if config.certificates.method == CertMethod.ACM:
+    if config.certificates.method == CertMethod.MANAGED:
+        verb = "create" if config.dns.create_dns_zone else "use existing"
+        rows.append(("DNS", f"Cloud DNS ({verb}: {config.dns.dns_zone_name})"))
+        rows.append(("Certificates", "Google-managed (validates asynchronously)"))
+        rows.append(("Subdomains", f"{len(config.dns.subdomains) + 1} A records"))
+    elif config.certificates.method == CertMethod.ACM:
         rows.append(("DNS", "Route53 (auto-managed)"))
         rows.append(("Certificates", "ACM (auto-provisioned)"))
         rows.append(("Subdomains", f"{len(config.dns.subdomains)} records"))
@@ -113,7 +129,10 @@ def prompt_review(config: InfraConfig) -> bool:
     if config.deployment_type != DeploymentType.CALL:
         rows.append(("", ""))
         rows.append(("", "[bold]Storage[/bold]"))
-        rows.append(("S3 buckets", "3 (backups, media, static)"))
+        if config.cloud == CloudProvider.GCP:
+            rows.append(("Object storage", "AWS S3 (supply creds at setup)"))
+        else:
+            rows.append(("S3 buckets", "3 (backups, media, static)"))
 
     # WAF (single-server only)
     if config.waf and config.waf.enabled:

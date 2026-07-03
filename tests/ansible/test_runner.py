@@ -568,3 +568,19 @@ class TestAnsibleEnv:
         assert env["ANSIBLE_FORCE_COLOR"] == "false"
         assert "ANSIBLE_CONFIG" in env
         assert "ANSIBLE_STDOUT_CALLBACK" not in env
+
+
+class TestCliOpsTagFallback:
+    def test_empty_tag_falls_back_to_main(self, project_state, setup_config):
+        """Unresolved (empty) cli_ops_release_tag must never emit `@` — the
+        extra-vars fall back to the repo's main branch."""
+        from iblai_infra.ansible.runner import ROLE_LABELS, AnsibleRunner
+
+        setup_config.cli_ops_release_tag = ""
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config
+        runner.role_labels = ROLE_LABELS
+
+        extra = runner._build_extra_vars()
+        assert extra["cli_ops_release_tag"] == "main"

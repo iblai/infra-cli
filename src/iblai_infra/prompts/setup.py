@@ -8,6 +8,7 @@ from pathlib import Path
 import questionary
 
 from iblai_infra import ui
+from iblai_infra.env_utils import resolve_pinned_cli_ops_tag
 from iblai_infra.models import (
     ProjectState,
     RESERVED_ADMIN_USERNAMES,
@@ -16,6 +17,7 @@ from iblai_infra.models import (
     SSHKeyMethod,
     is_reserved_admin_username,
     is_reserved_platform_name,
+    parse_repo_path,
 )
 
 
@@ -161,16 +163,19 @@ def _prompt_platform_config(
     env_config = "single-server"
     ui.success(f"Server type: [highlight]Single Server[/highlight]")
 
-    cli_ops_release_tag = questionary.text(
-        "iblai-cli-ops release tag:",
-        default="3.19.0",
+    # One version question: the prod-images release. iblai-cli-ops is
+    # resolved from prod-images' [tool.uv.sources] pin after the GitHub
+    # token is collected (see _resolve_cli_ops_release_tag).
+    prod_images_tag = questionary.text(
+        "iblai-prod-images release tag:",
+        default="main",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     ).ask()
-    if cli_ops_release_tag is None:
+    if prod_images_tag is None:
         ui.abort()
-    cli_ops_release_tag = cli_ops_release_tag.strip()
-    ui.success(f"iblai-cli-ops release: [highlight]{cli_ops_release_tag}[/highlight]")
+    prod_images_tag = prod_images_tag.strip() or "main"
+    ui.success(f"iblai-prod-images release: [highlight]{prod_images_tag}[/highlight]")
 
     enable_ai = questionary.confirm(
         "Enable AI features for DM?",
@@ -208,7 +213,7 @@ def _prompt_platform_config(
         "platform_name": platform_name,
         "edx_version": edx_version,
         "env_config": env_config,
-        "cli_ops_release_tag": cli_ops_release_tag,
+        "prod_images_tag": prod_images_tag,
         "enable_ai": enable_ai,
         "create_playwright_platforms": create_playwright_platforms,
         **smtp_fields,
@@ -216,6 +221,50 @@ def _prompt_platform_config(
         **google_sso_fields,
         **microsoft_sso_fields,
     }
+
+
+def _resolve_cli_ops_release_tag(cred: dict, prod_images_tag: str) -> str:
+    """Resolve the iblai-cli-ops tag from the prod-images pyproject pin.
+
+    prod-images pins ibl-cli via [tool.uv.sources] (rev = "<tag>"), but uv
+    ignores that table on git-URL installs, so the Ansible role must install
+    iblai-cli-ops at an explicit tag. The correct tag is the pin — fetch it
+    with the operator's PAT. Falls back to a prompt when it can't be read
+    (fork without a pin, monorepo path-pin, network/scopes).
+    """
+    from rich.status import Status
+
+    repo, subdir = parse_repo_path(cred["prod_images_repo"])
+    with Status("  [info]Resolving iblai-cli-ops pin...[/info]", console=ui.console):
+        tag = resolve_pinned_cli_ops_tag(
+            cred["git_access_token"],
+            cred["github_org"],
+            repo,
+            prod_images_tag,
+            subdir=subdir,
+        )
+    if tag:
+        ui.success(
+            f"iblai-cli-ops: [highlight]{tag}[/highlight] "
+            f"(pinned by {repo}@{prod_images_tag})"
+        )
+        return tag
+
+    ui.warning(
+        f"Could not read the iblai-cli-ops pin from {repo}@{prod_images_tag} — "
+        "enter the tag manually."
+    )
+    manual = questionary.text(
+        "iblai-cli-ops release tag:",
+        default="main",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if manual is None:
+        ui.abort()
+    manual = manual.strip() or "main"
+    ui.success(f"iblai-cli-ops release: [highlight]{manual}[/highlight]")
+    return manual
 
 
 def _prompt_smtp_config() -> dict:
@@ -638,9 +687,11 @@ def _prompt_credentials(
     aws_secret = ""
     aws_region = ""
 
-    # If we have state with access keys, offer to reuse
-    if state is not None:
-        creds = state.config.credentials
+    # If we have state with access keys, offer to reuse. GCP-provisioned
+    # states carry no AWS credentials (config.credentials is None) — the
+    # operator supplies fresh S3/ECR keys below, exactly like bootstrap.
+    creds = state.config.credentials if state is not None else None
+    if creds is not None:
         aws_region = creds.region
         if creds.access_key_id and creds.secret_access_key:
             reuse = questionary.confirm(
@@ -801,9 +852,14 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
     # ----- Step 3: Credentials -----
     cred = _prompt_credentials(step=3, total=SETUP_STEPS, state=state)
 
+    # Resolve the iblai-cli-ops tag from the prod-images pin (needs the
+    # GitHub token collected above; prompts as a fallback).
+    cli_ops_release_tag = _resolve_cli_ops_release_tag(cred, platform["prod_images_tag"])
+
     return SetupConfig(
         ssh_private_key_path=ssh_key,
         target_host=target_host,
+        cli_ops_release_tag=cli_ops_release_tag,
         **platform,
         **cred,
     )
@@ -898,24 +954,27 @@ def prompt_resetup(state: ProjectState) -> SetupConfig:
     base_domain = _select_domain(current_domain)
     ui.success(f"Domain: [highlight]{base_domain}[/highlight]")
 
-    cli_ops_release_tag = questionary.text(
-        "iblai-cli-ops release tag:",
-        default="3.19.0",
+    prod_images_tag = questionary.text(
+        "iblai-prod-images release tag:",
+        default="main",
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     ).ask()
-    if cli_ops_release_tag is None:
+    if prod_images_tag is None:
         ui.abort()
-    cli_ops_release_tag = cli_ops_release_tag.strip()
-    ui.success(f"iblai-cli-ops release: [highlight]{cli_ops_release_tag}[/highlight]")
+    prod_images_tag = prod_images_tag.strip() or "main"
+    ui.success(f"iblai-prod-images release: [highlight]{prod_images_tag}[/highlight]")
 
     # ----- Step 3: Credentials -----
     cred = _prompt_credentials(step=3, total=RESETUP_STEPS, state=state)
+
+    cli_ops_release_tag = _resolve_cli_ops_release_tag(cred, prod_images_tag)
 
     return SetupConfig(
         ssh_private_key_path=ssh_key,
         target_host=target_host,
         base_domain=base_domain,
+        prod_images_tag=prod_images_tag,
         cli_ops_release_tag=cli_ops_release_tag,
         is_resetup=True,
         **cred,
@@ -999,10 +1058,13 @@ def prompt_bootstrap() -> tuple[SetupConfig, dict]:
     # ----- Step 4: Credentials -----
     cred = _prompt_credentials(step=4, total=BOOTSTRAP_STEPS)
 
+    cli_ops_release_tag = _resolve_cli_ops_release_tag(cred, platform["prod_images_tag"])
+
     config = SetupConfig(
         ssh_private_key_path=ssh_key,
         ssh_user=ssh_user,
         target_host=target_host,
+        cli_ops_release_tag=cli_ops_release_tag,
         **platform,
         **cred,
     )

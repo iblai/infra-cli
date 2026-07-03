@@ -22,7 +22,7 @@ from pathlib import Path
 import typer
 
 from iblai_infra import ui
-from iblai_infra.env_utils import parse_bool
+from iblai_infra.env_utils import parse_bool, resolve_pinned_cli_ops_tag
 from iblai_infra.models import (
     AuthMethod,
     AWSCredentials,
@@ -262,7 +262,9 @@ def build_setup_config_from_env(
 
     region = (env.get("AWS_DEFAULT_REGION") or "").strip()
     if not region:
-        region = state.config.credentials.region or "us-east-1"
+        # GCP-provisioned states have no AWS credentials block.
+        state_creds = state.config.credentials
+        region = (state_creds.region if state_creds else "") or "us-east-1"
 
     # SMTP block — disabled unless host is set.
     smtp_host = (env.get("SMTP_HOST") or "").strip()
@@ -283,6 +285,33 @@ def build_setup_config_from_env(
     microsoft_sso_client_id = (env.get("MICROSOFT_SSO_CLIENT_ID") or "").strip()
     microsoft_sso_enabled = bool(microsoft_sso_client_id)
 
+    github_org = (env.get("GITHUB_ORG") or "iblai").strip()
+    prod_images_repo_raw = (env.get("PROD_IMAGES_REPO") or "iblai-prod-images").strip()
+    prod_images_tag = (env.get("PROD_IMAGES_TAG") or "main").strip()
+
+    # CLI_OPS_RELEASE_TAG is optional: when unset, resolve it from the
+    # prod-images [tool.uv.sources] pin (see env_utils), falling back to
+    # "main" so the install still points at a real ref.
+    cli_ops_tag = (env.get("CLI_OPS_RELEASE_TAG") or "").strip()
+    if not cli_ops_tag:
+        from iblai_infra.models import parse_repo_path
+
+        pi_repo, pi_subdir = parse_repo_path(prod_images_repo_raw)
+        cli_ops_tag = resolve_pinned_cli_ops_tag(
+            git_token, github_org, pi_repo, prod_images_tag, subdir=pi_subdir
+        )
+        if cli_ops_tag:
+            ui.info(
+                f"iblai-cli-ops [highlight]{cli_ops_tag}[/highlight] "
+                f"(pinned by {pi_repo}@{prod_images_tag})"
+            )
+        else:
+            cli_ops_tag = "main"
+            ui.warning(
+                f"Could not read the iblai-cli-ops pin from {pi_repo}@{prod_images_tag}; "
+                "falling back to 'main'. Set CLI_OPS_RELEASE_TAG to override."
+            )
+
     return SetupConfig(
         ssh_private_key_path=Path(ssh_path),
         ssh_user=(env.get("SSH_USER") or "ubuntu").strip(),
@@ -290,8 +319,8 @@ def build_setup_config_from_env(
         base_domain=base_domain,
         edx_version=(env.get("EDX_VERSION") or "sumac").strip(),
         env_config=(env.get("ENV_CONFIG") or "single-server").strip(),
-        cli_ops_release_tag=(env.get("CLI_OPS_RELEASE_TAG") or "3.19.0").strip(),
-        prod_images_tag=(env.get("PROD_IMAGES_TAG") or "main").strip(),
+        cli_ops_release_tag=cli_ops_tag,
+        prod_images_tag=prod_images_tag,
         enable_ai=parse_bool(env.get("ENABLE_AI"), default=True),
         create_playwright_platforms=parse_bool(
             env.get("CREATE_PLAYWRIGHT_PLATFORMS"), default=False
@@ -300,9 +329,9 @@ def build_setup_config_from_env(
         aws_secret_access_key=env["AWS_SECRET_ACCESS_KEY"].strip(),
         aws_default_region=region,
         git_access_token=git_token,
-        github_org=(env.get("GITHUB_ORG") or "iblai").strip(),
+        github_org=github_org,
         cli_ops_repo=(env.get("CLI_OPS_REPO") or "iblai-cli-ops").strip(),
-        prod_images_repo=(env.get("PROD_IMAGES_REPO") or "iblai-prod-images").strip(),
+        prod_images_repo=prod_images_repo_raw,
         openai_api_key=(env.get("OPENAI_API_KEY") or "").strip(),
         admin_username=admin_username,
         admin_email=admin_email,

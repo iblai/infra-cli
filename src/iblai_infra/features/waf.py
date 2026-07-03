@@ -23,7 +23,7 @@ from rich.table import Table
 
 from iblai_infra import ui
 from iblai_infra.env_utils import load_env_file
-from iblai_infra.models import DeploymentType, ProjectState, WAFConfig
+from iblai_infra.models import CloudProvider, DeploymentType, ProjectState, WAFConfig
 from iblai_infra.prompts.dns_certs import _prompt_waf_ips
 from iblai_infra.terraform.runner import TerraformRunner
 from iblai_infra.terraform.state import list_all_states, load_state, save_state
@@ -47,6 +47,8 @@ def _eligible_states() -> list[ProjectState]:
         if s.status != "created":
             continue
         if s.provider == "bootstrap":
+            continue
+        if s.config.cloud != CloudProvider.AWS:  # AWS WAFv2 only
             continue
         if s.config.deployment_type != DeploymentType.SINGLE:
             continue
@@ -106,6 +108,14 @@ def _load_and_guard_waf_target(name: str) -> ProjectState:
             f"Project '{name}' is a bootstrap project (no Terraform workspace)."
         )
         ui.muted("WAF requires a stack provisioned via Terraform.")
+        raise typer.Exit(1)
+
+    if state.config.cloud != CloudProvider.AWS:
+        ui.error(
+            f"Project '{name}' targets {state.config.cloud.value.upper()}; "
+            "WAF (AWS WAFv2) is only available on AWS stacks."
+        )
+        ui.muted("Cloud Armor support for GCP is a planned follow-up.")
         raise typer.Exit(1)
 
     if state.config.deployment_type != DeploymentType.SINGLE:

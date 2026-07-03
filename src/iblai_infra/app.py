@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from iblai_infra import ui
-from iblai_infra.models import DeploymentType, InfraConfig
+from iblai_infra.models import CloudProvider, DeploymentType, InfraConfig
 from iblai_infra.prompts.credentials import prompt_credentials
 from iblai_infra.prompts.dns_certs import prompt_dns_and_certs, prompt_waf
 from iblai_infra.prompts.infrastructure import prompt_project_and_compute, prompt_network_and_ssh
@@ -15,66 +15,17 @@ from iblai_infra.terraform.runner import TerraformRunner
 
 def run_provision_wizard(show_banner: bool = True) -> None:
     """Run the full interactive provisioning wizard."""
-    from iblai_infra.terraform.state import load_session, save_session
+    from iblai_infra.prompts.credentials import prompt_provider
 
     if show_banner:
         ui.banner()
 
-    # Step 1 — AWS credentials (reuse saved session if available)
-    saved = load_session()
-    if saved:
-        credentials, identity = saved
-        ui.step_header(1, 5, "AWS Authentication")
-        user = credentials.arn.split("/")[-1] if credentials.arn else "unknown"
-        ui.success(f"Authenticated — [highlight]{user}[/highlight] ({credentials.account_id})")
+    # Step 0 — choose the cloud, then collect a provider-specific config
+    provider = prompt_provider()
+    if provider == CloudProvider.GCP:
+        config = _collect_gcp_config()
     else:
-        credentials = prompt_credentials()
-        save_session(credentials)
-
-    # Step 2 — Project & compute
-    (
-        project_name,
-        environment,
-        deployment_type,
-        compute,
-        multi_server,
-        call_server,
-    ) = prompt_project_and_compute()
-
-    # Step 3 — Network & SSH (call-server uses 10.1/16 to avoid clash with the
-    # 10.0/16 default single-server and multi-server VPCs)
-    default_cidr = "10.1.0.0/16" if deployment_type == DeploymentType.CALL else "10.0.0.0/16"
-    network, ssh = prompt_network_and_ssh(
-        credentials, project_name, environment, default_vpc_cidr=default_cidr
-    )
-
-    # Step 4 — Domain & certificates
-    dns, certificates = prompt_dns_and_certs(
-        credentials,
-        is_call_server=(deployment_type == DeploymentType.CALL),
-    )
-
-    # Step 4b — WAF (single-server only; multi-server ALB and call-server
-    # are out of scope for this iteration)
-    waf = None
-    if deployment_type == DeploymentType.SINGLE:
-        waf = prompt_waf(dns.base_domain)
-
-    # Assemble the full config
-    config = InfraConfig(
-        project_name=project_name,
-        environment=environment,
-        deployment_type=deployment_type,
-        credentials=credentials,
-        network=network,
-        compute=compute,
-        multi_server=multi_server,
-        call_server=call_server,
-        ssh=ssh,
-        certificates=certificates,
-        dns=dns,
-        waf=waf,
-    )
+        config = _collect_aws_config()
 
     # Step 5 — Review & confirm
     prompt_review(config)
@@ -103,6 +54,103 @@ def run_provision_wizard(show_banner: bool = True) -> None:
 
     # ----- Offer setup -----
     _offer_setup(config, runner.state)
+
+
+def _collect_aws_config() -> InfraConfig:
+    """Wizard steps 1-4 for AWS (single / multi / call-server)."""
+    from iblai_infra.terraform.state import load_session, save_session
+
+    # Step 1 — AWS credentials (reuse saved session if available)
+    saved = load_session()
+    if saved:
+        credentials, _identity = saved
+        ui.step_header(1, 5, "AWS Authentication")
+        user = credentials.arn.split("/")[-1] if credentials.arn else "unknown"
+        ui.success(f"Authenticated — [highlight]{user}[/highlight] ({credentials.account_id})")
+    else:
+        credentials = prompt_credentials()
+        save_session(credentials)
+
+    # Step 2 — Project & compute
+    (
+        project_name,
+        environment,
+        deployment_type,
+        compute,
+        multi_server,
+        call_server,
+    ) = prompt_project_and_compute()
+
+    # Step 3 — Network & SSH (call-server uses 10.1/16 to avoid clashing with the
+    # 10.0/16 default single-server and multi-server VPCs)
+    default_cidr = "10.1.0.0/16" if deployment_type == DeploymentType.CALL else "10.0.0.0/16"
+    network, ssh = prompt_network_and_ssh(
+        credentials, project_name, environment, default_vpc_cidr=default_cidr
+    )
+
+    # Step 4 — Domain & certificates
+    dns, certificates = prompt_dns_and_certs(
+        credentials,
+        is_call_server=(deployment_type == DeploymentType.CALL),
+    )
+
+    # Step 4b — WAF (single-server only)
+    waf = None
+    if deployment_type == DeploymentType.SINGLE:
+        waf = prompt_waf(dns.base_domain)
+
+    return InfraConfig(
+        project_name=project_name,
+        environment=environment,
+        deployment_type=deployment_type,
+        credentials=credentials,
+        network=network,
+        compute=compute,
+        multi_server=multi_server,
+        call_server=call_server,
+        ssh=ssh,
+        certificates=certificates,
+        dns=dns,
+        waf=waf,
+    )
+
+
+def _collect_gcp_config() -> InfraConfig:
+    """Wizard steps 1-4 for GCP (single-server)."""
+    from iblai_infra.prompts.credentials import prompt_gcp_credentials
+    from iblai_infra.prompts.dns_certs import prompt_gcp_dns_and_certs
+    from iblai_infra.prompts.infrastructure import prompt_gcp_project_and_compute
+
+    # Step 1 — GCP credentials
+    gcp_credentials = prompt_gcp_credentials()
+
+    # Step 2 — Project & compute (single-server only)
+    project_name, environment, compute = prompt_gcp_project_and_compute()
+
+    # Step 3 — Network & SSH (no AWS key-pair option on GCP)
+    network, ssh = prompt_network_and_ssh(
+        credentials=None,
+        project_name=project_name,
+        environment=environment,
+        default_vpc_cidr="10.0.0.0/16",
+        allow_aws_keypair=False,
+    )
+
+    # Step 4 — Domain & certificates (Cloud DNS + Google-managed cert)
+    dns, certificates = prompt_gcp_dns_and_certs(gcp_credentials)
+
+    return InfraConfig(
+        project_name=project_name,
+        environment=environment,
+        cloud=CloudProvider.GCP,
+        deployment_type=DeploymentType.SINGLE,
+        gcp_credentials=gcp_credentials,
+        network=network,
+        compute=compute,
+        ssh=ssh,
+        certificates=certificates,
+        dns=dns,
+    )
 
 
 def show_workspace(ws: Path) -> None:

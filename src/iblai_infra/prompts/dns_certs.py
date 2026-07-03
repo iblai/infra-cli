@@ -273,6 +273,141 @@ def prompt_dns_and_certs(
 
 
 # ---------------------------------------------------------------------------
+# GCP DNS & certificate wizard (Cloud DNS + Google-managed cert)
+# ---------------------------------------------------------------------------
+
+def prompt_gcp_dns_and_certs(gcp_credentials) -> tuple[DNSConfig, CertificateConfig]:
+    """Prompt for domain, Cloud DNS zone, and certificate source (GCP)."""
+    ui.step_header(4, TOTAL_STEPS, "Domain & Certificates")
+
+    base_domain = questionary.text(
+        "Base domain:",
+        validate=lambda v: _validate_domain(v) or "Enter a valid domain (e.g. example.com)",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if base_domain is None:
+        ui.abort()
+    base_domain = base_domain.strip().lower()
+
+    from iblai_infra.providers import gcp as gcp_provider
+
+    from rich.status import Status
+    with Status("  [info]Looking up Cloud DNS zones...[/info]", console=ui.console):
+        zones = gcp_provider.list_managed_zones(gcp_credentials)
+    matching = [
+        z for z in zones if base_domain == z.dns_name or base_domain.endswith("." + z.dns_name)
+    ]
+
+    if matching:
+        ui.success(f"Found Cloud DNS zone(s) matching [highlight]{base_domain}[/highlight]")
+        strategy = questionary.select(
+            "DNS & Certificate strategy:",
+            choices=[
+                questionary.Choice("Use Cloud DNS + Google-managed certificate", value="managed"),
+                questionary.Choice("Upload my own certificate files", value="upload"),
+                questionary.Choice("Skip HTTPS for now (HTTP only)", value="none"),
+            ],
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+    else:
+        ui.muted(f"No Cloud DNS zone in this project matches {base_domain}")
+        strategy = questionary.select(
+            "DNS & Certificate strategy:",
+            choices=[
+                questionary.Choice("Create a Cloud DNS zone + Google-managed certificate", value="create"),
+                questionary.Choice("Upload my own certificate files", value="upload"),
+                questionary.Choice("Skip HTTPS for now (HTTP only)", value="none"),
+            ],
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+    if strategy is None:
+        ui.abort()
+
+    if strategy == "managed":
+        if len(matching) == 1:
+            zone = matching[0]
+            ui.info(f"Using zone: [highlight]{zone.name}[/highlight] ({zone.dns_name})")
+        else:
+            zone = questionary.select(
+                "Select Cloud DNS zone:",
+                choices=[questionary.Choice(f"{z.name} ({z.dns_name})", value=z) for z in matching],
+                style=ui.PROMPT_STYLE,
+                qmark=ui.QMARK,
+            ).ask()
+            if zone is None:
+                ui.abort()
+        zone_name = zone.name
+
+        subdomains = [base_domain] + [s.format(domain=base_domain) for s in IBL_SUBDOMAINS]
+        ui.newline()
+        ui.info("A records will be created for the base domain + 19 subdomains, pointing at the LB IP.")
+        with Status("  [info]Checking for conflicting DNS records...[/info]", console=ui.console):
+            conflicts = gcp_provider.find_conflicting_records(gcp_credentials, zone_name, subdomains)
+        if conflicts:
+            ui.warning(f"Found {len(conflicts)} conflicting A/CNAME record(s):")
+            for c in conflicts:
+                ui.muted(f"  {c.record_type}  {c.name.rstrip('.')}  ->  {', '.join(c.rrdatas)}")
+            delete_confirm = questionary.confirm(
+                "Delete these conflicting records and proceed?",
+                default=True,
+                style=ui.PROMPT_STYLE,
+                qmark=ui.QMARK,
+            ).ask()
+            if not delete_confirm:
+                ui.abort("Aborted — no DNS changes made.")
+            with Status("  [info]Removing conflicting records...[/info]", console=ui.console):
+                gcp_provider.delete_records(gcp_credentials, zone_name, conflicts)
+            ui.success(f"Removed {len(conflicts)} conflicting record(s)")
+        else:
+            ui.success("No conflicting DNS records found")
+
+        ui.newline()
+        ui.muted("Note: the Google-managed certificate provisions asynchronously —")
+        ui.muted("HTTPS can take 10-60 minutes to go live after DNS resolves to the LB.")
+        return (
+            DNSConfig(base_domain=base_domain, dns_zone_name=zone_name, create_dns_zone=False),
+            CertificateConfig(method=CertMethod.MANAGED),
+        )
+
+    if strategy == "create":
+        zone_name = questionary.text(
+            "New Cloud DNS zone name (resource name, e.g. my-zone):",
+            validate=lambda v: bool(v.strip()) and v.strip().replace("-", "").isalnum()
+            or "Lowercase letters, numbers, and hyphens",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if zone_name is None:
+            ui.abort()
+        ui.newline()
+        ui.warning("After provisioning, delegate the printed nameservers at your registrar.")
+        ui.muted("The managed certificate can only validate once delegation is live.")
+        return (
+            DNSConfig(base_domain=base_domain, dns_zone_name=zone_name.strip(), create_dns_zone=True),
+            CertificateConfig(method=CertMethod.MANAGED),
+        )
+
+    if strategy == "upload":
+        return DNSConfig(base_domain=base_domain), _prompt_cert_upload()
+
+    # none
+    ui.newline()
+    ui.warning("The load balancer will only serve HTTP (port 80).")
+    proceed = questionary.confirm(
+        "Proceed without HTTPS?",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if not proceed:
+        ui.abort("Aborted — prepare a domain/certificate and try again.")
+    return DNSConfig(base_domain=base_domain), CertificateConfig(method=CertMethod.NONE)
+
+
+# ---------------------------------------------------------------------------
 # Certificate upload sub-flow
 # ---------------------------------------------------------------------------
 

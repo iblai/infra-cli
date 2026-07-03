@@ -29,6 +29,18 @@ from iblai_infra.prompts.setup import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_resolver():
+    """The cli-ops tag is resolved from the prod-images [tool.uv.sources] pin
+    after credentials are collected — stub the network call for every prompt
+    test; tests can assert on / override the resolved value via this mock."""
+    with mock.patch(
+        "iblai_infra.prompts.setup.resolve_pinned_cli_ops_tag",
+        return_value="5.39.0",
+    ) as m:
+        yield m
+
+
 # ---------------------------------------------------------------------------
 # _resolve_ssh_key — all SSH method × key state combinations
 # ---------------------------------------------------------------------------
@@ -198,7 +210,8 @@ class TestPromptSetup:
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.cli_ops_release_tag == "3.19.0"
+        assert config.prod_images_tag == "3.19.0"  # the typed release tag
+        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
         assert config.enable_ai is True
         assert config.smtp_enabled is False
         assert config.aws_access_key_id == "AKIA"
@@ -230,7 +243,8 @@ class TestPromptSetup:
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.cli_ops_release_tag == "3.19.0"
+        assert config.prod_images_tag == "3.19.0"  # the typed release tag
+        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
         assert config.enable_ai is True
         assert config.aws_access_key_id == "NEW_ACCESS_KEY"
         assert config.aws_secret_access_key == "NEW_SECRET"
@@ -256,7 +270,8 @@ class TestPromptSetup:
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
-        assert config.cli_ops_release_tag == "3.19.0"
+        assert config.prod_images_tag == "3.19.0"  # the typed release tag
+        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
         assert config.git_access_token == "ghp_testtoken"
 
     def test_ssh_key_not_found_prompts(self, tmp_path):
@@ -643,7 +658,8 @@ class TestPromptResetup:
 
         assert config.is_resetup is True
         assert config.base_domain == "new.example.com"
-        assert config.cli_ops_release_tag == "3.19.0"
+        assert config.prod_images_tag == "3.19.0"  # the typed release tag
+        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
         assert config.target_host == "54.1.2.3"
         assert config.aws_access_key_id == "AKIA"
         assert config.aws_secret_access_key == "SECRET"
@@ -776,3 +792,54 @@ class TestPromptResetup:
             config = prompt_resetup(state)
 
         assert config.base_domain == "custom.example.com"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_cli_ops_release_tag — pin resolution + fallback
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCliOpsReleaseTag:
+    CRED = {
+        "git_access_token": "ghp_x",
+        "github_org": "iblai",
+        "prod_images_repo": "iblai-prod-images",
+    }
+
+    def test_resolved_from_pin(self, _pin_resolver):
+        from iblai_infra.prompts.setup import _resolve_cli_ops_release_tag
+
+        tag = _resolve_cli_ops_release_tag(self.CRED, "1.64.0")
+        assert tag == "5.39.0"
+        _pin_resolver.assert_called_once_with(
+            "ghp_x", "iblai", "iblai-prod-images", "1.64.0", subdir=None
+        )
+
+    def test_monorepo_subdir_split(self, _pin_resolver):
+        from iblai_infra.prompts.setup import _resolve_cli_ops_release_tag
+
+        cred = dict(self.CRED, prod_images_repo="client-infra-ops/client-prod-images")
+        _resolve_cli_ops_release_tag(cred, "v1.0.0")
+        _pin_resolver.assert_called_once_with(
+            "ghp_x", "iblai", "client-infra-ops", "v1.0.0",
+            subdir="client-prod-images",
+        )
+
+    def test_fallback_prompts_when_pin_unreadable(self, _pin_resolver):
+        from iblai_infra.prompts.setup import _resolve_cli_ops_release_tag
+
+        _pin_resolver.return_value = None
+        with mock.patch("questionary.text") as mtext:
+            mtext.return_value.ask.return_value = "9.9.9"
+            tag = _resolve_cli_ops_release_tag(self.CRED, "main")
+        assert tag == "9.9.9"
+        assert mtext.called
+
+    def test_fallback_blank_answer_defaults_main(self, _pin_resolver):
+        from iblai_infra.prompts.setup import _resolve_cli_ops_release_tag
+
+        _pin_resolver.return_value = None
+        with mock.patch("questionary.text") as mtext:
+            mtext.return_value.ask.return_value = "  "
+            tag = _resolve_cli_ops_release_tag(self.CRED, "main")
+        assert tag == "main"

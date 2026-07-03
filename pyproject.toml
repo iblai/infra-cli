@@ -18,6 +18,14 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
 ]
+# GCP provider support (single-server). Optional so AWS-only users don't pull
+# the Google SDKs. Terraform itself reads ADC / a service-account key; these
+# libraries power credential validation, Cloud DNS discovery, and permission
+# checks in `providers/gcp.py`.
+gcp = [
+    "google-auth[requests]>=2.0",
+    "google-cloud-dns>=0.35",
+]
 
 [project.scripts]
 iblai = "iblai_infra.cli:app"

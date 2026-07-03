@@ -20,7 +20,9 @@ from rich.status import Status
 from iblai_infra import ui
 from iblai_infra.models import (
     CertMethod,
+    CloudProvider,
     DeploymentType,
+    GCPAuthMethod,
     InfraConfig,
     ProjectState,
     SSHKeyMethod,
@@ -61,6 +63,24 @@ RESOURCE_LABELS: dict[str, str] = {
     "aws_elasticache_subnet_group": "Cache Subnet Group",
     "aws_efs_file_system": "EFS File System",
     "aws_efs_mount_target": "EFS Mount Target",
+    # GCP (single-server)
+    "google_compute_network": "VPC Network",
+    "google_compute_subnetwork": "Subnet",
+    "google_compute_firewall": "Firewall Rule",
+    "google_compute_instance": "Compute Instance",
+    "google_compute_instance_group": "Instance Group",
+    "google_compute_health_check": "Health Check",
+    "google_compute_backend_service": "Backend Service",
+    "google_compute_global_address": "Global IP",
+    "google_compute_url_map": "URL Map",
+    "google_compute_target_http_proxy": "HTTP Proxy",
+    "google_compute_target_https_proxy": "HTTPS Proxy",
+    "google_compute_global_forwarding_rule": "Forwarding Rule",
+    "google_compute_ssl_policy": "SSL Policy",
+    "google_compute_managed_ssl_certificate": "Managed Certificate",
+    "google_compute_ssl_certificate": "SSL Certificate",
+    "google_dns_managed_zone": "DNS Zone",
+    "google_dns_record_set": "DNS Record",
 }
 
 
@@ -338,6 +358,8 @@ class TerraformRunner:
         self.state.outputs = outputs
         save_state(self.state)
 
+        self._maybe_gcp_cert_notice(outputs)
+
         return outputs
 
     def destroy(self) -> None:
@@ -422,6 +444,23 @@ class TerraformRunner:
         """Read current terraform outputs."""
         return self._get_outputs()
 
+    def _maybe_gcp_cert_notice(self, outputs: dict) -> None:
+        """On a GCP managed-cert apply, HTTPS validates asynchronously (Terraform
+        does not block on it). Surface that, plus any nameservers to delegate."""
+        c = self.config
+        if c.cloud != CloudProvider.GCP:
+            return
+        if c.certificates.method == CertMethod.MANAGED:
+            ui.info(
+                "Google-managed certificate is provisioning. HTTPS can take "
+                "10-60 minutes to go live after DNS resolves to the load balancer."
+            )
+        nameservers = outputs.get("dns_name_servers") or []
+        if nameservers:
+            ui.warning("Delegate your domain at its registrar to these nameservers:")
+            for ns in nameservers:
+                ui.muted(f"  {ns}")
+
     # ------------------------------------------------------------------
     # Live display composition
     # ------------------------------------------------------------------
@@ -485,9 +524,10 @@ class TerraformRunner:
     def _copy_templates(self) -> None:
         """Copy Terraform template files to workspace."""
         self.ws.mkdir(parents=True, exist_ok=True)
-        # "single-server", "multi-server", or "call-server"
+        # topology: "single-server" / "multi-server" / "call-server"
+        # cloud:    "aws" / "gcp"
         topology = self.config.deployment_type.value
-        template_dir = Path(__file__).parent / "templates" / "aws" / topology
+        template_dir = Path(__file__).parent / "templates" / self.config.cloud.value / topology
         if not template_dir.exists():
             ui.abort(f"Template directory not found: {template_dir}")
         for f in template_dir.iterdir():
@@ -539,6 +579,12 @@ class TerraformRunner:
                 lines.append(f"{key} = [{items}]")
             else:
                 lines.append(f'{key} = "{value}"')
+
+        # GCP single-server has its own variable set (project/zone/machine_type/
+        # image/subnet_cidr/dns_zone). No S3 buckets, no AWS creds, no WAF.
+        if c.cloud == CloudProvider.GCP:
+            self._generate_gcp_tfvars(c, tf, lines)
+            return
 
         tf("project_name", c.project_name)
         tf("environment", c.environment.value)
@@ -635,6 +681,48 @@ class TerraformRunner:
 
         (self.ws / "terraform.tfvars").write_text("\n".join(lines) + "\n")
 
+    def _generate_gcp_tfvars(self, c: InfraConfig, tf, lines: list[str]) -> None:
+        """Emit terraform.tfvars for a GCP single-server stack.
+
+        Reuses the provider-neutral config sections: ``compute.instance_type`` is
+        the GCP machine type, ``compute.volume_type`` the disk type,
+        ``compute.ami_id`` a custom image, ``network.vpc_cidr`` the subnet range.
+        """
+        gc = c.gcp_credentials
+        tf("project_id", gc.project_id if gc else "")
+        tf("region", gc.region if gc else "us-central1")
+        tf("zone", gc.zone if gc else "us-central1-a")
+        tf("project_name", c.project_name)
+        tf("environment", c.environment.value)
+        tf("base_domain", c.dns.base_domain)
+        tf("subnet_cidr", c.network.vpc_cidr)
+        tf("vpn_ip", c.network.vpn_ip)
+        tf("machine_type", c.compute.instance_type)
+        tf("volume_size", c.compute.volume_size)
+        tf("disk_type", c.compute.volume_type)
+        if c.compute.ami_id:
+            tf("image", c.compute.ami_id)
+            tf("skip_startup_script", True)
+        if c.ssh.public_key:
+            tf("ssh_public_key", c.ssh.public_key)
+
+        if c.certificates.method == CertMethod.MANAGED:
+            tf("certificate_method", "managed")
+            tf("dns_zone_name", c.dns.dns_zone_name or "")
+            tf("create_dns_zone", c.dns.create_dns_zone)
+        elif c.certificates.method == CertMethod.UPLOAD:
+            tf("certificate_method", "upload")
+            if c.certificates.cert_body:
+                (self.ws / "cert.pem").write_text(c.certificates.cert_body)
+                tf("certificate_body_file", "cert.pem")
+            if c.certificates.cert_private_key:
+                (self.ws / "cert-key.pem").write_text(c.certificates.cert_private_key)
+                tf("certificate_key_file", "cert-key.pem")
+        else:
+            tf("certificate_method", "none")
+
+        (self.ws / "terraform.tfvars").write_text("\n".join(lines) + "\n")
+
     def _run(self, *args: str) -> subprocess.CompletedProcess:
         """Run a terraform command in the workspace."""
         result = subprocess.run(
@@ -672,15 +760,30 @@ class TerraformRunner:
     def _env(self) -> dict[str, str]:
         """Build environment for Terraform subprocess."""
         env = os.environ.copy()
-        c = self.config.credentials
-        if c.profile:
-            env["AWS_PROFILE"] = c.profile
-        if c.access_key_id:
-            env["AWS_ACCESS_KEY_ID"] = c.access_key_id
-        if c.secret_access_key:
-            env["AWS_SECRET_ACCESS_KEY"] = c.secret_access_key
-        env["AWS_DEFAULT_REGION"] = c.region
         env["TF_INPUT"] = "0"
+
+        if self.config.cloud == CloudProvider.GCP:
+            gc = self.config.gcp_credentials
+            if gc:
+                env["GOOGLE_PROJECT"] = gc.project_id
+                env["CLOUDSDK_CORE_PROJECT"] = gc.project_id
+                env["CLOUDSDK_COMPUTE_REGION"] = gc.region
+                env["CLOUDSDK_COMPUTE_ZONE"] = gc.zone
+                # ADC (gcloud auth application-default login) needs no env var;
+                # a service-account key is passed by file path.
+                if gc.method == GCPAuthMethod.SERVICE_ACCOUNT_KEY and gc.credentials_file:
+                    env["GOOGLE_APPLICATION_CREDENTIALS"] = gc.credentials_file
+            return env
+
+        c = self.config.credentials
+        if c:
+            if c.profile:
+                env["AWS_PROFILE"] = c.profile
+            if c.access_key_id:
+                env["AWS_ACCESS_KEY_ID"] = c.access_key_id
+            if c.secret_access_key:
+                env["AWS_SECRET_ACCESS_KEY"] = c.secret_access_key
+            env["AWS_DEFAULT_REGION"] = c.region
         return env
 
     @staticmethod

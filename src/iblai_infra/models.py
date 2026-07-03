@@ -48,7 +48,8 @@ class SSHKeyMethod(str, Enum):
 
 
 class CertMethod(str, Enum):
-    ACM = "acm"
+    ACM = "acm"           # AWS ACM (DNS-validated)
+    MANAGED = "managed"   # GCP Google-managed SSL certificate
     UPLOAD = "upload"
     NONE = "none"
 
@@ -63,6 +64,18 @@ class DeploymentType(str, Enum):
     SINGLE = "single-server"
     MULTI = "multi-server"
     CALL = "call-server"
+
+
+class CloudProvider(str, Enum):
+    """Which cloud a deployment targets. Selects the Terraform template tree
+    (`templates/<cloud>/<topology>`) and the credential/runner branch."""
+    AWS = "aws"
+    GCP = "gcp"
+
+
+class GCPAuthMethod(str, Enum):
+    ADC = "adc"                              # Application Default Credentials
+    SERVICE_ACCOUNT_KEY = "service_account_key"  # path to a SA key JSON
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +139,60 @@ CALL_INSTANCE_TYPES: dict[str, str] = {
     "c5.2xlarge": "8 vCPU, 16 GB RAM — heavy production / recording",
 }
 
+# ---------------------------------------------------------------------------
+# GCP metadata (regions, machine types, disk types)
+# ---------------------------------------------------------------------------
+
+GCP_REGIONS: dict[str, str] = {
+    "us-central1": "US Central (Iowa)",
+    "us-east1": "US East (South Carolina)",
+    "us-east4": "US East (N. Virginia)",
+    "us-west1": "US West (Oregon)",
+    "us-west2": "US West (Los Angeles)",
+    "northamerica-northeast1": "Montreal",
+    "southamerica-east1": "Sao Paulo",
+    "europe-west1": "Belgium",
+    "europe-west2": "London",
+    "europe-west3": "Frankfurt",
+    "europe-west4": "Netherlands",
+    "europe-north1": "Finland",
+    "asia-south1": "Mumbai",
+    "asia-southeast1": "Singapore",
+    "asia-northeast1": "Tokyo",
+    "australia-southeast1": "Sydney",
+}
+
+# Single-server machine types with human-readable descriptions.
+GCP_MACHINE_TYPES: dict[str, str] = {
+    "e2-standard-4": "4 vCPU,  16 GB RAM - Small workloads",
+    "e2-standard-8": "8 vCPU,  32 GB RAM - Balanced (default)",
+    "n2-standard-8": "8 vCPU,  32 GB RAM - Compute optimized",
+    "n2-highmem-8": "8 vCPU,  64 GB RAM - Memory optimized",
+    "e2-standard-16": "16 vCPU, 64 GB RAM - Large workloads",
+}
+
+# RAM (in GB) for the machine types we publish. Mirrors INSTANCE_RAM_GB so the
+# prompt/launch flows can warn on 32 GB boxes for AI-enabled platforms.
+GCP_MACHINE_RAM_GB: dict[str, int] = {
+    "e2-standard-4": 16,
+    "e2-standard-8": 32,
+    "n2-standard-8": 32,
+    "n2-highmem-8": 64,
+    "e2-standard-16": 64,
+}
+
+GCP_DISK_TYPES: dict[str, str] = {
+    "pd-balanced": "Balanced persistent disk (default)",
+    "pd-ssd": "Performance SSD persistent disk",
+    "pd-standard": "Standard persistent disk (HDD)",
+}
+
+
+def gcp_machine_ram_gb(machine_type: str) -> int | None:
+    """Return RAM in GB for a known GCP machine type, or None for unknown."""
+    return GCP_MACHINE_RAM_GB.get((machine_type or "").strip())
+
+
 # IBL platform subdomains generated from the base domain
 IBL_SUBDOMAINS: list[str] = [
     "learn.{domain}",
@@ -164,6 +231,23 @@ class AWSCredentials(BaseModel):
     # Populated after validation
     account_id: str | None = None
     arn: str | None = None
+
+
+class GCPCredentials(BaseModel):
+    """GCP auth + targeting. The Terraform google provider reads credentials
+    from Application Default Credentials (ADC) or a service-account key JSON via
+    GOOGLE_APPLICATION_CREDENTIALS; this model records which, plus the project
+    and the region/zone the single VM lives in."""
+    method: GCPAuthMethod = GCPAuthMethod.ADC
+    project_id: str
+    region: str = "us-central1"
+    zone: str = "us-central1-a"
+    # Path to a service-account key JSON (when method = service_account_key).
+    credentials_file: str | None = None
+
+    # Populated after validation
+    account: str | None = None
+    project_number: str | None = None
 
 
 class NetworkConfig(BaseModel):
@@ -218,6 +302,11 @@ class DNSConfig(BaseModel):
     base_domain: str
     use_route53: bool = False
     hosted_zone_id: str | None = None
+    # GCP Cloud DNS analogs of hosted_zone_id. `dns_zone_name` is the managed
+    # zone's resource name; `create_dns_zone` asks Terraform to create it (and
+    # emit nameservers for registrar delegation) rather than use an existing one.
+    dns_zone_name: str | None = None
+    create_dns_zone: bool = False
 
     @property
     def subdomains(self) -> list[str]:
@@ -338,8 +427,16 @@ class WAFConfig(BaseModel):
 class InfraConfig(BaseModel):
     project_name: str
     environment: Environment
+    # Which cloud to target. Defaults to AWS so existing state.json (and every
+    # AWS code path) is unchanged. GCP deployments set this and populate
+    # `gcp_credentials` instead of `credentials`.
+    cloud: CloudProvider = CloudProvider.AWS
     deployment_type: DeploymentType = DeploymentType.SINGLE
-    credentials: AWSCredentials
+    # Exactly one credential block is required, keyed by `cloud` (enforced by
+    # `_validate_credentials_for_cloud`). `credentials` stays first + optional so
+    # existing AWS configs deserialize unchanged.
+    credentials: AWSCredentials | None = None
+    gcp_credentials: GCPCredentials | None = None
     network: NetworkConfig
     compute: ComputeConfig
     multi_server: MultiServerConfig | None = None
@@ -375,9 +472,24 @@ class InfraConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_credentials_for_cloud(self) -> "InfraConfig":
+        if self.cloud == CloudProvider.AWS and self.credentials is None:
+            raise ValueError("AWS deployments require `credentials` (AWSCredentials)")
+        if self.cloud == CloudProvider.GCP and self.gcp_credentials is None:
+            raise ValueError("GCP deployments require `gcp_credentials` (GCPCredentials)")
+        return self
+
     @property
     def resource_prefix(self) -> str:
         return f"{self.project_name}-{self.environment.value}"
+
+    @property
+    def region(self) -> str:
+        """Region for the active cloud, regardless of which credential block is set."""
+        if self.cloud == CloudProvider.GCP and self.gcp_credentials:
+            return self.gcp_credentials.region
+        return self.credentials.region if self.credentials else ""
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +549,12 @@ class SetupConfig(BaseModel):
     base_domain: str
     edx_version: str = "sumac"
     env_config: str = "single-server"
-    cli_ops_release_tag: str = "3.19.0"
+    # iblai-cli-ops install tag. Empty = "resolve from the prod-images pin":
+    # iblai-prod-images' pyproject.toml pins ibl-cli via [tool.uv.sources]
+    # (rev = "<tag>"), and the interactive/env flows resolve that pin via
+    # `env_utils.resolve_pinned_cli_ops_tag`. AnsibleRunner falls back to
+    # "main" if the field is still empty at run time.
+    cli_ops_release_tag: str = ""
     prod_images_tag: str = "main"
     enable_ai: bool = True
     is_resetup: bool = False

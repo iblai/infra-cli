@@ -49,3 +49,56 @@ def parse_bool(value: str | None, *, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in ("true", "1", "yes")
+
+
+def resolve_pinned_cli_ops_tag(
+    git_token: str,
+    github_org: str,
+    prod_images_repo: str,
+    prod_images_tag: str,
+    subdir: str | None = None,
+    timeout: int = 15,
+) -> str | None:
+    """Resolve the iblai-cli-ops tag pinned by a prod-images release.
+
+    `iblai-prod-images`' pyproject.toml pins its `ibl-cli` dependency via
+    `[tool.uv.sources]` (e.g. rev = "5.39.0"). uv ignores that table when the
+    package is installed from a git URL (it's project config, not package
+    metadata), so the Ansible role must force-install iblai-cli-ops at an
+    explicit tag — but the *correct* tag is knowable from the pin. This
+    fetches `pyproject.toml` at `{prod_images_tag}` via the GitHub contents
+    API (raw media type) using the operator's PAT and returns the pinned rev.
+
+    Returns None on any failure (no access, tag missing, no pin, path-style
+    pin in a monorepo) — callers fall back to asking the operator.
+    """
+    import json
+    import tomllib
+    import urllib.request
+
+    path = f"{subdir}/pyproject.toml" if subdir else "pyproject.toml"
+    url = (
+        f"https://api.github.com/repos/{github_org}/{prod_images_repo}"
+        f"/contents/{path}?ref={prod_images_tag}"
+    )
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {git_token}",
+            "Accept": "application/vnd.github.raw",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+        data = tomllib.loads(raw)
+        source = (
+            data.get("tool", {}).get("uv", {}).get("sources", {}).get("ibl-cli", {})
+        )
+        rev = source.get("rev") if isinstance(source, dict) else None
+        if isinstance(rev, str) and rev.strip():
+            return rev.strip()
+    except Exception:
+        pass
+    return None

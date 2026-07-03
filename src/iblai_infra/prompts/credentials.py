@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import questionary
 from rich.status import Status
 
 from iblai_infra import ui
-from iblai_infra.models import AWSCredentials, AWS_REGIONS, AuthMethod
+from iblai_infra.models import (
+    AWSCredentials,
+    AWS_REGIONS,
+    AuthMethod,
+    CloudProvider,
+    GCP_REGIONS,
+    GCPAuthMethod,
+    GCPCredentials,
+)
 from iblai_infra.providers.aws import (
     detect_current_ip,
     has_env_credentials,
@@ -134,5 +144,127 @@ def prompt_credentials(show_step: bool = True) -> AWSCredentials:
     # Save session for reuse across commands
     from iblai_infra.terraform.state import save_session
     save_session(creds)
+
+    return creds
+
+
+# ---------------------------------------------------------------------------
+# Provider selection + GCP authentication
+# ---------------------------------------------------------------------------
+
+def prompt_provider() -> CloudProvider:
+    """Ask which cloud to provision on. The wizard's first step."""
+    ui.newline()
+    choice = questionary.select(
+        "Which cloud provider?",
+        choices=[
+            questionary.Choice("AWS  — single-server, multi-server, or call-server", value=CloudProvider.AWS),
+            questionary.Choice("GCP  — single-server", value=CloudProvider.GCP),
+        ],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if choice is None:
+        ui.abort()
+    return choice
+
+
+def prompt_gcp_credentials(show_step: bool = True) -> GCPCredentials:
+    """Collect + validate GCP credentials (project, region/zone, ADC or SA key)."""
+    from iblai_infra.providers import gcp as gcp_provider
+
+    if not gcp_provider.is_available():
+        ui.error("GCP support needs extra dependencies that aren't installed.")
+        ui.muted("  Install them:  uv sync --extra gcp   (or: pip install 'iblai-infra[gcp]')")
+        ui.abort()
+
+    if show_step:
+        ui.step_header(1, TOTAL_STEPS, "GCP Authentication")
+    else:
+        ui.newline()
+        ui.info("[highlight]GCP Authentication[/highlight]")
+        ui.newline()
+
+    project_id = questionary.text(
+        "GCP project ID (not the display name):",
+        validate=lambda v: bool(v.strip()) or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if project_id is None:
+        ui.abort()
+    project_id = project_id.strip()
+
+    regions = list(GCP_REGIONS.keys())
+    region = questionary.autocomplete(
+        "GCP region (type to filter):",
+        choices=regions,
+        default="us-central1",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+        validate=lambda v: v in regions or "Select a valid region from the list",
+    ).ask()
+    if region is None:
+        ui.abort()
+    region = region.strip()
+
+    zone = questionary.text(
+        "GCP zone (must be within the region):",
+        default=f"{region}-a",
+        validate=lambda v: v.strip().startswith(region) or f"Zone must be within {region}",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if zone is None:
+        ui.abort()
+
+    auth_method = questionary.select(
+        "How would you like to authenticate?",
+        choices=[
+            questionary.Choice(
+                "Application Default Credentials (gcloud auth application-default login)",
+                value=GCPAuthMethod.ADC,
+            ),
+            questionary.Choice("Service-account key file (JSON)", value=GCPAuthMethod.SERVICE_ACCOUNT_KEY),
+        ],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if auth_method is None:
+        ui.abort()
+
+    credentials_file = None
+    if auth_method == GCPAuthMethod.SERVICE_ACCOUNT_KEY:
+        key_path = questionary.path(
+            "Path to service-account key JSON:",
+            validate=lambda p: Path(p).expanduser().exists() or "File not found",
+            style=ui.PROMPT_STYLE,
+            qmark=ui.QMARK,
+        ).ask()
+        if key_path is None:
+            ui.abort()
+        credentials_file = str(Path(key_path).expanduser())
+
+    creds = GCPCredentials(
+        method=auth_method,
+        project_id=project_id,
+        region=region,
+        zone=zone.strip(),
+        credentials_file=credentials_file,
+    )
+
+    from iblai_infra.providers import gcp as gcp_provider
+
+    with Status("[info]Validating credentials...[/info]", console=ui.console):
+        try:
+            identity = gcp_provider.validate_credentials(creds)
+            creds.account = identity.account
+        except ValueError as e:
+            ui.error(str(e))
+            ui.abort("Could not authenticate with GCP. Please check your credentials.")
+
+    ui.success(f"Authenticated — project [highlight]{creds.project_id}[/highlight]")
+    if creds.account and creds.account != "(unknown)":
+        ui.muted(f"Account: {creds.account}")
 
     return creds

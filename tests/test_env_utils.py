@@ -3,7 +3,15 @@ launch-env, provision-env, and setup-env."""
 
 from __future__ import annotations
 
-from iblai_infra.env_utils import load_env_file, mask, parse_bool
+import io
+from unittest import mock
+
+from iblai_infra.env_utils import (
+    load_env_file,
+    mask,
+    parse_bool,
+    resolve_pinned_cli_ops_tag,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -95,3 +103,86 @@ class TestParseBool:
     def test_none_returns_default(self):
         assert parse_bool(None) is False
         assert parse_bool(None, default=True) is True
+
+
+# ---------------------------------------------------------------------------
+# resolve_pinned_cli_ops_tag
+# ---------------------------------------------------------------------------
+
+PYPROJECT_WITH_PIN = b"""
+[project]
+name = "iblai-images"
+dependencies = ["ibl-cli"]
+
+[tool.uv.sources]
+ibl-cli = { git = "https://github.com/iblai/ibl-cli-ops", rev = "5.39.0" }
+"""
+
+PYPROJECT_NO_PIN = b"""
+[project]
+name = "iblai-images"
+dependencies = ["ibl-cli"]
+"""
+
+PYPROJECT_PATH_PIN = b"""
+[project]
+name = "iblai-images"
+
+[tool.uv.sources]
+ibl-cli = { path = "../iblai-cli-ops" }
+"""
+
+
+class _FakeResponse(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class TestResolvePinnedCliOpsTag:
+    def _resolve(self, body, **kw):
+        tag = kw.pop("tag", "main")
+        with mock.patch(
+            "urllib.request.urlopen", return_value=_FakeResponse(body)
+        ) as murl:
+            result = resolve_pinned_cli_ops_tag(
+                "ghp_token", "iblai", "iblai-prod-images", tag, **kw
+            )
+        return result, murl
+
+    def test_resolves_rev(self):
+        tag, murl = self._resolve(PYPROJECT_WITH_PIN)
+        assert tag == "5.39.0"
+        req = murl.call_args[0][0]
+        assert (
+            "repos/iblai/iblai-prod-images/contents/pyproject.toml?ref=main"
+            in req.full_url
+        )
+        assert req.headers["Authorization"] == "Bearer ghp_token"
+
+    def test_subdir_path_in_url(self):
+        tag, murl = self._resolve(PYPROJECT_WITH_PIN, subdir="iblai-prod-images")
+        assert tag == "5.39.0"
+        req = murl.call_args[0][0]
+        assert "/contents/iblai-prod-images/pyproject.toml?ref=main" in req.full_url
+
+    def test_no_pin_returns_none(self):
+        tag, _ = self._resolve(PYPROJECT_NO_PIN)
+        assert tag is None
+
+    def test_path_pin_returns_none(self):
+        tag, _ = self._resolve(PYPROJECT_PATH_PIN)
+        assert tag is None
+
+    def test_http_error_returns_none(self):
+        with mock.patch("urllib.request.urlopen", side_effect=OSError("404")):
+            assert (
+                resolve_pinned_cli_ops_tag("t", "iblai", "iblai-prod-images", "main")
+                is None
+            )
+
+    def test_invalid_toml_returns_none(self):
+        tag, _ = self._resolve(b"not [ valid toml {{")
+        assert tag is None

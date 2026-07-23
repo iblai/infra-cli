@@ -310,8 +310,8 @@ def _show_dns_next_steps(config: InfraConfig, outputs: dict, ws: Path) -> None:
     try:
         lines = [
             f"# DNS records for {config.dns.base_domain}",
-            f"# Create each record at your DNS provider, pointing at the load balancer.",
-            f"# TYPE  NAME  VALUE",
+            "# Create each record at your DNS provider, pointing at the load balancer.",
+            "# TYPE  NAME  VALUE",
         ]
         lines += [f"{record_type}  {sd}  {target}" for sd in subdomains]
         records_file.write_text("\n".join(lines) + "\n")
@@ -321,7 +321,7 @@ def _show_dns_next_steps(config: InfraConfig, outputs: dict, ws: Path) -> None:
 
     hint = (
         "" if config.certificates.method == CertMethod.NONE
-        else " (an ACM/uploaded certificate also needs them before it can serve HTTPS)"
+        else " (the uploaded certificate also needs them before it can serve HTTPS)"
     )
     ui.muted(
         "The platform routes by hostname, so every subdomain must resolve. Run "

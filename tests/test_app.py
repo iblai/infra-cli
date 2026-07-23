@@ -166,6 +166,7 @@ class TestDnsNextSteps:
         with ctx:
             show_results(config, outputs, tmp_path)
         out = _strip_ansi(buf.getvalue())
+        flat = " ".join(out.split())  # collapse terminal wrapping
         assert "create DNS records" in out
         assert "CNAME" in out
         assert "my-alb-123.us-east-1.elb.amazonaws.com" in out
@@ -175,6 +176,21 @@ class TestDnsNextSteps:
         # Removed subdomains must not be advertised.
         assert "mentorai.example.com" not in out
         assert "web.data.example.com" not in out
+        # The actionable gate — setup must wait for DNS to resolve.
+        assert "every subdomain must resolve" in flat
+        assert "only after these records are live" in flat
+
+    def test_aws_external_upload_cert_mentions_https(self, tmp_path):
+        config = _make_config(certificates=CertificateConfig(method=CertMethod.UPLOAD))
+        outputs = {"alb_dns_name": "alb.example.com"}
+        buf, ctx = _capture()
+        with ctx:
+            show_results(config, outputs, tmp_path)
+        flat = " ".join(_strip_ansi(buf.getvalue()).split())
+        # HTTPS-serving cert path notes the cert needs DNS too; ACM is never mentioned
+        # here because ACM is always auto-managed and never reaches this branch.
+        assert "uploaded certificate also needs them" in flat
+        assert "ACM" not in flat
 
     def test_aws_external_dns_writes_records_file(self, tmp_path):
         config = _make_config()

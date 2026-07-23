@@ -123,11 +123,11 @@
     ibl config save --set 'IBL_SPA.EDX_SSO_CLIENT_ID={{ spa_sso_client_id }}'
     ibl config save --set 'IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID={{ ibl_web_client_id }}'
     ibl config save --set 'IBL_SPA.AUTH.DOMAIN=https://auth.{{ base_domain }}'
-    ibl config save --set 'IBL_SPA.AUTH.DEFAULT_APP_URL=mentorai.{{ base_domain }}'
+    ibl config save --set 'IBL_SPA.AUTH.DEFAULT_APP_URL=os.{{ base_domain }}'
     ibl config save --set 'IBL_SPA.ENVIRONMENT={{ base_domain }}'
-    ibl config save --set 'IBL_SPA.MENTOR.IFRAME_MENTOR_DOMAIN=https://mentorai.{{ base_domain }}'
-    ibl config save --set 'IBL_SPA.MENTOR.DOMAIN=https://mentorai.{{ base_domain }}'
-    ibl config save --set 'IBL_SPA.SKILLS.DOMAIN=skillsai.{{ base_domain }}'
+    ibl config save --set 'IBL_SPA.MENTOR.IFRAME_MENTOR_DOMAIN=https://os.{{ base_domain }}'
+    ibl config save --set 'IBL_SPA.MENTOR.DOMAIN=https://os.{{ base_domain }}'
+    ibl config save --set 'IBL_SPA.SKILLS.DOMAIN=lms.{{ base_domain }}'
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"

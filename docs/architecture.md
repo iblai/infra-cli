@@ -67,8 +67,8 @@ flowchart TB
         end
 
         subgraph ACM["ACM Certificates"]
-            CERT1[Certificate 1\napi.data, learn, studio.learn\napps.learn, preview.learn\nasgi.data, llm.data, mentor.data\napi, web.data, base.manager]
-            CERT2[Certificate 2\nauth, mentorai, skillsai\nmonitor, flowise, platform\nprometheus, studio.learn\nmeilisearch.learn]
+            CERT1[Certificate 1\napi.data, learn, studio.learn\napps.learn, preview.learn\nasgi.data, llm.data\napi, base.manager]
+            CERT2[Certificate 2\nauth, os, lms\nmonitor, flowise, platform\nprometheus, studio.learn\nmeilisearch.learn]
         end
 
         ALB -.->|TLS termination| CERT1

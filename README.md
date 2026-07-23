@@ -247,21 +247,16 @@ Then choose **"Service-account key file"** in the wizard (or set `GCP_CREDENTIAL
 
 **Subdomains** — each gets a DNS A-record and is covered by the load balancer's TLS certificate. Replace `<your-domain>` with your base domain:
 
-_Learning platform (Open edX)_
 - `learn.<your-domain>`
 - `preview.learn.<your-domain>`
 - `studio.learn.<your-domain>`
 - `apps.learn.<your-domain>`
 - `meilisearch.learn.<your-domain>`
-
-_Backend / data APIs_
 - `api.<your-domain>`
 - `api.data.<your-domain>`
 - `asgi.data.<your-domain>`
 - `llm.data.<your-domain>`
 - `base.manager.<your-domain>`
-
-_Apps & services_
 - `auth.<your-domain>`
 - `os.<your-domain>`
 - `lms.<your-domain>`

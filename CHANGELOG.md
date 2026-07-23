@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.14.0] — 2026-07-23
+
+### Changed
+- **Platform subdomain set updated and documented.** Two backend data-API subdomains (`mentor.data`, `web.data`) were removed, and two application subdomains were renamed (`mentorai` → `os`, `skillsai` → `lms`). The change is applied consistently across every layer that references the subdomain set: DNS A-records and TLS certificate SANs (AWS single-server, AWS multi-server, and GCP templates), the `IBL_SUBDOMAINS` list in `models.py`, the application config that serves those endpoints, and the CSRF-exempt domain list. The full set is now listed in the README under "What gets created" and in `docs/architecture.md`.
+- **Behavior change:** environments created before this release will reconcile to the new DNS records and certificate on the next `apply`, and the two renamed application endpoints require a re-setup to take effect.
+
+Test count: 750 passing.
+
 ## [1.13.0] — 2026-07-03
 
 ### Added

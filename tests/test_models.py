@@ -206,6 +206,13 @@ class TestDNSConfig:
         assert "studio.learn.example.com" in subs
         assert "api.data.example.com" in subs
         assert "monitor.example.com" in subs
+        assert "os.example.com" in subs
+        assert "lms.example.com" in subs
+        # Renamed / removed subdomains must not reappear
+        assert "mentorai.example.com" not in subs
+        assert "skillsai.example.com" not in subs
+        assert "mentor.data.example.com" not in subs
+        assert "web.data.example.com" not in subs
 
     def test_subdomains_custom_domain(self):
         dns = DNSConfig(base_domain="ibl.education")

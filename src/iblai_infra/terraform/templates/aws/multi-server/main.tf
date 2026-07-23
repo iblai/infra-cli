@@ -69,20 +69,18 @@ locals {
     "base.manager.${var.base_domain}",
     "learn.${var.base_domain}",
     "llm.data.${var.base_domain}",
-    "mentor.data.${var.base_domain}",
     "preview.learn.${var.base_domain}",
-    "web.data.${var.base_domain}",
   ]
 
   # Certificate 2: Auth and monitoring services
   certificate_domains_2 = [
     "studio.learn.${var.base_domain}",
     "status.${var.base_domain}",
-    "mentorai.${var.base_domain}",
+    "os.${var.base_domain}",
     "meilisearch.learn.${var.base_domain}",
     "monitor.${var.base_domain}",
     "flowise.${var.base_domain}",
-    "skillsai.${var.base_domain}",
+    "lms.${var.base_domain}",
     "platform.${var.base_domain}",
     "prometheus.${var.base_domain}",
   ]

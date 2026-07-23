@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from iblai_infra import ui
-from iblai_infra.models import CloudProvider, DeploymentType, InfraConfig
+from iblai_infra.models import CertMethod, CloudProvider, DeploymentType, InfraConfig
 from iblai_infra.prompts.credentials import prompt_credentials
 from iblai_infra.prompts.dns_certs import prompt_dns_and_certs, prompt_waf
 from iblai_infra.prompts.infrastructure import prompt_project_and_compute, prompt_network_and_ssh
@@ -213,6 +213,121 @@ def show_results(config: InfraConfig, outputs: dict, ws: Path) -> None:
     ui.muted(f"  Contains: terraform.tfvars, main.tf, state.json, terraform.tfstate")
     if config.ssh.private_key_path:
         ui.info(f"SSH key:   [highlight]{config.ssh.private_key_path}[/highlight]")
+    ui.newline()
+
+    _show_dns_next_steps(config, outputs, ws)
+
+
+def _dns_auto_managed(config: InfraConfig) -> bool:
+    """Whether Terraform created the DNS records itself.
+
+    AWS: only the Route53 + ACM path. GCP: a managed certificate against an
+    *existing* Cloud DNS zone (a zone this stack created still needs registrar
+    delegation, handled separately). Every other path provisions the load
+    balancer but leaves DNS to the operator.
+    """
+    if config.cloud == CloudProvider.GCP:
+        return (
+            config.certificates.method == CertMethod.MANAGED
+            and not config.dns.create_dns_zone
+        )
+    return bool(config.dns.use_route53)
+
+
+def _show_dns_next_steps(config: InfraConfig, outputs: dict, ws: Path) -> None:
+    """Tell the operator which DNS records to create when DNS is not auto-managed.
+
+    Terraform only creates DNS records on the Route53+ACM (AWS) and
+    managed-existing-zone (GCP) paths. Every other path — an uploaded cert,
+    HTTP-only, or simply no hosted zone in the account — provisions the load
+    balancer but leaves DNS to the operator. Because the platform's nginx
+    routes purely by Host header, nothing is reachable (and ACM/managed certs
+    cannot validate) until these records resolve. So spell them out here
+    instead of leaving the load balancer address buried in the summary table.
+    """
+    # GCP zone we just created: the records already exist inside it, but the
+    # domain must be delegated to the zone at the registrar before anything
+    # resolves or the managed certificate can validate.
+    if config.cloud == CloudProvider.GCP and config.dns.create_dns_zone:
+        nameservers = outputs.get("dns_name_servers") or []
+        ui.console.rule("[brand]Next step - delegate your domain[/brand]")
+        ui.warning(
+            f"A Cloud DNS zone was created for {config.dns.base_domain}. Set these "
+            "nameservers at your domain registrar:"
+        )
+        for ns in nameservers:
+            ui.muted(f"  {ns}")
+        ui.newline()
+        ui.muted(
+            "Records for every subdomain already exist in the zone. Once delegation "
+            "propagates, the managed certificate validates and HTTPS goes live "
+            "(typically 10-60 min)."
+        )
+        ui.newline()
+        return
+
+    if _dns_auto_managed(config):
+        registrar = "Route53" if config.cloud == CloudProvider.AWS else "Cloud DNS"
+        ui.muted(f"DNS: {len(config.dns.subdomains)} records created automatically in {registrar}.")
+        ui.newline()
+        return
+
+    # ---- External DNS: the operator has to create the records. ----
+    ui.console.rule("[brand]Next step - create DNS records[/brand]")
+
+    if config.cloud == CloudProvider.GCP:
+        target = outputs.get("lb_ip_address") or "<load-balancer-ip>"
+        record_type = "A"
+    else:
+        target = outputs.get("alb_dns_name") or "<load-balancer-address>"
+        record_type = "CNAME"
+
+    # Call-server is a single LiveKit endpoint, not the platform subdomain set.
+    if config.deployment_type == DeploymentType.CALL:
+        eip = outputs.get("elastic_ip") or outputs.get("instance_public_ip") or "<server-ip>"
+        ui.warning(
+            "No hosted zone was used, so no DNS record was created. At your DNS "
+            "provider create an A record for the call domain, pointing at the server IP:"
+        )
+        ui.info(f"  A  {config.dns.base_domain}  ->  {eip}")
+        ui.newline()
+        return
+
+    subdomains = config.dns.subdomains
+    ui.warning(
+        "No hosted zone was used, so Terraform did NOT create any DNS records. At "
+        f"your DNS provider, create a {record_type} record for each of these "
+        f"{len(subdomains)} names, all pointing to:"
+    )
+    ui.info(f"  [highlight]{target}[/highlight]")
+    ui.newline()
+    for sd in subdomains:
+        ui.muted(f"  {record_type}  {sd}")
+    ui.newline()
+
+    # Persist a copy — 17 records is a lot to transcribe from scrollback.
+    records_file = ws / "dns-records.txt"
+    try:
+        lines = [
+            f"# DNS records for {config.dns.base_domain}",
+            f"# Create each record at your DNS provider, pointing at the load balancer.",
+            f"# TYPE  NAME  VALUE",
+        ]
+        lines += [f"{record_type}  {sd}  {target}" for sd in subdomains]
+        records_file.write_text("\n".join(lines) + "\n")
+        ui.muted(f"  (also saved to {records_file})")
+    except OSError:
+        pass
+
+    hint = (
+        "" if config.certificates.method == CertMethod.NONE
+        else " (an ACM/uploaded certificate also needs them before it can serve HTTPS)"
+    )
+    ui.muted(
+        "The platform routes by hostname, so every subdomain must resolve. Run "
+        f"`iblai infra setup {config.project_name}` only after these records are live"
+        f"{hint}."
+    )
     ui.newline()
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0] — 2026-07-23
+
+### Added
+- **Post-provision DNS instructions when no hosted zone is used.** Terraform only creates DNS records automatically on the Route53 + ACM (AWS) and managed-existing-zone (GCP) paths. On every other path — an uploaded certificate, HTTP-only, or simply no matching hosted zone in the account — the load balancer is created but DNS is left to the operator, and the results screen previously showed only the load balancer address in a table row with no guidance. The provisioning summary now spells out exactly which records to create: for external DNS it lists a record for every platform subdomain pointing at the load balancer (`CNAME` → ALB DNS name on AWS, `A` → load-balancer IP on GCP), also written to `dns-records.txt` in the workspace, and notes that setup should run only once they resolve. When the stack created a new GCP Cloud DNS zone it now prints the zone's nameservers to delegate at the registrar (these were emitted as a Terraform output but never displayed). Route53/managed paths get a one-line confirmation that records were created. Applies to `provision`, `provision-env`, and `launch` (all share the results renderer).
+
+Test count: 757 passing.
+
 ## [1.14.0] — 2026-07-23
 
 ### Changed

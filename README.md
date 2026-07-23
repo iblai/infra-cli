@@ -245,13 +245,30 @@ Then choose **"Service-account key file"** in the wizard (or set `GCP_CREDENTIAL
 
 **GCP (Terraform):** VPC + regional subnet · Compute Engine VM (Ubuntu 22.04) · global external Application Load Balancer with a static IP · Google-managed SSL certificate (all subdomains, async validation) · firewall rules (SSH restricted to your IP, health-check ranges) · Cloud DNS A-records. Object storage stays on AWS S3 — details in the [GCP guide](docs/GCP.md).
 
-**Subdomains (DNS A-records + TLS certificate coverage), all under your base domain:**
+**Subdomains** — each gets a DNS A-record and is covered by the load balancer's TLS certificate. Replace `<your-domain>` with your base domain:
 
-| Group | Subdomains |
-|-------|------------|
-| Learning platform | `learn` · `preview.learn` · `studio.learn` · `apps.learn` · `meilisearch.learn` |
-| Backend / data | `api` · `api.data` · `asgi.data` · `llm.data` · `base.manager` |
-| Apps & services | `auth` · `os` · `lms` · `platform` · `monitor` · `flowise` · `prometheus` |
+_Learning platform (Open edX)_
+- `learn.<your-domain>`
+- `preview.learn.<your-domain>`
+- `studio.learn.<your-domain>`
+- `apps.learn.<your-domain>`
+- `meilisearch.learn.<your-domain>`
+
+_Backend / data APIs_
+- `api.<your-domain>`
+- `api.data.<your-domain>`
+- `asgi.data.<your-domain>`
+- `llm.data.<your-domain>`
+- `base.manager.<your-domain>`
+
+_Apps & services_
+- `auth.<your-domain>`
+- `os.<your-domain>`
+- `lms.<your-domain>`
+- `platform.<your-domain>`
+- `monitor.<your-domain>`
+- `flowise.<your-domain>`
+- `prometheus.<your-domain>`
 
 **Platform services (Ansible):** Open edX (LMS/CMS + MySQL/Redis/MongoDB/Elasticsearch/Forum) · Data Manager (Django/ASGI/Celery + PostgreSQL 16/Redis/Flowise) · Auth/Mentor/Skills SPAs · monitoring (Prometheus/Grafana) · nginx reverse proxy.
 

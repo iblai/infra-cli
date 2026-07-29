@@ -53,6 +53,18 @@ Prefer no prompts? Steps 3–4 also run from a `.env` file — see [Non-interact
 | **Always** | Python 3.11+ · [uv](https://docs.astral.sh/uv/) (or pip) · [Terraform](https://developer.hashicorp.com/terraform/install) on PATH · a domain you control · GitHub access to the private ibl.ai packages (licensed) |
 | **AWS** | An account with EC2, ELB, S3, ACM, Route53, IAM, STS permissions (`iblai infra permissions` prints the exact policy) |
 | **GCP** | A project with billing; `compute` + `dns` APIs enabled; roles `compute.admin`, `dns.admin`, `iam.serviceAccountUser`; auth via `gcloud auth application-default login` or a service-account key. AWS S3 is still used for object storage — see the [GCP guide](docs/GCP.md) |
+| **Existing server** (bare metal / other cloud) | SSH access to the machine (Ubuntu 22.04, min 100 GB disk) and DNS you can point at it. No Terraform runs; only `iblai infra setup` is used. AWS credentials are still required — see below |
+
+**AWS credentials are required on every deployment, including bare metal and GCP.** They are not for hosting; they cover two things:
+
+- **ECR** — pulling the platform container images.
+- **S3** — the platform keeps media, static assets, and backups in three buckets. Provisioning on AWS creates them for you. On any other target, create them yourself before setup, named:
+
+  ```
+  <project>-<environment>-<domain-with-dots-as-dashes>-backups
+  <project>-<environment>-<domain-with-dots-as-dashes>-dm-media
+  <project>-<environment>-<domain-with-dots-as-dashes>-dm-static   # public-read
+  ```
 
 **Installed automatically** as Python dependencies: `ansible-core` (runs the setup), `boto3` (AWS SDK), and — with `--extra gcp` — the Google Cloud SDKs. Terraform is called as a subprocess and must be installed separately.
 
@@ -115,6 +127,18 @@ iblai infra setup              # any existing server (bare metal / other cloud) 
 ```
 
 Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), OpenAI key (optional), and super admin credentials.
+
+**Everything optional can wait.** SMTP, SSO, Stripe and the OpenAI key are each skippable at setup and added later by re-running setup with that value supplied — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run.
+
+**Installing from your own repos.** Three prompts control where the private packages come from. Press Enter to accept the defaults, or point them at a fork or per-deployment copy:
+
+| Prompt | Default |
+|---|---|
+| `GitHub org owning the private packages` | `iblai` |
+| `CLI ops repo (or repo/subdir for monorepo)` | `iblai-cli-ops` |
+| `Prod images repo (or repo/subdir for monorepo)` | `iblai-prod-images` |
+
+Both repo prompts also accept a `repo/subdir` path when the two packages live in one repository. The GitHub PAT needs **Contents: Read** on whichever repositories you name. The same three values are available as `GITHUB_ORG`, `CLI_OPS_REPO` and `PROD_IMAGES_REPO` in `.env.setup.example`.
 
 The playbook runs 16 roles in phases:
 

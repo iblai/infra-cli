@@ -52,6 +52,9 @@ def run_provision_wizard(show_banner: bool = True) -> None:
     # ----- Show results -----
     show_results(config, outputs, runner.ws)
 
+    # ----- Verify DNS before anything depends on it -----
+    offer_dns_verification(config, outputs, runner.state)
+
     # ----- Offer setup -----
     _offer_setup(config, runner.state)
 
@@ -329,6 +332,119 @@ def _show_dns_next_steps(config: InfraConfig, outputs: dict, ws: Path) -> None:
         f"{hint}."
     )
     ui.newline()
+
+
+# ---------------------------------------------------------------------------
+# DNS verification
+# ---------------------------------------------------------------------------
+
+def render_dns_report(report, project_name: str) -> None:
+    """Print a per-record verification table plus what to do next."""
+    from iblai_infra.dns_check import RecordStatus
+
+    ui.newline()
+    ui.console.rule("[brand]DNS verification[/brand]")
+
+    if report.target:
+        ui.muted(f"  Expecting these names to resolve to {report.target}")
+    ui.newline()
+
+    labels = {
+        RecordStatus.OK: "[success]OK      [/success]",
+        RecordStatus.WRONG: "[warning]WRONG   [/warning]",
+        RecordStatus.MISSING: "[muted]MISSING [/muted]",
+    }
+    width = max((len(r.name) for r in report.records), default=20)
+    for r in report.records:
+        detail = ""
+        if r.status is RecordStatus.WRONG:
+            detail = f"-> {', '.join(r.resolved)}"
+        elif r.status is RecordStatus.OK and r.resolved:
+            detail = f"-> {r.resolved[0]}"
+        ui.console.print(f"  {labels[r.status]} {r.name:<{width}}  [muted]{detail}[/muted]")
+
+    ui.newline()
+    if report.cert_status:
+        ui.muted(f"  Certificate: {report.cert_status}")
+
+    if report.all_ok:
+        n = len(report.records)
+        ui.success(
+            f"All {n} record{'s' if n != 1 else ''} resolve to this deployment."
+        )
+        if report.cert_status in ("PENDING_VALIDATION", "PROVISIONING"):
+            ui.muted(
+                "  The certificate is still issuing. That happens on its own now "
+                "that DNS resolves - typically within an hour."
+            )
+        else:
+            ui.muted(f"  Ready for [brand]iblai infra setup {project_name}[/brand].")
+        return
+
+    ui.warning(f"{report.summary()}.")
+    missing = [r for r in report.records if r.status is RecordStatus.MISSING]
+    wrong = [r for r in report.records if r.status is RecordStatus.WRONG]
+    if missing:
+        ui.muted(f"  {len(missing)} not resolving yet - the records are absent, or still propagating.")
+    if wrong:
+        ui.muted(
+            f"  {len(wrong)} resolving somewhere else. These already exist at the DNS "
+            "provider and point at another host; they must be repointed."
+        )
+    ui.newline()
+    ui.muted(f"  Re-check any time with [brand]iblai infra dns check {project_name}[/brand]")
+
+
+def offer_dns_verification(config: InfraConfig, outputs: dict, state) -> None:
+    """After provisioning with external DNS, offer to verify the records now.
+
+    Skipped when Terraform managed the records itself - there is nothing for
+    the operator to create in that case.
+    """
+    import questionary
+
+    if _dns_auto_managed(config):
+        return
+    if config.cloud == CloudProvider.GCP and config.dns.create_dns_zone:
+        return
+
+    choice = questionary.select(
+        "DNS records need to exist before the platform will work. What now?",
+        choices=[
+            questionary.Choice(
+                "Check them now - verify each name resolves to this deployment",
+                value="check",
+            ),
+            questionary.Choice(
+                "Skip for now - I will create them and check later",
+                value="skip",
+            ),
+        ],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+
+    if choice != "check":
+        ui.newline()
+        ui.muted(
+            f"  Check them later with [brand]iblai infra dns check {config.project_name}[/brand]"
+        )
+        ui.newline()
+        return
+
+    run_dns_check(config, outputs, config.project_name)
+
+
+def run_dns_check(config: InfraConfig, outputs: dict, project_name: str):
+    """Resolve every record and print the report. Returns the report."""
+    from rich.status import Status
+
+    from iblai_infra.dns_check import build_report
+
+    with Status("  [info]Resolving records via public DNS...[/info]", console=ui.console):
+        report = build_report(config, outputs)
+    render_dns_report(report, project_name)
+    return report
 
 
 def _offer_setup(config: InfraConfig, state) -> None:

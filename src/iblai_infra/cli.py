@@ -485,15 +485,113 @@ def _run_retry(name: str) -> None:
     _offer_setup(state.config, runner.state)
 
 
+dns_app = typer.Typer(help="Verify platform DNS records and certificate state")
+infra_app.add_typer(dns_app, name="dns")
+
+
+@dns_app.command("check")
+def dns_check(
+    name: str = typer.Argument(help="Project name (from provision)"),
+    watch: bool = typer.Option(
+        False, "--watch", help="Keep re-checking until every record resolves"
+    ),
+    interval: int = typer.Option(60, "--interval", help="Seconds between checks with --watch"),
+) -> None:
+    """Check that every platform subdomain resolves to this deployment.
+
+    Queries public resolvers rather than the local one, so a stale cache
+    cannot report success while the rest of the world sees nothing.
+    """
+    import time
+
+    from iblai_infra.app import run_dns_check
+    from iblai_infra.terraform.state import load_state
+
+    state = load_state(name)
+    if state is None:
+        ui.error(f"Project '{name}' not found")
+        ui.muted("  List known projects with [brand]iblai infra list[/brand]")
+        raise typer.Exit(1)
+    if not state.outputs:
+        ui.error(f"Project '{name}' has no outputs - has it been provisioned?")
+        raise typer.Exit(1)
+
+    while True:
+        report = run_dns_check(state.config, state.outputs, name)
+        if report.all_ok or not watch:
+            break
+        ui.newline()
+        ui.muted(f"  Re-checking in {interval}s. Ctrl-C to stop.")
+        try:
+            time.sleep(interval)
+        except KeyboardInterrupt:
+            ui.newline()
+            break
+
+    raise typer.Exit(0 if report.all_ok else 1)
+
+
 @infra_app.command()
 def setup(
     name: str = typer.Argument(None, help="Project name (from provision). Omit to set up an existing server."),
+    skip_dns_check: bool = typer.Option(
+        False, "--skip-dns-check", help="Proceed even if the platform domains do not resolve"
+    ),
 ) -> None:
     """Set up the IBL platform on a server."""
     if name:
+        if not skip_dns_check:
+            _warn_if_dns_not_ready(name)
         _run_setup_provisioned(name)
     else:
         _run_setup_interactive()
+
+
+def _warn_if_dns_not_ready(name: str) -> None:
+    """Warn before installing against domains that do not resolve.
+
+    The platform routes by hostname, so setting up before DNS is live produces
+    an install that looks successful and then fails confusingly. This is a
+    warning rather than a block - propagation is often mid-flight and the
+    operator may know better.
+    """
+    import questionary
+
+    from iblai_infra.app import render_dns_report
+    from iblai_infra.dns_check import build_report
+    from iblai_infra.terraform.state import load_state
+
+    state = load_state(name)
+    if state is None or not state.outputs:
+        return
+
+    try:
+        report = build_report(state.config, state.outputs)
+    except Exception:
+        return  # never block setup on a diagnostic failing
+
+    if report.all_ok or not report.records:
+        return
+
+    render_dns_report(report, name)
+    ui.newline()
+    ui.warning(
+        "The platform routes by hostname. Installing before these resolve usually "
+        "produces a broken environment."
+    )
+    proceed = questionary.confirm(
+        "Continue with setup anyway?",
+        default=False,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if not proceed:
+        ui.newline()
+        ui.muted(
+            f"  Re-check with [brand]iblai infra dns check {name} --watch[/brand], "
+            "then run setup again."
+        )
+        raise typer.Exit(0)
 
 
 @infra_app.command()

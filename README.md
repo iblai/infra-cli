@@ -189,7 +189,20 @@ iblai infra resetup <name>
 
 Points a running environment at a new domain with fresh secrets: prompts for the new base domain, prod-images release tag, and credentials; rotates all secrets, syncs DB passwords, restarts services. No Terraform changes.
 
-### 6. Optional feature toggles (post-provision)
+### 6. Verify DNS
+
+```bash
+iblai infra dns check <name>            # check once
+iblai infra dns check <name> --watch    # re-check until everything resolves
+```
+
+Unless the deployment manages DNS itself (Route53 + ACM, or an existing Cloud DNS zone), you create the records — see the list printed after provisioning, also saved as `dns-records.txt` in the workspace. Provisioning offers to run this check straight away, and it can be re-run at any point while you wait for the records to appear.
+
+Per subdomain it reports whether the name resolves and whether it points at **this** deployment's load balancer — a record resolving to some other host is flagged rather than passed. Certificate state is shown alongside, since an ACM or Google-managed certificate cannot validate until the records exist. Lookups go to public resolvers, so a stale local cache can't mask a failure. Exits non-zero while anything is unresolved.
+
+`iblai infra setup <name>` runs the same check first and asks before installing against domains that don't resolve; `--skip-dns-check` bypasses it.
+
+### 7. Optional feature toggles (post-provision)
 
 ```bash
 iblai infra waf enable [<name>]              # AWS single-server only — WAFv2 on the ALB
@@ -198,7 +211,7 @@ iblai infra waf disable <name> [--yes]
 iblai infra waf status [<name>]
 ```
 
-### 7. Launch from AMI (AWS, CI/CD)
+### 8. Launch from AMI (AWS, CI/CD)
 
 One-shot Terraform + Ansible from a pre-built AMI:
 
@@ -215,7 +228,7 @@ iblai infra launch \                         # fully flag-driven
 
 See `iblai infra launch --help` for all options (instance type, `--platform-name`, SMTP/Stripe/SSO, `--enable-ai`, ...).
 
-### 8. Service update (image updates, CI/CD)
+### 9. Service update (image updates, CI/CD)
 
 Update container images and restart services — no provisioning, no secret rotation:
 
@@ -225,7 +238,7 @@ iblai infra service-update --host <ip> --ssh-key ~/.ssh/key.pem --git-token $GIT
 
 Or launch a fresh AMI and swap it into an ALB target group — see `iblai infra service-update --help`.
 
-### 9. Manage environments
+### 10. Manage environments
 
 ```bash
 iblai infra list                # all environments (cloud, type, status)

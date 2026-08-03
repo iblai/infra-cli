@@ -66,11 +66,11 @@ class TestExpectedTarget:
         assert expected_target(_config(), {"alb_dns_name": "alb.example.com"}) == "alb.example.com"
 
     def test_gcp_uses_lb_ip(self):
-        assert expected_target(_gcp_config(), {"lb_ip_address": "34.1.2.3"}) == "34.1.2.3"
+        assert expected_target(_gcp_config(), {"lb_ip_address": "192.0.2.10"}) == "192.0.2.10"
 
     def test_call_server_uses_elastic_ip(self):
         cfg = _config(deployment_type=DeploymentType.CALL)
-        assert expected_target(cfg, {"elastic_ip": "5.6.7.8"}) == "5.6.7.8"
+        assert expected_target(cfg, {"elastic_ip": "192.0.2.20"}) == "192.0.2.20"
 
     def test_missing_output_is_empty(self):
         assert expected_target(_config(), {}) == ""
@@ -84,8 +84,8 @@ class TestExpectedTarget:
 class TestCheckDNS:
     def test_all_records_pointing_at_target_are_ok(self):
         cfg = _gcp_config()
-        with patch("iblai_infra.dns_check.resolve_addresses", return_value=["34.1.2.3"]):
-            report = check_dns(cfg, {"lb_ip_address": "34.1.2.3"})
+        with patch("iblai_infra.dns_check.resolve_addresses", return_value=["192.0.2.10"]):
+            report = check_dns(cfg, {"lb_ip_address": "192.0.2.10"})
         assert report.all_ok
         assert not report.problems
         assert len(report.records) == len(cfg.dns.subdomains)
@@ -93,7 +93,7 @@ class TestCheckDNS:
     def test_unresolvable_records_are_missing(self):
         cfg = _gcp_config()
         with patch("iblai_infra.dns_check.resolve_addresses", return_value=[]):
-            report = check_dns(cfg, {"lb_ip_address": "34.1.2.3"})
+            report = check_dns(cfg, {"lb_ip_address": "192.0.2.10"})
         assert not report.all_ok
         assert all(r.status is RecordStatus.MISSING for r in report.records)
 
@@ -102,12 +102,12 @@ class TestCheckDNS:
         cfg = _gcp_config()
 
         def fake(name):
-            return ["34.1.2.3"] if name == "34.1.2.3" else ["9.9.9.9"]
+            return ["192.0.2.10"] if name == "192.0.2.10" else ["203.0.113.9"]
 
         with patch("iblai_infra.dns_check.resolve_addresses", side_effect=fake):
-            report = check_dns(cfg, {"lb_ip_address": "34.1.2.3"})
+            report = check_dns(cfg, {"lb_ip_address": "192.0.2.10"})
         assert all(r.status is RecordStatus.WRONG for r in report.records)
-        assert report.records[0].resolved == ["9.9.9.9"]
+        assert report.records[0].resolved == ["203.0.113.9"]
 
     def test_aws_hostname_target_is_resolved_for_comparison(self):
         cfg = _config()
@@ -115,12 +115,12 @@ class TestCheckDNS:
 
         def fake(name):
             calls.append(name)
-            return ["1.1.1.1"]
+            return ["192.0.2.30"]
 
         with patch("iblai_infra.dns_check.resolve_addresses", side_effect=fake):
             report = check_dns(cfg, {"alb_dns_name": "alb.example.com"})
         assert "alb.example.com" in calls  # the ALB itself was resolved
-        assert report.target_ips == ["1.1.1.1"]
+        assert report.target_ips == ["192.0.2.30"]
         assert report.all_ok
 
     def test_unresolvable_target_does_not_produce_false_wrong(self):
@@ -128,7 +128,7 @@ class TestCheckDNS:
         cfg = _config()
 
         def fake(name):
-            return [] if name == "alb.example.com" else ["9.9.9.9"]
+            return [] if name == "alb.example.com" else ["203.0.113.9"]
 
         with patch("iblai_infra.dns_check.resolve_addresses", side_effect=fake):
             report = check_dns(cfg, {"alb_dns_name": "alb.example.com"})
@@ -137,21 +137,21 @@ class TestCheckDNS:
     def test_call_server_checks_only_the_base_domain(self):
         cfg = _config(deployment_type=DeploymentType.CALL,
                       dns=DNSConfig(base_domain="call.example.com"))
-        with patch("iblai_infra.dns_check.resolve_addresses", return_value=["5.6.7.8"]):
-            report = check_dns(cfg, {"elastic_ip": "5.6.7.8"})
+        with patch("iblai_infra.dns_check.resolve_addresses", return_value=["192.0.2.20"]):
+            report = check_dns(cfg, {"elastic_ip": "192.0.2.20"})
         assert [r.name for r in report.records] == ["call.example.com"]
 
     def test_mixed_results_summarise(self):
         cfg = _gcp_config()
-        seq = {"learn.example.com": ["34.1.2.3"]}
+        seq = {"learn.example.com": ["192.0.2.10"]}
 
         def fake(name):
-            if name == "34.1.2.3":
-                return ["34.1.2.3"]
+            if name == "192.0.2.10":
+                return ["192.0.2.10"]
             return seq.get(name, [])
 
         with patch("iblai_infra.dns_check.resolve_addresses", side_effect=fake):
-            report = check_dns(cfg, {"lb_ip_address": "34.1.2.3"})
+            report = check_dns(cfg, {"lb_ip_address": "192.0.2.10"})
         assert len(report.ok) == 1
         assert "1/" in report.summary()
 
@@ -211,12 +211,12 @@ class TestReport:
     def test_partitions(self):
         report = DNSReport(
             records=[
-                RecordResult("a", RecordStatus.OK, ["1.1.1.1"]),
+                RecordResult("a", RecordStatus.OK, ["192.0.2.30"]),
                 RecordResult("b", RecordStatus.MISSING),
-                RecordResult("c", RecordStatus.WRONG, ["9.9.9.9"]),
+                RecordResult("c", RecordStatus.WRONG, ["203.0.113.9"]),
             ],
-            target="1.1.1.1",
-            target_ips=["1.1.1.1"],
+            target="192.0.2.30",
+            target_ips=["192.0.2.30"],
         )
         assert len(report.ok) == 1
         assert len(report.problems) == 2

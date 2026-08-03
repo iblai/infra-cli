@@ -119,7 +119,9 @@ class TestCheckDNS:
 
         with patch("iblai_infra.dns_check.resolve_addresses", side_effect=fake):
             report = check_dns(cfg, {"alb_dns_name": "alb.example.com"})
-        assert "alb.example.com" in calls  # the ALB itself was resolved
+        # The ALB hostname is resolved once, to compare the records against it.
+        # Counted by equality rather than membership so the intent is exact.
+        assert calls.count("alb.example.com") == 1
         assert report.target_ips == ["192.0.2.30"]
         assert report.all_ok
 

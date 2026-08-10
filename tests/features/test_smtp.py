@@ -8,12 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import typer
 
-from iblai_infra.features.smtp import (
-    AFFECTED_SERVICES,
-    SMTP_TAGS,
-    confirm_restart,
-    load_feature_target,
-)
+from iblai_infra.features._common import confirm_restart, load_feature_target
+from iblai_infra.features.smtp import AFFECTED_SERVICES, SMTP_TAGS
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,

@@ -577,10 +577,14 @@ class SetupConfig(BaseModel):
     # install URL is built.
     cli_ops_repo: str = "iblai-cli-ops"
     prod_images_repo: str = "iblai-prod-images"
-    openai_api_key: str = ""
+    # Excluded from serialization like every other secret on this model. Nothing
+    # currently dumps a SetupConfig, so this is defensive - but these two were
+    # the only credentials without the guard, and that asymmetry is the kind
+    # that stops being harmless the first time something does dump one.
+    openai_api_key: str = Field(default="", exclude=True)
     admin_username: str = "platform_admin"
     admin_email: str = ""
-    admin_password: str = ""
+    admin_password: str = Field(default="", exclude=True)
     # SMTP for outbound email (magic-link tests etc.). Disabled by default;
     # the ansible role no-ops unless smtp_enabled is true. Password is
     # excluded from serialization so it's never written to state.json.

@@ -56,7 +56,10 @@ def smtp_enable(
     ui.newline()
 
     host = prompt_required("SMTP host:")
-    port = prompt_required("SMTP port:", default="587")
+    port = prompt_required(
+        "SMTP port:", default="587",
+        validate=lambda v: v.strip().isdigit() or "Must be a number",
+    )
     username = prompt_required("SMTP username:")
     password = prompt_required("SMTP password:", secret=True)
     sender = prompt_optional(
@@ -75,10 +78,6 @@ def smtp_enable(
     ).ask()
     if security is None:
         ui.abort()
-
-    if not port.isdigit():
-        ui.error("SMTP port must be a number.")
-        raise typer.Exit(1)
 
     restart = confirm_restart(AFFECTED_SERVICES, no_restart=no_restart, assume_yes=assume_yes)
 

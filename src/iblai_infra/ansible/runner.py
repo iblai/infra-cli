@@ -242,6 +242,19 @@ class AnsibleRunner:
             self.tags = None
 
         self._print_final_table(steps)
+
+        # ansible-playbook exits 0 when a tag matches nothing at all, so a run
+        # against a playbook that does not carry the role would otherwise look
+        # like success while having done nothing. Never report that as done.
+        if ok and completed == 0:
+            ui.newline()
+            ui.error(
+                f"Nothing ran - no tasks matched {', '.join(tags)} in "
+                f"{self.playbook}."
+            )
+            ui.muted("  The environment's playbook does not carry this feature.")
+            return False
+
         return ok
 
     # ------------------------------------------------------------------

@@ -47,7 +47,7 @@
 
       # 1. Resolve the Site this provider config attaches to. LMS deployments
       #    typically already have a `learn.<base_domain>` Site row; if not
-      #    (e.g. fresh provision before final_steps wired DNS), create one
+      #    (e.g. fresh provision before the integrations role wired DNS), create one
       #    so the provider has a valid FK target. The display name mirrors
       #    what edX writes by default.
       site, _ = Site.objects.get_or_create(

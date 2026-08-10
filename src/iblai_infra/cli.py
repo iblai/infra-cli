@@ -88,11 +88,23 @@ infra_app.add_typer(ingress_app, name="ingress")
 # See `iblai_infra/features/__init__.py` for the pattern.
 # ---------------------------------------------------------------------------
 
+from iblai_infra.features.configure import configure as _configure
+from iblai_infra.features.llm import llm_app
+from iblai_infra.features.platform import platform_app
 from iblai_infra.features.smtp import smtp_app
+from iblai_infra.features.sso import sso_app
+from iblai_infra.features.stripe import stripe_app
 from iblai_infra.features.waf import waf_app
 
 infra_app.add_typer(waf_app, name="waf")
 infra_app.add_typer(smtp_app, name="smtp")
+infra_app.add_typer(sso_app, name="sso")
+infra_app.add_typer(stripe_app, name="stripe")
+infra_app.add_typer(llm_app, name="llm")
+infra_app.add_typer(platform_app, name="platform")
+
+# Discovery entry point for all of the above.
+infra_app.command("configure")(_configure)
 
 
 @ingress_app.command("list")

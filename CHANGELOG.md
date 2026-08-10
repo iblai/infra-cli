@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.18.0] — 2026-08-05
+
+### Added
+- **The remaining optional integrations can now be added after setup**, on the machinery 1.17.0 introduced for SMTP.
+  - **`iblai infra configure <name>`** — lists what can be added and hands off to the commands below. The per-feature form is precise and scriptable, but only if you already know a feature exists and what it's called; an operator returning weeks later to "add email" shouldn't have to guess at `smtp`. Every menu entry calls the same function as the direct command, so the two can't drift.
+  - **`iblai infra sso google <name>`** and **`iblai infra sso microsoft <name>`** — both print the exact redirect URI the OAuth application needs before asking for credentials, since a mismatched callback is the usual reason SSO doesn't work.
+  - **`iblai infra stripe enable <name>`** (plus `enable-env`) — the seven Stripe values are prompted individually rather than as a blob, because confusing the publishable and secret keys is the easy mistake. Live mode warns that real cards will be charged.
+  - **`iblai infra llm set-key <name>`** — sets or rotates the mentor service credential. `--api-key` skips the prompt for CI. Rotating is the same operation as setting, so there's one command rather than enable/disable.
+  - **`iblai infra platform create <name>`** — creates an additional tenant via the platform launcher, so it ends up fully wired rather than half-created. Validates the name and refuses `main`, which always exists. The tenant admin credentials it prints are the only copy.
+- **Only SMTP asks about restarting.** How a value reaches the platform decides this, and it was worth establishing per feature rather than assuming: SMTP arrives as a container environment variable, so the services must be recreated; Google SSO, Stripe and the LLM key are database rows Django reads per request and are live immediately; Microsoft SSO patches edX settings, so its role restarts edX itself and the command warns rather than offering a choice that would leave the setting inert.
+
+### Changed
+- **`openai_api_key` and `admin_password` are now excluded from `SetupConfig` serialization**, matching every other secret on the model. Nothing currently dumps a `SetupConfig`, so this is defensive — but they were the only two credentials without the guard.
+
+Test count: 839 passing.
+
 ## [1.17.0] — 2026-08-05
 
 ### Added

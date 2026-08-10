@@ -204,33 +204,80 @@ Per subdomain it reports whether the name resolves and whether it points at **th
 
 ### 7. Optional feature toggles (post-provision)
 
-Everything optional at setup — SMTP, SSO, billing, an LLM key, extra tenants — can be added later against a running environment, without re-running the whole setup.
+Everything optional at setup can be added later against a running environment, without re-running setup:
 
 ```bash
 iblai infra configure <name>       # menu of everything below
 ```
 
-Or go straight to one:
+The environment must already be provisioned and set up. Only the relevant Ansible role re-runs, and it needs just the SSH key already recorded in the project — no GitHub token or AWS keys. Most changes are live immediately; the two exceptions are noted below.
+
+#### Email (SMTP)
 
 ```bash
-iblai infra smtp enable <name>              # outbound email  (also: disable, status, enable-env)
-iblai infra sso google <name>               # sign in with Google
-iblai infra sso microsoft <name>            # sign in with Microsoft
-iblai infra stripe enable <name>            # billing          (also: enable-env)
-iblai infra llm set-key <name>              # mentor service credential
-iblai infra platform create <name>          # an additional tenant platform
+iblai infra smtp enable <name>               # prompts for host, port, credentials, sender
+iblai infra smtp enable-env <name> -f .env   # non-interactive (SMTP_* keys)
+iblai infra smtp disable <name> [--yes]
+iblai infra smtp status <name>               # reads the live values off the server
 ```
 
-The environment must already be provisioned and set up. Only the relevant Ansible role is re-run, so nothing else is touched, and it needs just the SSH key already recorded in the project — no GitHub token or AWS keys.
+⚠️ The only feature needing a restart — the settings reach the services as environment variables, so Data Manager and Open edX are recreated. The command asks first; `--no-restart` skips it (the change stays inert until they restart), `--yes` skips the prompt.
 
-**Most take effect immediately.** Google SSO, Stripe and the LLM key are stored as database rows the platform reads per request. **SMTP is the exception** — it reaches the services as a container environment variable, so they have to be recreated; the command says which ones and asks first (`--no-restart` writes the config without touching them, `--yes` skips the prompt). **Microsoft SSO** restarts Open edX because it changes settings read only at boot, and warns before doing so.
+#### Google SSO
 
 ```bash
-iblai infra waf enable [<name>]              # AWS single-server only — WAFv2 on the ALB
-iblai infra waf enable-env [<name>] -f .env  # non-interactive (WAF_ALLOWED_IPS)
+iblai infra sso google <name>
+```
+
+Register an OAuth client in Google Cloud Console first, with authorised redirect URI `https://learn.<your-domain>/auth/complete/google-oauth2/`. Prompts for client ID, secret, and an optional Workspace domain to restrict to. Live immediately.
+
+#### Microsoft SSO
+
+```bash
+iblai infra sso microsoft <name> [--yes]
+```
+
+Register an application in Azure first, with redirect URI `https://learn.<your-domain>/auth/complete/azuread-oauth2/`. Prompts for client ID, secret and tenant ID.
+
+⚠️ Restarts Open edX — it changes settings read only at boot. The command warns first.
+
+#### Stripe billing
+
+```bash
+iblai infra stripe enable <name>
+iblai infra stripe enable-env <name> -f .env   # non-interactive (STRIPE_* keys)
+```
+
+Prompts for test/live mode, secret and publishable keys, and optional pricing-table and webhook values. Live mode warns that real cards will be charged. Live immediately.
+
+#### LLM API key
+
+```bash
+iblai infra llm set-key <name>
+iblai infra llm set-key <name> --api-key <key>   # non-interactive
+```
+
+Sets or rotates the credential the mentor service uses. Live immediately.
+
+#### Tenant platform
+
+```bash
+iblai infra platform create <name>
+iblai infra platform create <name> --platform-name <tenant>
+```
+
+Creates a platform alongside the default `main` one, via the platform launcher so it comes up fully wired. **The tenant admin credentials are printed once and stored nowhere else — save them.**
+
+#### WAF (AWS single-server only)
+
+```bash
+iblai infra waf enable [<name>]               # WAFv2 on the ALB
+iblai infra waf enable-env [<name>] -f .env   # non-interactive (WAF_ALLOWED_IPS)
 iblai infra waf disable <name> [--yes]
 iblai infra waf status [<name>]
 ```
+
+The only one of these that changes infrastructure rather than platform config — it re-applies Terraform.
 
 ### 8. Launch from AMI (AWS, CI/CD)
 

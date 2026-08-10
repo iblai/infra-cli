@@ -557,6 +557,11 @@ class SetupConfig(BaseModel):
     enable_ai: bool = True
     is_resetup: bool = False
     create_playwright_platforms: bool = False
+    # Recreate the affected services after writing config. A full setup starts
+    # them afterwards anyway, so this stays false there; the post-setup feature
+    # commands set it when adding an integration to a running environment,
+    # where the containers would otherwise keep their old environment.
+    restart_services: bool = False
     aws_access_key_id: str
     aws_secret_access_key: str
     aws_default_region: str
@@ -641,6 +646,46 @@ class SetupConfig(BaseModel):
                 f"'{s}' is reserved for system use; pick a different admin username"
             )
         return s
+
+    @classmethod
+    def for_feature(cls, state: "ProjectState", **overrides) -> "SetupConfig":
+        """Build a config for adding one optional feature to a set-up server.
+
+        The post-setup feature commands re-run a single tagged role against an
+        environment that is already bootstrapped. Those roles only write config
+        and talk to local containers - none of them read the GitHub token or the
+        AWS keys - so rather than making an operator re-enter four secrets to
+        turn on SMTP, the credential fields are left empty here and the caller
+        supplies just the values its feature needs.
+
+        Everything else is recovered from the project's own state, the same way
+        `iblai infra setup <name>` recovers it.
+        """
+        outputs = state.outputs or {}
+        host = outputs.get("instance_public_ip") or ""
+        key_path = state.config.ssh.private_key_path
+
+        if not host:
+            raise ValueError(
+                f"'{state.name}' has no instance IP in its outputs - it may not be provisioned."
+            )
+        if not key_path:
+            raise ValueError(
+                f"'{state.name}' has no SSH key recorded; cannot reach the server."
+            )
+
+        base = dict(
+            ssh_private_key_path=key_path,
+            target_host=host,
+            base_domain=state.config.dns.base_domain,
+            # Unused by the tagged feature roles - see the docstring.
+            aws_access_key_id="",
+            aws_secret_access_key="",
+            aws_default_region="",
+            git_access_token="",
+        )
+        base.update(overrides)
+        return cls(**base)
 
 
 # ---------------------------------------------------------------------------

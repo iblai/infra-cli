@@ -74,6 +74,43 @@
     IBL_ROOT: "{{ ibl_root }}/"
   when: smtp_enabled | default(false) | bool
 
+# During a full setup the services start *after* this role, so they read the
+# new env vars on first boot and nothing needs restarting. When SMTP is added
+# to an already-running environment the containers are already up with the old
+# environment, so the compose files rendered above only take effect once the
+# services are recreated. `iblai infra smtp enable` sets `restart_services`
+# after asking; a normal setup leaves it false and skips this entirely.
+- name: Recreate DM services so they pick up the new mail settings
+  become: false
+  ansible.builtin.shell:
+    cmd: docker compose up -d
+    executable: /bin/bash
+    chdir: "{{ ibl_root }}/app/ibl-dm/ibl-dm-pro"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  when:
+    - smtp_enabled | default(false) | bool
+    - restart_services | default(false) | bool
+
+- name: Restart edX so it picks up the new mail settings
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl edx stop
+      ibl edx start -d
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  when:
+    - smtp_enabled | default(false) | bool
+    - restart_services | default(false) | bool
+
 - name: Confirm SMTP configuration applied
   ansible.builtin.debug:
     msg: "SMTP configured: {{ smtp_username }}@{{ smtp_host }}:{{ smtp_port }} (tls={{ smtp_use_tls }}, ssl={{ smtp_use_ssl }})"

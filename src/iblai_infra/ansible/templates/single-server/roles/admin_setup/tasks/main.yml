@@ -1,4 +1,8 @@
 ---
+# Tagged `llm` so it can be run on its own against a bootstrapped server -
+# `iblai infra llm set-key <name>`. `update_or_create` makes that safe to
+# repeat, and the credential is read live by the mentor service, so no
+# restart is needed for a later change to take effect.
 - name: Configure OpenAI API key
   become: false
   shell: |
@@ -15,6 +19,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
   when: openai_api_key | length > 0
+  tags: [llm]
 
 - name: Create DM super admin
   become: false

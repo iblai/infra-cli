@@ -88,9 +88,11 @@ infra_app.add_typer(ingress_app, name="ingress")
 # See `iblai_infra/features/__init__.py` for the pattern.
 # ---------------------------------------------------------------------------
 
+from iblai_infra.features.smtp import smtp_app
 from iblai_infra.features.waf import waf_app
 
 infra_app.add_typer(waf_app, name="waf")
+infra_app.add_typer(smtp_app, name="smtp")
 
 
 @ingress_app.command("list")

@@ -99,6 +99,9 @@ class AnsibleRunner:
         self.ws = Path(state.workspace_path) / "ansible"
         self.playbook = playbook
         self.role_labels = role_labels or ROLE_LABELS
+        # Ansible tags limiting the run to specific roles. None = run everything,
+        # which is what a normal setup does. Set by `run_partial`.
+        self.tags: list[str] | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -158,6 +161,89 @@ class AnsibleRunner:
         ui.success(f"[highlight]{completed}[/highlight] of {len(self.role_labels)} steps completed")
         return True
 
+    def read_config_values(self, keys: list[str]) -> dict[str, str] | None:
+        """Read platform config values off the server. None if unreachable.
+
+        Nothing local records what an environment is configured with - the
+        setup config carries secrets and is deliberately never persisted - so
+        the server is the only source of truth for a `status` command.
+
+        Read-only: runs `ibl config printvalue` per key over SSH.
+        """
+        script = "; ".join(
+            f'echo "{k}=$(ibl config printvalue {k} 2>/dev/null)"' for k in keys
+        )
+        remote = (
+            'export PYENV_ROOT="$HOME/.pyenv"; export PATH="$PYENV_ROOT/bin:$PATH"; '
+            'eval "$(pyenv init -)" >/dev/null 2>&1; '
+            'eval "$(pyenv virtualenv-init -)" >/dev/null 2>&1; '
+            'pyenv activate ibl-cli-ops >/dev/null 2>&1; '
+            f'export IBL_ROOT=/ibl/; {script}'
+        )
+
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-o", "ConnectTimeout=15",
+                    "-o", "BatchMode=yes",
+                    "-o", "StrictHostKeyChecking=no",
+                    "-i", str(self.config.ssh_private_key_path),
+                    f"{self.config.ssh_user}@{self.config.target_host}",
+                    remote,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        values: dict[str, str] = {}
+        for line in result.stdout.splitlines():
+            if "=" not in line:
+                continue
+            key, _, raw = line.partition("=")
+            if key in keys:
+                # printvalue emits a Python repr for strings; strip the quotes.
+                values[key] = raw.strip().strip("'\"")
+        return values
+
+    def run_partial(self, tags: list[str], description: str = "Applying change") -> bool:
+        """Run only the roles carrying ``tags`` against an already set-up server.
+
+        Used by the post-setup feature commands (`iblai infra <feature> enable`)
+        so an operator can add an optional integration - SMTP, SSO, a billing or
+        LLM key - to a running environment without re-running the whole
+        playbook. The tagged roles are individually gated and idempotent, so
+        re-applying one is safe.
+
+        Unlike :meth:`run`, this deliberately leaves ``setup_status`` alone: a
+        feature being added is not the environment being set up, and a failure
+        here must not make a working environment look un-provisioned.
+        """
+        ui.newline()
+
+        steps: dict[str, dict] = {
+            name: {"label": label, "status": "pending", "elapsed": 0}
+            for name, label in self.role_labels.items()
+        }
+
+        progress = ui.make_overall_progress()
+        task_id = progress.add_task(description, total=max(len(steps), 1))
+
+        self.tags = tags
+        try:
+            ok, completed = self._run_ansible(steps, progress, task_id, 0)
+        finally:
+            self.tags = None
+
+        self._print_final_table(steps)
+        return ok
+
     # ------------------------------------------------------------------
     # Ansible execution
     # ------------------------------------------------------------------
@@ -189,6 +275,10 @@ class AnsibleRunner:
             self.playbook,
             "--extra-vars", json.dumps(extra_vars),
         ]
+        # Set by `run_partial` to run a single tagged role against an already
+        # bootstrapped server. Absent for a normal setup, which runs everything.
+        if self.tags:
+            cmd += ["--tags", ",".join(self.tags)]
 
         proc = subprocess.Popen(
             cmd,
@@ -480,6 +570,7 @@ class AnsibleRunner:
             "cli_ops_release_tag": self.config.cli_ops_release_tag or "main",
             "prod_images_tag": self.config.prod_images_tag,
             "is_resetup": self.config.is_resetup,
+            "restart_services": self.config.restart_services,
             "enable_ai": self.config.enable_ai,
             "create_playwright_platforms": self.config.create_playwright_platforms,
             "smtp_enabled": self.config.smtp_enabled,

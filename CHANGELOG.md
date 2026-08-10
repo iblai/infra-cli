@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.17.0] — 2026-08-05
+
+### Added
+- **Optional integrations can now be added after setup.** SMTP, SSO, billing and an LLM key are all skippable during `iblai infra setup` — the credentials usually aren't available on day one — but until now the only way to add one later was to re-run the entire playbook against a live environment. This release delivers the machinery for targeted, post-setup changes, with SMTP as the first feature on it.
+  - **`iblai infra smtp enable <name>`** — prompts for the mail settings and applies them to an environment that is already provisioned and bootstrapped. Also `disable`, `status` (reads the live values back off the server), and `enable-env -f .env` for CI, which accepts the same `SMTP_*` keys as `setup-env` so one file serves both.
+  - **`AnsibleRunner.run_partial(tags)`** — runs only the roles carrying the given tags against the existing inventory. The optional roles are each gated on their own flag and idempotent, so re-applying one is safe. Deliberately leaves `setup_status` untouched: adding a feature is not the environment being set up, and a failure here must not make a working environment look un-provisioned.
+  - **Playbook roles are tagged** — `smtp`, `stripe`, `google_sso`, `microsoft_sso`, `platform`, plus `llm` on the OpenAI task. Purely additive: a run without `--tags` still executes every role in the same order.
+  - **`SetupConfig.for_feature(state)`** — recovers host, SSH key and base domain from the project's own state and leaves the credential fields empty. None of the tagged roles read the GitHub token or the AWS keys, so turning on email needs the SSH key and the mail settings, nothing more.
+  - **`restart_services`** — during a full setup the services start *after* these roles and read the new values on first boot. Added later, the containers are already running with the old environment and have to be recreated, so `smtp_config` gained restart tasks gated on this flag. The command says which services are affected and asks before setting it, defaulting to yes; `--no-restart` and `--yes` cover both non-interactive cases.
+
+Test count: 786 passing.
+
 ## [1.15.0] — 2026-07-23
 
 ### Added

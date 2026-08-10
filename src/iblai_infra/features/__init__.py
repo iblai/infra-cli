@@ -18,11 +18,26 @@ multi-server) call :meth:`TerraformRunner.reapply`, which re-emits
 and runs ``init`` → ``plan`` → ``apply`` on the existing workspace with the
 original ``bucket_suffix`` pinned.
 
-Ansible-touching features (SMTP, Stripe, SSO) will call a future
-``AnsibleRunner.run_partial(tags=[...])`` helper that runs ``ansible-playbook
---tags <role>`` against the existing inventory — runs only the role(s)
-relevant to the feature, leaving other roles untouched. That helper is not
-delivered yet.
+Ansible-touching features (SMTP, Stripe, SSO) call
+:meth:`AnsibleRunner.run_partial`, which runs ``ansible-playbook --tags
+<role>`` against the existing inventory — only the role(s) relevant to the
+feature, leaving the rest untouched. The tagged roles are individually gated
+and idempotent, so re-applying one is safe.
+
+Two things these features have to get right:
+
+* **Credentials.** The tagged roles only write config and talk to local
+  containers; none of them read the GitHub token or the AWS keys. Build the
+  config with :meth:`SetupConfig.for_feature`, which recovers host, SSH key
+  and domain from the project state and leaves the credential fields empty,
+  rather than making an operator re-enter four secrets to turn on email.
+
+* **Applying the change.** During a full setup the services start *after*
+  these roles, so they read the new values on first boot. Added later, the
+  containers are already running with the old environment and have to be
+  recreated. Roles whose values are read at boot gate a restart task on
+  ``restart_services``; the command asks before setting it, since on a live
+  environment that means a brief outage.
 
 To add a new feature subgroup:
 
@@ -34,7 +49,8 @@ To add a new feature subgroup:
 3. Add ``tests/features/test_<feature>.py`` mirroring the WAF test layout.
 
 Currently registered subgroups:
-    - ``waf`` — see :mod:`iblai_infra.features.waf`
+    - ``waf`` — see :mod:`iblai_infra.features.waf` (Terraform)
+    - ``smtp`` — see :mod:`iblai_infra.features.smtp` (Ansible)
 """
 
 from __future__ import annotations

@@ -35,23 +35,28 @@
         executable: /bin/bash
       changed_when: false
 
+  # Roles carrying a tag can also be run on their own against an already
+  # bootstrapped server, so an operator can come back and add an optional
+  # integration later - see `iblai infra <feature> enable`. Tags change
+  # nothing about a full run: without `--tags` every role still runs, in
+  # this order.
   roles:
     - docker
     - awscli
     - python
     - ibl_cli_ops
     - ibl_platform
-    - smtp_config
+    - { role: smtp_config, tags: [smtp] }
     - ibl_dm
     - ibl_edx
     - ibl_spa
     - integrations
     - admin_setup
     - data_seeding
-    - ibl_tenant_platform
-    - stripe_config
-    - google_sso_config
-    - microsoft_sso_config
+    - { role: ibl_tenant_platform, tags: [platform] }
+    - { role: stripe_config, tags: [stripe] }
+    - { role: google_sso_config, tags: [google_sso] }
+    - { role: microsoft_sso_config, tags: [microsoft_sso] }
 
   tasks:
     # Optional Playwright test fixture setup. Runs only when the operator

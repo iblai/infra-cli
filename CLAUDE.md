@@ -14,10 +14,18 @@ iblai-infra/
 ├── src/iblai_infra/
 │   ├── __init__.py                         # __version__ = "1.2.3"
 │   ├── __main__.py                         # python -m iblai_infra support
-│   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup + `ingress` subgroup + landing screen menu
-│   ├── app.py                              # Wizard orchestrator (5-step flow)
+│   ├── cli.py                              # Typer app: root `iblai` + `infra` subgroup + nested subgroups (ingress, dns, feature toggles) + landing screen menu
+│   ├── app.py                              # Wizard orchestrator (5-step flow), results + DNS report rendering
 │   ├── models.py                           # Pydantic models — contract between wizard & Terraform, ingress registry
 │   ├── ui.py                               # Rich console, ibl.ai branding, progress helpers
+│   ├── dns_check.py                        # DNS + certificate verification (public resolvers via dnspython)
+│   ├── features/                           # Post-provision / post-setup feature subgroups
+│   │   ├── __init__.py                     # The pattern + how to add a feature
+│   │   ├── _common.py                      # Shared: target guards, restart confirm, apply, remote config read
+│   │   ├── configure.py                    # `iblai infra configure` — menu dispatching to the below
+│   │   ├── smtp.py  sso.py  stripe.py      # Ansible-backed features (run_partial + tags)
+│   │   ├── llm.py   platform.py            # ditto
+│   │   └── waf.py                          # Terraform-backed feature (TerraformRunner.reapply)
 │   ├── prompts/
 │   │   ├── credentials.py                  # Step 1: AWS auth (profile/keys/env), show_step param
 │   │   ├── infrastructure.py               # Steps 2-3: project, compute, network, SSH
@@ -42,7 +50,7 @@ iblai-infra/
 │   └── ansible/
 │       ├── __init__.py
 │       ├── runner.py                       # AnsibleRunner: preflight, SSH test, inventory, playbook execution
-│       └── templates/single-server/        # Ansible playbook + roles (docker, awscli, python, ibl_cli_ops, ibl_platform, ibl_dm, ibl_edx, ibl_spa, final_steps)
+│       └── templates/single-server/        # Ansible playbook + roles (docker, awscli, python, ibl_cli_ops, ibl_platform, ibl_dm, ibl_edx, ibl_spa, integrations, admin_setup, data_seeding)
 ├── tests/
 │   ├── conftest.py                         # Shared fixtures (aws_credentials, infra_config, project_state, workspace_root)
 │   ├── test_models.py                      # Pydantic model validation, all enum combos, edge cases
@@ -64,8 +72,16 @@ iblai-infra/
 ### CLI Structure (Typer)
 
 - **Root app** (`iblai`): `--version`, `--help`
-- **Subgroup** (`iblai infra`): `provision`, `retry <name>`, `setup [name]`, `resetup <name>`, `launch`, `destroy <name>`, `status <name>`, `list`, `permissions`, `auth`
+- **Subgroup** (`iblai infra`): `provision`, `retry <name>`, `setup [name]`, `resetup <name>`, `launch`, `destroy <name>`, `status <name>`, `list`, `permissions`, `auth`, `configure <name>`
 - **Nested subgroup** (`iblai infra ingress`): `add`, `remove`, `list`, `configure`, `status`, `claim`, `release`
+- **Nested subgroup** (`iblai infra dns`): `check <name> [--watch]` — see DNS Verification
+- **Post-setup feature subgroups** — see Post-Setup Features:
+  - `iblai infra smtp`: `enable`, `enable-env`, `disable`, `status`
+  - `iblai infra sso`: `google`, `microsoft`
+  - `iblai infra stripe`: `enable`, `enable-env`
+  - `iblai infra llm`: `set-key`
+  - `iblai infra platform`: `create`
+  - `iblai infra waf`: `enable`, `enable-env`, `disable`, `status`
 - Running `iblai infra` with no arguments shows branded landing screen with interactive arrow-key menu
 - The landing screen menu uses `questionary.select()` to dispatch to commands directly
 - When launching provision from the menu, calls `run_provision_wizard(show_banner=False)` to avoid double banner
@@ -108,6 +124,37 @@ Unified `iblai infra setup [name]` command with two paths:
 
 Both paths share `_confirm_and_run()` for the review summary → confirm → ansible execution flow. Bootstrap projects use `provider="bootstrap"` to distinguish from Terraform-provisioned ones (affects `destroy` behavior — no Terraform teardown).
 
+Before running, `setup <name>` checks that the platform domains resolve and asks before continuing if they don't (`--skip-dns-check` bypasses). See DNS Verification.
+
+### Post-Setup Features
+
+SMTP, SSO, Stripe, the LLM key and extra tenants are all skippable at setup and added later against a running environment, without re-running the playbook. `iblai infra configure <name>` lists them; each is also a standalone subgroup (see CLI Structure). Modules live in `src/iblai_infra/features/`, one per feature, registered on `infra_app` in `cli.py`.
+
+**How a partial run works:**
+- Playbook roles carry tags — `smtp`, `stripe`, `google_sso`, `microsoft_sso`, `platform`, plus a task-level `llm` tag on the OpenAI task in `admin_setup`. Purely additive: a run without `--tags` executes every role in the same order.
+- `AnsibleRunner.run_partial(tags)` runs `ansible-playbook --tags <...>` against the existing inventory. It deliberately leaves `setup_status` alone — adding a feature is not the environment being set up, and a failure must not make a working environment look un-provisioned.
+- `SetupConfig.for_feature(state, **overrides)` recovers host / SSH key / base domain from `ProjectState` and leaves the credential fields empty. **None of the tagged roles read the GitHub token or AWS keys**, so enabling a feature needs only the SSH key already in state plus that feature's own values.
+
+**Restart behavior differs per feature, determined by how the platform reads the value:**
+
+| Feature | Storage | Restart |
+|---|---|---|
+| Google SSO, Stripe, LLM key | DB rows Django reads per request | none — live immediately |
+| SMTP | container env var | services recreated — command asks first |
+| Microsoft SSO | edX settings, read at boot | its role restarts edX; command warns, no opt-out |
+
+`restart_services` (on `SetupConfig`) gates the restart tasks. Defaults false so a normal setup — where services start *after* these roles — never restarts.
+
+`status` currently exists only for `smtp`; it reads values back off the server via `AnsibleRunner.read_config_values()` (`ibl config printvalue` over SSH), because `SetupConfig` carries secrets and is never persisted, so there is no local source of truth.
+
+### DNS Verification
+
+`iblai infra dns check <name> [--watch]` resolves every platform subdomain and reports, per record, whether it resolves and whether it points at *this* deployment's load balancer. A record resolving elsewhere is reported `WRONG` rather than passing — the case a plain reachability check misses. Certificate state (ACM / Google-managed) is reported alongside, since a cert cannot validate until the records exist. Exits non-zero while anything is unresolved.
+
+Lookups go to public resolvers (8.8.8.8 / 1.1.1.1) via `dnspython`, not the system resolver: the point is diagnosing DNS the operator does not control, and a stale local cache would otherwise report success. Logic lives in `src/iblai_infra/dns_check.py`; rendering in `app.py::render_dns_report`.
+
+Provisioning offers the check straight after `apply` on any externally-managed-DNS path (not shown when the stack created the records itself).
+
 ### Retry Command
 
 `iblai infra retry <name>` retries a failed Terraform provisioning. Reuses the existing workspace, re-copies `.tf` templates (to pick up fixes), preserves `terraform.tfvars`, and checks for conflicting CNAME records before running `init` → `plan` → `apply`.
@@ -138,9 +185,9 @@ All other tasks (domain config, proxy, ECR login, edX settings) run unconditiona
 
 **Domain update flow** — when `resetup` changes the base domain:
 - `config.yml`: `BASE_DOMAIN` updated via `ibl config save`
-- `auth.yml`: OAuth/OIDC redirect URIs rewritten by `final_steps` role
+- `auth.yml`: OAuth/OIDC redirect URIs rewritten by the `integrations` role
 - Nginx proxy: `ibl global-proxy launch-without-security` regenerates all server_name directives
-- DB registrations: `final_steps` re-creates oauth/oidc clients with new domain URLs
+- DB registrations: `integrations` re-creates oauth/oidc clients with new domain URLs
 
 ### Launch Command
 
@@ -314,10 +361,13 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - Parses stdout line-by-line: `TASK [role : desc]` patterns for progress, `fatal:`/`FAILED!` for errors
 - Rich Live display: role status table + progress bar, `transient=True`
 - **Error handling:** trusts `proc.returncode` as the primary success signal. Tasks with `ignore_errors: true` emit `fatal:` lines but Ansible returns 0 — runner shows these as warnings, not failures
-- `ROLE_LABELS` maps role names to human-friendly labels (9 roles)
+- `ROLE_LABELS` maps role names to human-friendly labels (16 roles)
 - DM postgres tasks read `$POSTGRES_USER` and `$POSTGRES_DB` from container env (not hardcoded)
 - DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
-- `final_steps` role: config save, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, edx sync-with-manager, configure OpenAI credential (if provided), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform, seed flows/llm-registry/base-mentors/rbac-data
+- The finalization work is split across three roles (it used to live in one `final_steps` role, since removed):
+  - `integrations`: config save, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, edx sync-with-manager
+  - `admin_setup`: configure OpenAI credential (if provided), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform
+  - `data_seeding`: seed flows/llm-registry/base-mentors/tools/rbac-data, demo course, magic-link email templates, name backfill, TimescaleDB + analytics views
 - Django `JSONField` values must be passed as dicts, not `json.dumps()` strings — auto-serialization handles encoding
 - SPA boolean config values (`ENABLE_RBAC`, `STRIPE_ENABLED`, etc.) must be written as quoted strings (`'true'`/`'false'`) via Python yaml — `ibl config save --set` cannot handle quoted string values
 - `ibl-edx-uwsgi` plugin and other list-type config values must be manipulated via Python yaml, not `ibl config save --set` — the CLI's `printvalue` returns Python list repr that can't be round-tripped
@@ -422,10 +472,11 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 - `questionary>=2.0` — Interactive prompts
 - `pydantic>=2.5` — Data validation
 - `boto3>=1.34` — AWS SDK
+- `dnspython` — DNS verification (queries public resolvers, not the system one)
 
 ## Testing
 
-- **543 tests**, all via pytest: `uv run pytest tests/ -v`
+- **839 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

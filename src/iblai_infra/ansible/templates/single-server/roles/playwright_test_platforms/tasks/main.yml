@@ -81,7 +81,7 @@
   changed_when: "'PW_USER' in (pw_lms_result.stdout | default(''))"
   no_log: true  # the rendered shell body contains the freshly-set password
 
-# Match the `Sync edX with DM` pattern in final_steps — ignore errors so a
+# Match the `Sync edX with DM` pattern in the integrations role — ignore errors so a
 # flaky sync run doesn't abort the whole role. The downstream script reports
 # any missing DM users via "skipped" UPL outcomes, so operator still sees what
 # didn't propagate without losing the platforms that were already created.

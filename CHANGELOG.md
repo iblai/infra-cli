@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.18.1] — 2026-08-10
+
+### Fixed
+- **Post-setup features reported success on a call server without doing anything.** `call_playbook.yml` carries none of the tagged roles, and `ansible-playbook` exits 0 when a tag matches nothing — so `iblai infra smtp enable` against a call-server environment collected the operator's mail credentials, ran zero tasks, and printed "SMTP configured". The feature commands now refuse call-server deployments with an explanation, and `run_partial` treats a run that matched no tasks as a failure rather than success, so the same class of mismatch can't pass silently again.
+- **The SMTP port was validated after the rest of the form.** A non-numeric port was only rejected once host, username, password, sender, security and the restart choice had been answered — losing all of it, including a password the operator couldn't see. It is now checked at the prompt.
+
 ## [1.18.0] — 2026-08-05
 
 ### Added

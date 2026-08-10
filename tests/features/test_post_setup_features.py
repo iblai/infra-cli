@@ -298,3 +298,54 @@ class TestConfigureMenu:
             with pytest.raises(typer.Exit):
                 configure(name="nope")
             sel.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Topology guard — call servers carry none of these roles
+# ---------------------------------------------------------------------------
+
+
+class TestCallServerGuard:
+    def _call_state(self):
+        from iblai_infra.models import DeploymentType
+
+        st = _state()
+        st.config.deployment_type = DeploymentType.CALL
+        return st
+
+    def test_call_server_is_refused(self, monkeypatch):
+        """Otherwise the tagged run matches zero tasks, exits 0, and lies."""
+        from iblai_infra.features._common import load_feature_target
+
+        monkeypatch.setattr(
+            "iblai_infra.terraform.state.load_state", lambda name: self._call_state()
+        )
+        with pytest.raises(typer.Exit):
+            load_feature_target("acme")
+
+    def test_single_server_is_allowed(self, monkeypatch):
+        from iblai_infra.features._common import load_feature_target
+
+        monkeypatch.setattr("iblai_infra.terraform.state.load_state", lambda name: _state())
+        assert load_feature_target("acme") is not None
+
+
+class TestNoOpRunIsNotSuccess:
+    def _runner(self):
+        from iblai_infra.ansible.runner import AnsibleRunner
+        from iblai_infra.models import SetupConfig
+
+        return AnsibleRunner(_state(), SetupConfig.for_feature(_state()))
+
+    def test_zero_tasks_is_reported_as_failure(self):
+        """ansible exits 0 when a tag matches nothing; that is not success."""
+        runner = self._runner()
+        with patch.object(runner, "_run_ansible", return_value=(True, 0)), \
+             patch.object(runner, "_print_final_table"):
+            assert runner.run_partial(["smtp"]) is False
+
+    def test_work_done_is_still_success(self):
+        runner = self._runner()
+        with patch.object(runner, "_run_ansible", return_value=(True, 1)), \
+             patch.object(runner, "_print_final_table"):
+            assert runner.run_partial(["smtp"]) is True

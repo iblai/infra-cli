@@ -22,7 +22,7 @@ from __future__ import annotations
 import typer
 
 from iblai_infra import ui
-from iblai_infra.models import ProjectState, SetupConfig
+from iblai_infra.models import DeploymentType, ProjectState, SetupConfig
 
 
 def load_feature_target(name: str) -> ProjectState:
@@ -48,6 +48,17 @@ def load_feature_target(name: str) -> ProjectState:
         ui.muted(
             f"  Optional features are added after setup. Run "
             f"[brand]iblai infra setup {name}[/brand] first."
+        )
+        raise typer.Exit(1)
+
+    # A call server runs LiveKit and nothing else - its playbook contains none
+    # of these roles. Without this, the tagged run would match zero tasks,
+    # exit 0, and report success having done nothing.
+    if getattr(state.config, "deployment_type", None) == DeploymentType.CALL:
+        ui.error(f"'{name}' is a call-server deployment.")
+        ui.muted(
+            "  Call servers run LiveKit only - there is no email, SSO, billing, "
+            "LLM or tenant configuration on them."
         )
         raise typer.Exit(1)
 
@@ -165,12 +176,29 @@ def print_remote_config(
     ui.newline()
 
 
-def prompt_required(message: str, *, secret: bool = False, default: str | None = None) -> str:
-    """Prompt for a value that must not be empty, aborting on Ctrl-C."""
+def prompt_required(
+    message: str,
+    *,
+    secret: bool = False,
+    default: str | None = None,
+    validate=None,
+) -> str:
+    """Prompt for a value that must not be empty, aborting on Ctrl-C.
+
+    ``validate`` takes a questionary-style callable returning True or an error
+    string. Validate at the prompt rather than after the form: a value rejected
+    three questions later costs the operator everything they typed in between,
+    including a password they cannot see.
+    """
     import questionary
 
+    def _check(v: str):
+        if not v.strip():
+            return "Required"
+        return validate(v) if validate else True
+
     kwargs = dict(
-        validate=lambda v: bool(v.strip()) or "Required",
+        validate=_check,
         style=ui.PROMPT_STYLE,
         qmark=ui.QMARK,
     )

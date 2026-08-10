@@ -128,7 +128,7 @@ iblai infra setup              # any existing server (bare metal / other cloud) 
 
 Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), OpenAI key (optional), and super admin credentials.
 
-**Everything optional can wait.** SMTP, SSO, Stripe and the OpenAI key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add them later with a targeted command (`iblai infra smtp enable <name>` — see [Optional feature toggles](#7-optional-feature-toggles-post-provision)); the ones without a command yet are added by re-running setup with that value supplied.
+**Everything optional can wait.** SMTP, SSO, Stripe and the OpenAI key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add any of them later with [`iblai infra configure <name>`](#7-optional-feature-toggles-post-provision) — no need to re-run setup.
 
 **Installing from your own repos.** Three prompts control where the private packages come from. Press Enter to accept the defaults, or point them at a fork or per-deployment copy:
 
@@ -204,18 +204,26 @@ Per subdomain it reports whether the name resolves and whether it points at **th
 
 ### 7. Optional feature toggles (post-provision)
 
-Everything optional at setup — SMTP, SSO, billing, an LLM key — can be added later against a running environment, without re-running the whole setup.
+Everything optional at setup — SMTP, SSO, billing, an LLM key, extra tenants — can be added later against a running environment, without re-running the whole setup.
 
 ```bash
-iblai infra smtp enable <name>               # prompts for the mail settings
-iblai infra smtp enable-env <name> -f .env   # non-interactive (SMTP_* keys)
-iblai infra smtp disable <name> [--yes]
-iblai infra smtp status <name>               # reads the live values off the server
+iblai infra configure <name>       # menu of everything below
+```
+
+Or go straight to one:
+
+```bash
+iblai infra smtp enable <name>              # outbound email  (also: disable, status, enable-env)
+iblai infra sso google <name>               # sign in with Google
+iblai infra sso microsoft <name>            # sign in with Microsoft
+iblai infra stripe enable <name>            # billing          (also: enable-env)
+iblai infra llm set-key <name>              # mentor service credential
+iblai infra platform create <name>          # an additional tenant platform
 ```
 
 The environment must already be provisioned and set up. Only the relevant Ansible role is re-run, so nothing else is touched, and it needs just the SSH key already recorded in the project — no GitHub token or AWS keys.
 
-Services are recreated afterwards so the change actually takes effect; the command says which ones and asks first. `--no-restart` writes the config without touching them, `--yes` skips the prompt.
+**Most take effect immediately.** Google SSO, Stripe and the LLM key are stored as database rows the platform reads per request. **SMTP is the exception** — it reaches the services as a container environment variable, so they have to be recreated; the command says which ones and asks first (`--no-restart` writes the config without touching them, `--yes` skips the prompt). **Microsoft SSO** restarts Open edX because it changes settings read only at boot, and warns before doing so.
 
 ```bash
 iblai infra waf enable [<name>]              # AWS single-server only — WAFv2 on the ALB

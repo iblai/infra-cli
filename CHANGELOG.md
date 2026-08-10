@@ -12,6 +12,18 @@
 
 Test count: 786 passing.
 
+## [1.16.0] — 2026-08-03
+
+### Added
+- **DNS verification.** 1.15.0 started printing the records an operator has to create when the deployment does not manage DNS itself; it could not tell them whether those records were ever created correctly. Provisioning now offers to check, there is a re-runnable command, and setup warns before installing against domains that do not resolve.
+  - **Post-provision prompt** — after `apply` on any externally-managed-DNS path, offers to verify the records now or skip and check later. Not shown when the stack created the records itself.
+  - **`iblai infra dns check <name>`** — resolves every platform subdomain and reports, per record, whether it resolves and whether it points at *this* deployment's load balancer. A record that resolves somewhere else is reported as `WRONG` rather than passing, which is the case a plain reachability check misses. `--watch` re-checks on an interval until everything resolves, which suits waiting on a third party to publish the records. Exits non-zero while anything is unresolved, so it can gate a script.
+  - **Certificate state** is reported alongside, since DNS resolving is only the first half: an ACM or Google-managed certificate cannot validate until the records exist, and `PENDING_VALIDATION` / `PROVISIONING` is what tells an operator they are waiting rather than broken. Best-effort and never fatal.
+  - **`iblai infra setup <name>` warns** when the platform domains do not resolve, and asks before continuing. The platform routes by hostname, so installing early produces an environment that looks installed and then fails confusingly. `--skip-dns-check` bypasses it, and the check never blocks setup if it errors.
+- **`dnspython`** is now a dependency. Lookups go to public resolvers rather than the system one, so a stale local cache or split-horizon DNS cannot report success while the rest of the world still sees nothing — the whole point being to diagnose DNS an operator does not control.
+
+Test count: 776 passing.
+
 ## [1.15.0] — 2026-07-23
 
 ### Added

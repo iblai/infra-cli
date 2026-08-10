@@ -128,7 +128,7 @@ iblai infra setup              # any existing server (bare metal / other cloud) 
 
 Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), OpenAI key (optional), and super admin credentials.
 
-**Everything optional can wait.** SMTP, SSO, Stripe and the OpenAI key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add them later with a targeted command (`iblai infra smtp enable <name>` — see [Optional feature toggles](#6-optional-feature-toggles-post-provision)); the ones without a command yet are added by re-running setup with that value supplied.
+**Everything optional can wait.** SMTP, SSO, Stripe and the OpenAI key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add them later with a targeted command (`iblai infra smtp enable <name>` — see [Optional feature toggles](#7-optional-feature-toggles-post-provision)); the ones without a command yet are added by re-running setup with that value supplied.
 
 **Installing from your own repos.** Three prompts control where the private packages come from. Press Enter to accept the defaults, or point them at a fork or per-deployment copy:
 
@@ -189,7 +189,20 @@ iblai infra resetup <name>
 
 Points a running environment at a new domain with fresh secrets: prompts for the new base domain, prod-images release tag, and credentials; rotates all secrets, syncs DB passwords, restarts services. No Terraform changes.
 
-### 6. Optional feature toggles (post-provision)
+### 6. Verify DNS
+
+```bash
+iblai infra dns check <name>            # check once
+iblai infra dns check <name> --watch    # re-check until everything resolves
+```
+
+Unless the deployment manages DNS itself (Route53 + ACM, or an existing Cloud DNS zone), you create the records — see the list printed after provisioning, also saved as `dns-records.txt` in the workspace. Provisioning offers to run this check straight away, and it can be re-run at any point while you wait for the records to appear.
+
+Per subdomain it reports whether the name resolves and whether it points at **this** deployment's load balancer — a record resolving to some other host is flagged rather than passed. Certificate state is shown alongside, since an ACM or Google-managed certificate cannot validate until the records exist. Lookups go to public resolvers, so a stale local cache can't mask a failure. Exits non-zero while anything is unresolved.
+
+`iblai infra setup <name>` runs the same check first and asks before installing against domains that don't resolve; `--skip-dns-check` bypasses it.
+
+### 7. Optional feature toggles (post-provision)
 
 Everything optional at setup — SMTP, SSO, billing, an LLM key — can be added later against a running environment, without re-running the whole setup.
 
@@ -211,7 +224,7 @@ iblai infra waf disable <name> [--yes]
 iblai infra waf status [<name>]
 ```
 
-### 7. Launch from AMI (AWS, CI/CD)
+### 8. Launch from AMI (AWS, CI/CD)
 
 One-shot Terraform + Ansible from a pre-built AMI:
 
@@ -228,7 +241,7 @@ iblai infra launch \                         # fully flag-driven
 
 See `iblai infra launch --help` for all options (instance type, `--platform-name`, SMTP/Stripe/SSO, `--enable-ai`, ...).
 
-### 8. Service update (image updates, CI/CD)
+### 9. Service update (image updates, CI/CD)
 
 Update container images and restart services — no provisioning, no secret rotation:
 
@@ -238,7 +251,7 @@ iblai infra service-update --host <ip> --ssh-key ~/.ssh/key.pem --git-token $GIT
 
 Or launch a fresh AMI and swap it into an ALB target group — see `iblai infra service-update --help`.
 
-### 9. Manage environments
+### 10. Manage environments
 
 ```bash
 iblai infra list                # all environments (cloud, type, status)

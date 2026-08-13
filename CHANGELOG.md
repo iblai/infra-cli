@@ -10,8 +10,9 @@
 - **The clone copies the source's running environment file**, not a re-render from `config.yml`, so it starts identical to what the source is actually serving including anything hand-edited on the box. `PORT` is then rewritten to the clone's own port — written rather than substituted, because deployments older than the template that introduced `PORT` have no line to replace, and a missing `PORT` leaves the clone listening on the source's port while compose publishes a different one: up, healthy-looking, and serving nothing. The clone is probed on its own port before the run is called a success.
 - **Server blocks go in `/etc/nginx/conf.d/custom_domains/`**, which the platform's proxy sync already excludes, so they survive `ibl global-proxy` regenerating everything else. The stock `nginx.conf` includes `conf.d/*.conf` without recursing, so the include for that subdirectory is added idempotently. `nginx -t` runs before every reload, since this happens against a live server.
 - Served over **HTTP**; put the domain behind whatever already terminates TLS for the environment.
+- **Names and domains are checked against an allowlist before they are used.** Both names become filesystem paths that the role acts on with elevated privileges, and the domain is written into an nginx server block, so a name has to be lowercase letters, numbers, hyphens and underscores, and a domain has to be a plain hostname. The same checks are asserted inside the roles, so they hold regardless of the caller.
 
-Test count: 878 passing.
+Test count: 894 passing.
 
 ## [1.18.1] — 2026-08-10
 

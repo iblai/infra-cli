@@ -268,6 +268,24 @@ iblai infra platform create <name> --platform-name <tenant>
 
 Creates a platform alongside the default `main` one, via the platform launcher so it comes up fully wired. **The tenant admin credentials are printed once and stored nowhere else — save them.**
 
+#### Clone a SPA
+
+```bash
+iblai infra spa clone <name>                 # prompts for source, name and domain
+iblai infra spa list <name>                  # what's deployed, with ports
+iblai infra spa remove <name> --spa <clone>
+```
+
+Runs a copy of a deployed SPA alongside the original — its own port, its own domain — so it can be customised without touching the one the platform depends on. The copy starts with the source's **running** environment file, so it behaves identically until you change it:
+
+```bash
+# customise, then restart
+/ibl/app/ibl-spa/<clone>/.env.<clone>
+cd /ibl/app/ibl-spa/<clone> && docker compose up -d
+```
+
+Ports are allocated from 5060 (stock SPAs hold 5000–5009). The nginx block lands in `/etc/nginx/conf.d/custom_domains/`, which survives `ibl global-proxy` regeneration. Served over **HTTP** — point the domain at the server and put it behind whatever already terminates TLS. `remove` refuses the platform's own SPAs.
+
 #### WAF (AWS single-server only)
 
 ```bash

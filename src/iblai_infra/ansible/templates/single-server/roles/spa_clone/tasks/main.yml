@@ -1,0 +1,195 @@
+---
+# Clone a deployed SPA into a second instance on the same VM, served at its own
+# domain. Used by `iblai infra spa clone`.
+#
+# The clone is a copy of the source's *runtime* directory - compose file plus
+# the rendered .env - not a re-render from config.yml. That is deliberate: the
+# operator wants the environment the source is actually running with, including
+# anything hand-edited on the box, and then customises the copy afterwards.
+#
+# Three things have to change in the copy, and all three break it if missed:
+#
+#   1. `PORT` in the .env. The Next.js server reads it to decide what to listen
+#      on. Copy it verbatim and the clone listens on the source's port while
+#      compose publishes the new one - the container comes up and serves
+#      nothing. Older deployments predate `PORT` being in the template at all,
+#      so it is written rather than substituted.
+#   2. The compose service name and published port.
+#   3. `env_file`, which still points at the source's .env by name.
+#
+# The nginx block goes in /etc/nginx/conf.d/custom_domains/, which the platform's
+# own proxy sync excludes (`--exclude=custom_domains` in reverse_proxy_task.py),
+# so it survives `ibl global-proxy` regenerating everything else. The stock
+# nginx.conf includes conf.d/*.conf without recursing, so the subdirectory needs
+# its own include line - added here, idempotently.
+#
+# Gated on `spa_clone_enabled` so it stays a no-op during a normal setup.
+
+- name: Check the source SPA exists
+  become: false
+  ansible.builtin.stat:
+    path: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_source }}"
+  register: spa_source_dir
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Fail when the source SPA is not deployed
+  ansible.builtin.fail:
+    msg: >-
+      No SPA named '{{ spa_clone_source }}' at
+      {{ ibl_root }}/app/ibl-spa/{{ spa_clone_source }}.
+  when:
+    - spa_clone_enabled | default(false) | bool
+    - not spa_source_dir.stat.exists
+
+- name: Check whether the target already exists
+  become: false
+  ansible.builtin.stat:
+    path: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}"
+  register: spa_target_dir
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Fail when the target already exists
+  ansible.builtin.fail:
+    msg: >-
+      '{{ spa_clone_name }}' already exists. Remove it first, or choose
+      another name.
+  when:
+    - spa_clone_enabled | default(false) | bool
+    - spa_target_dir.stat.exists
+
+- name: Copy the source SPA directory
+  become: false
+  ansible.builtin.copy:
+    src: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_source }}/"
+    dest: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}/"
+    remote_src: true
+    mode: preserve
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Rename the env file for the clone
+  become: false
+  ansible.builtin.command:
+    cmd: >-
+      mv {{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}/.env.{{ spa_clone_source }}
+         {{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}/.env.{{ spa_clone_name }}
+    creates: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}/.env.{{ spa_clone_name }}"
+  when: spa_clone_enabled | default(false) | bool
+
+# Written rather than substituted: deployments older than the template that
+# introduced PORT have no line to replace, and a missing PORT is the failure
+# mode that leaves the clone listening on the wrong port.
+- name: Point the clone's PORT at its own port
+  become: false
+  ansible.builtin.lineinfile:
+    path: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}/.env.{{ spa_clone_name }}"
+    regexp: '^PORT='
+    line: "PORT={{ spa_clone_port }}"
+    create: false
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Point the clone's compose at its own service, env file and port
+  become: false
+  ansible.builtin.replace:
+    path: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}/docker-compose.yml"
+    regexp: "{{ item.find }}"
+    replace: "{{ item.sub }}"
+  loop:
+    - find: '^(\s+){{ spa_clone_source }}_spa:'
+      sub: '\1{{ spa_clone_name | replace("-", "_") }}_spa:'
+    - find: '\.env\.{{ spa_clone_source }}'
+      sub: '.env.{{ spa_clone_name }}'
+    # Unanchored and unquoted so it matches whether the mapping is written
+    # "5001:5001" or 5001:5001 - the templates quote it, but a hand-edited
+    # compose may not, and a missed port mapping is a silently dead clone.
+    - find: '{{ spa_clone_source_port }}:{{ spa_clone_source_port }}'
+      sub: '{{ spa_clone_port }}:{{ spa_clone_port }}'
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Start the cloned SPA
+  become: false
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: "{{ ibl_root }}/app/ibl-spa/{{ spa_clone_name }}"
+  register: spa_clone_up
+  changed_when: true
+  when: spa_clone_enabled | default(false) | bool
+
+# The failure this guards against: the clone starts, but is still listening on
+# the source's port because PORT or the compose mapping did not get rewritten.
+# Docker reports the container as up either way, so without this the operator
+# is told it worked and finds a dead domain later.
+- name: Wait for the clone to answer on its own port
+  become: false
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ spa_clone_port }}/"
+    method: GET
+    status_code: [200, 301, 302, 307, 308, 401, 403, 404]
+    timeout: 5
+  register: spa_clone_probe
+  retries: 24
+  delay: 5
+  until: spa_clone_probe is succeeded
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Ensure the custom domains directory exists
+  ansible.builtin.file:
+    path: /etc/nginx/conf.d/custom_domains
+    state: directory
+    mode: "0755"
+  when: spa_clone_enabled | default(false) | bool
+
+# conf.d/*.conf does not match conf.d/custom_domains/*.conf - the stock include
+# is not recursive - so the subdirectory needs its own line inside http{}.
+- name: Ensure nginx includes the custom domains directory
+  ansible.builtin.lineinfile:
+    path: /etc/nginx/nginx.conf
+    line: "    include /etc/nginx/conf.d/custom_domains/*.conf;"
+    insertafter: '^\s*include\s+/etc/nginx/conf\.d/\*\.conf;'
+    state: present
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Write the server block for the clone
+  ansible.builtin.copy:
+    dest: "/etc/nginx/conf.d/custom_domains/{{ spa_clone_name }}.conf"
+    mode: "0644"
+    content: |
+      # {{ spa_clone_name }} - cloned from {{ spa_clone_source }}, served on
+      # port {{ spa_clone_port }}. Managed by `iblai infra spa`.
+      server {
+          listen 80;
+          server_name {{ spa_clone_domain }};
+
+          location / {
+              proxy_pass http://127.0.0.1:{{ spa_clone_port }};
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection 'upgrade';
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_cache_bypass $http_upgrade;
+          }
+      }
+  when: spa_clone_enabled | default(false) | bool
+
+# Validate before reloading: a bad block would otherwise take the whole proxy
+# down on reload, and this runs against a live server.
+- name: Validate the nginx configuration
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  when: spa_clone_enabled | default(false) | bool
+
+- name: Report the clone
+  ansible.builtin.debug:
+    msg: >-
+      {{ spa_clone_name }} cloned from {{ spa_clone_source }},
+      listening on {{ spa_clone_port }}, served at http://{{ spa_clone_domain }}
+  when: spa_clone_enabled | default(false) | bool

@@ -288,4 +288,5 @@ class TestWiring:
         roles = yaml.safe_load(playbook.read_text())[0]["roles"]
         names = [r["role"] if isinstance(r, dict) else r for r in roles]
         assert names[:5] == ["docker", "awscli", "python", "ibl_cli_ops", "ibl_platform"]
-        assert len(names) == 16
+        # Gated feature roles are listed too; they no-op unless their flag is set.
+        assert len(names) == 18

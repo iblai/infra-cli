@@ -26,6 +26,7 @@ def configure(
     from iblai_infra.features.platform import platform_create
     from iblai_infra.features.smtp import smtp_enable
     from iblai_infra.features.sso import sso_google, sso_microsoft
+    from iblai_infra.features.spa import spa_clone
     from iblai_infra.features.stripe import stripe_enable
 
     # Validate the target once, here, so an invalid name fails before the menu
@@ -46,6 +47,7 @@ def configure(
             questionary.Choice("Stripe billing            payments", value="stripe"),
             questionary.Choice("LLM API key               mentor service credential", value="llm"),
             questionary.Choice("Tenant platform           an additional platform", value="platform"),
+            questionary.Choice("Clone a SPA               a customisable copy of one", value="spa"),
             questionary.Separator(),
             questionary.Choice("Cancel", value=None),
         ],
@@ -73,3 +75,5 @@ def configure(
         llm_set_key(name=name, api_key=None)
     elif choice == "platform":
         platform_create(name=name, platform_name=None)
+    elif choice == "spa":
+        spa_clone(name=name, source=None, new_name=None, domain=None, port=None)

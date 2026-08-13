@@ -81,6 +81,7 @@ iblai-infra/
   - `iblai infra stripe`: `enable`, `enable-env`
   - `iblai infra llm`: `set-key`
   - `iblai infra platform`: `create`
+  - `iblai infra spa`: `clone`, `list`, `remove`
   - `iblai infra waf`: `enable`, `enable-env`, `disable`, `status`
 - Running `iblai infra` with no arguments shows branded landing screen with interactive arrow-key menu
 - The landing screen menu uses `questionary.select()` to dispatch to commands directly
@@ -144,6 +145,11 @@ SMTP, SSO, Stripe, the LLM key and extra tenants are all skippable at setup and 
 | Microsoft SSO | edX settings, read at boot | its role restarts edX; command warns, no opt-out |
 
 `restart_services` (on `SetupConfig`) gates the restart tasks. Defaults false so a normal setup — where services start *after* these roles — never restarts.
+
+**SPA cloning** (`iblai infra spa`) runs on the same machinery via the `spa_clone` / `spa_remove` tags, with two differences worth knowing:
+- It passes `extra_vars` through `run_partial` (which SPA, which port, which domain) — values that aren't `SetupConfig` fields.
+- It reads server state first via `AnsibleRunner.run_remote_script()` to build the source picker and allocate a free port from 5060; the stock SPAs hold 5000-5009.
+The clone copies the source's *rendered* `.env` rather than re-rendering from config, then rewrites `PORT` — written, not substituted, since older deployments have no `PORT` line, and a missing one leaves the clone listening on the source's port while compose publishes another. Its nginx block goes in `/etc/nginx/conf.d/custom_domains/`, which `reverse_proxy_task.py` excludes from the proxy sync, so it survives `ibl global-proxy`; the stock `nginx.conf` include isn't recursive, so that subdirectory's include is added idempotently.
 
 `status` currently exists only for `smtp`; it reads values back off the server via `AnsibleRunner.read_config_values()` (`ibl config printvalue` over SSH), because `SetupConfig` carries secrets and is never persisted, so there is no local source of truth.
 

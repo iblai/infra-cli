@@ -51,6 +51,23 @@ STOCK_SPAS = frozenset(
 
 VALID_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
+# A hostname and nothing else. This value is written into an nginx server block
+# and the name into filesystem paths the role removes as root, so both are
+# checked against an allowlist rather than for the absence of bad characters.
+VALID_DOMAIN = re.compile(
+    r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+)
+
+
+def _clean_domain(value: str) -> str:
+    """Strip scheme, trailing slash and case from a domain the operator typed."""
+    return (
+        (value or "").strip().lower()
+        .replace("https://", "")
+        .replace("http://", "")
+        .rstrip("/")
+    )
+
 
 # ---------------------------------------------------------------------------
 # Remote discovery
@@ -168,10 +185,13 @@ def spa_clone(
         domain = prompt_required(
             "Domain to serve it at:",
             default=f"{new_name}.{state.config.dns.base_domain}",
-            validate=lambda v: ("." in v.strip() and " " not in v.strip())
+            validate=lambda v: bool(VALID_DOMAIN.match(_clean_domain(v)))
             or "Enter a hostname, e.g. custom.example.com",
         )
-    domain = domain.strip().lower().replace("https://", "").replace("http://", "").rstrip("/")
+    domain = _clean_domain(domain)
+    if not VALID_DOMAIN.match(domain):
+        ui.error(f"'{domain}' is not a valid hostname.")
+        raise typer.Exit(1)
 
     # ----- port -----
     if port is None:
@@ -275,8 +295,15 @@ def spa_remove(
     state = load_feature_target(name)
     spa = spa.strip().lower()
 
-    # The whole point of the guard: this role deletes a directory and reloads
-    # nginx. Pointed at a stock SPA it would take the platform down.
+    # The role removes this path as root, so the name is checked against the
+    # same allowlist a clone name must satisfy. Without it, a value containing
+    # ".." walks out of the SPA directory and deletes something else.
+    if not VALID_NAME.match(spa):
+        ui.error(f"'{spa}' is not a valid SPA name.")
+        raise typer.Exit(1)
+
+    # And this role deletes a directory and reloads nginx. Pointed at a stock
+    # SPA it would take the platform down.
     if spa in STOCK_SPAS:
         ui.error(f"'{spa}' is one of the platform's own SPAs and cannot be removed here.")
         ui.muted("  Only clones created with [brand]iblai infra spa clone[/brand] can be removed.")

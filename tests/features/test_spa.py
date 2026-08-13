@@ -262,3 +262,58 @@ class TestWiring:
              patch.object(runner, "_print_final_table"):
             runner.run_partial(["spa_clone"], extra_vars={"spa_clone_name": "x"})
         assert runner.extra_vars is None
+
+
+# ---------------------------------------------------------------------------
+# Input hardening — these values become root-owned paths and nginx config
+# ---------------------------------------------------------------------------
+
+
+class TestInputHardening:
+    @pytest.mark.parametrize(
+        "hostile",
+        ["../../../etc/nginx", "../mentor", "a/b", "name;rm -rf /", "name$(id)", "name\nx"],
+    )
+    def test_remove_refuses_unsafe_names(self, applied, hostile):
+        """The role deletes this path as root; '..' must never reach it."""
+        with pytest.raises(typer.Exit):
+            spa_remove(name="acme", spa=hostile, assume_yes=True)
+        assert applied.tags is None  # nothing ran
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "a.com;}server{listen 80;server_name evil;}",
+            "a.com\nserver{}",
+            "a.com and spaces",
+            "-leading.com",
+            "no-dot",
+            "a.com/../x",
+        ],
+    )
+    def test_clone_refuses_unsafe_domains(self, applied, hostile):
+        """The domain is written into an nginx server block verbatim."""
+        with pytest.raises(typer.Exit):
+            spa_clone(name="acme", source="mentor", new_name="c",
+                      domain=hostile, port=None)
+        assert applied.tags is None
+
+    @pytest.mark.parametrize("hostile", ["../../etc", "a/b", "x;id"])
+    def test_clone_refuses_unsafe_names(self, applied, hostile):
+        with pytest.raises(typer.Exit):
+            spa_clone(name="acme", source="mentor", new_name=hostile,
+                      domain="ok.example.com", port=None)
+        assert applied.tags is None
+
+    def test_roles_assert_the_same_rules(self):
+        """Defence in depth: the roles must not rely on the CLI having checked."""
+        import yaml
+
+        base = (
+            Path(__file__).resolve().parents[2]
+            / "src/iblai_infra/ansible/templates/single-server/roles"
+        )
+        for role in ("spa_clone", "spa_clone_remove"):
+            tasks = yaml.safe_load((base / role / "tasks/main.yml").read_text())
+            asserts = [t for t in tasks if "ansible.builtin.assert" in t]
+            assert asserts, f"{role} has no guard assertion"

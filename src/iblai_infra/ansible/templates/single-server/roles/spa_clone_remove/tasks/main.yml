@@ -8,6 +8,20 @@
 #
 # Gated on `spa_remove_enabled` so it stays a no-op during a normal setup.
 
+# This role deletes directories as root. The CLI already restricts the name,
+# but the check is repeated here so the role is safe on its own terms - a
+# value containing "/" or ".." would otherwise walk out of the SPA directory
+# and remove something else entirely.
+- name: Refuse an unsafe SPA name
+  ansible.builtin.assert:
+    that:
+      - spa_remove_name is match('^[a-z0-9][a-z0-9_-]*$')
+    fail_msg: >-
+      Refusing to remove '{{ spa_remove_name }}': a SPA name may only contain
+      lowercase letters, numbers, hyphens and underscores.
+    quiet: true
+  when: spa_remove_enabled | default(false) | bool
+
 - name: Check the SPA directory exists
   become: false
   ansible.builtin.stat:

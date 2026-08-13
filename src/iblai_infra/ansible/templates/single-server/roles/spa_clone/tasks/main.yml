@@ -25,6 +25,23 @@
 #
 # Gated on `spa_clone_enabled` so it stays a no-op during a normal setup.
 
+# Both names become filesystem paths and the domain is written into an nginx
+# server block, so all three are checked against an allowlist here as well as
+# in the CLI - the role has to be safe on its own terms.
+- name: Refuse unsafe names or domain
+  ansible.builtin.assert:
+    that:
+      - spa_clone_source is match('^[a-z0-9][a-z0-9_-]*$')
+      - spa_clone_name is match('^[a-z0-9][a-z0-9_-]*$')
+      - spa_clone_domain is match('^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$')
+      - spa_clone_port | int > 0
+      - spa_clone_source_port | int > 0
+    fail_msg: >-
+      Refusing to clone: names may only contain lowercase letters, numbers,
+      hyphens and underscores, and the domain must be a plain hostname.
+    quiet: true
+  when: spa_clone_enabled | default(false) | bool
+
 - name: Check the source SPA exists
   become: false
   ansible.builtin.stat:

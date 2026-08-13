@@ -86,6 +86,8 @@ class AnsibleRunner:
     # Class-level defaults so __new__() (used in tests) doesn't break
     playbook: str = "playbook.yml"
     role_labels: dict[str, str] = ROLE_LABELS
+    tags: list[str] | None = None
+    extra_vars: dict | None = None
 
     def __init__(
         self,
@@ -102,6 +104,9 @@ class AnsibleRunner:
         # Ansible tags limiting the run to specific roles. None = run everything,
         # which is what a normal setup does. Set by `run_partial`.
         self.tags: list[str] | None = None
+        # Per-run variables a feature needs that are not SetupConfig fields
+        # (e.g. which SPA to clone). Merged over the standard extra-vars.
+        self.extra_vars: dict | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -161,6 +166,34 @@ class AnsibleRunner:
         ui.success(f"[highlight]{completed}[/highlight] of {len(self.role_labels)} steps completed")
         return True
 
+    def run_remote_script(self, script: str, timeout: int = 60) -> str | None:
+        """Run a read-only shell snippet on the server. None if unreachable.
+
+        Used to discover state that only the server knows - which SPAs are
+        deployed and which ports they hold - so a command can show the operator
+        a real picker instead of asking them to remember.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "ssh",
+                    "-o", "ConnectTimeout=15",
+                    "-o", "BatchMode=yes",
+                    "-o", "StrictHostKeyChecking=no",
+                    "-i", str(self.config.ssh_private_key_path),
+                    f"{self.config.ssh_user}@{self.config.target_host}",
+                    script,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout
+
     def read_config_values(self, keys: list[str]) -> dict[str, str] | None:
         """Read platform config values off the server. None if unreachable.
 
@@ -212,7 +245,12 @@ class AnsibleRunner:
                 values[key] = raw.strip().strip("'\"")
         return values
 
-    def run_partial(self, tags: list[str], description: str = "Applying change") -> bool:
+    def run_partial(
+        self,
+        tags: list[str],
+        description: str = "Applying change",
+        extra_vars: dict | None = None,
+    ) -> bool:
         """Run only the roles carrying ``tags`` against an already set-up server.
 
         Used by the post-setup feature commands (`iblai infra <feature> enable`)
@@ -236,10 +274,12 @@ class AnsibleRunner:
         task_id = progress.add_task(description, total=max(len(steps), 1))
 
         self.tags = tags
+        self.extra_vars = extra_vars
         try:
             ok, completed = self._run_ansible(steps, progress, task_id, 0)
         finally:
             self.tags = None
+            self.extra_vars = None
 
         self._print_final_table(steps)
 
@@ -617,6 +657,8 @@ class AnsibleRunner:
             "admin_email": self.config.admin_email,
             "admin_password": self.config.admin_password,
         }
+        if self.extra_vars:
+            extra.update(self.extra_vars)
         return extra
 
     # ------------------------------------------------------------------

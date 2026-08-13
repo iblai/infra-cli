@@ -57,6 +57,10 @@
     - { role: stripe_config, tags: [stripe] }
     - { role: google_sso_config, tags: [google_sso] }
     - { role: microsoft_sso_config, tags: [microsoft_sso] }
+    # Never run during a normal setup - both are gated off and only reached
+    # via `iblai infra spa`, which supplies the flag along with the tag.
+    - { role: spa_clone, tags: [spa_clone] }
+    - { role: spa_clone_remove, tags: [spa_remove] }
 
   tasks:
     # Optional Playwright test fixture setup. Runs only when the operator

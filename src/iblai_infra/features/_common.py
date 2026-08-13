@@ -97,15 +97,20 @@ def apply_feature(
     tags: list[str],
     labels: dict[str, str],
     description: str,
+    extra_vars: dict | None = None,
 ) -> bool:
-    """Run the tagged role(s) against the environment. Returns success."""
+    """Run the tagged role(s) against the environment. Returns success.
+
+    ``extra_vars`` carries values a feature needs that are not SetupConfig
+    fields - which SPA to clone, for instance.
+    """
     from iblai_infra.ansible.runner import AnsibleRunner
 
     runner = AnsibleRunner(state, config, role_labels=labels)
     if not runner.preflight():
         raise typer.Exit(1)
     runner.setup()
-    return runner.run_partial(tags, description=description)
+    return runner.run_partial(tags, description=description, extra_vars=extra_vars)
 
 
 def run_feature(

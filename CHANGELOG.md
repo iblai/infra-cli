@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.19.0] — 2026-08-13
+
+### Added
+- **`iblai infra spa` — run a customised copy of a deployed SPA.** Clones an existing SPA into a second instance on the same VM, on its own port and its own domain, so it can be customised without touching the one the platform depends on.
+  - **`iblai infra spa clone <name>`** — picks the source from what is actually deployed on the server, allocates the next free port from 5060 (the stock SPAs hold 5000-5009), asks for the domain, and shows the whole plan before doing anything. `--from`, `--as`, `--domain` and `--port` skip the prompts.
+  - **`iblai infra spa list <name>`** — what is deployed, with ports, marking which are stock and which are clones.
+  - **`iblai infra spa remove <name> --spa <clone>`** — removes the containers, the nginx block and the directory. Refuses the platform's own SPAs, since the same role pointed at `mentor` or `auth` would delete the real one.
+- **The clone copies the source's running environment file**, not a re-render from `config.yml`, so it starts identical to what the source is actually serving including anything hand-edited on the box. `PORT` is then rewritten to the clone's own port — written rather than substituted, because deployments older than the template that introduced `PORT` have no line to replace, and a missing `PORT` leaves the clone listening on the source's port while compose publishes a different one: up, healthy-looking, and serving nothing. The clone is probed on its own port before the run is called a success.
+- **Server blocks go in `/etc/nginx/conf.d/custom_domains/`**, which the platform's proxy sync already excludes, so they survive `ibl global-proxy` regenerating everything else. The stock `nginx.conf` includes `conf.d/*.conf` without recursing, so the include for that subdirectory is added idempotently. `nginx -t` runs before every reload, since this happens against a live server.
+- Served over **HTTP**; put the domain behind whatever already terminates TLS for the environment.
+- **Names and domains are checked against an allowlist before they are used.** Both names become filesystem paths that the role acts on with elevated privileges, and the domain is written into an nginx server block, so a name has to be lowercase letters, numbers, hyphens and underscores, and a domain has to be a plain hostname. The same checks are asserted inside the roles, so they hold regardless of the caller.
+
+Test count: 894 passing.
+
 ## [1.18.1] — 2026-08-10
 
 ### Fixed

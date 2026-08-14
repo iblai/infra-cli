@@ -477,7 +477,12 @@ class TestLLMKeyIsNotCode:
 
     @pytest.mark.parametrize(
         "realistic",
-        ["sk-proj-AbC123_def-456", "sk-ant-api03-xyz_789", "abc.def.ghi", "A1"],
+        [
+            "sk-proj-EXAMPLE_not-a-real-key",
+            "sk-ant-EXAMPLE_not-a-real-key",
+            "abc.def.ghi",
+            "A1",
+        ],
     )
     def test_real_provider_keys_still_pass(self, applied, realistic):
         llm_set_key(name="acme", api_key=realistic, provider=None)

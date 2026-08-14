@@ -1601,7 +1601,7 @@ def _run_launch(
         github_org=github_org,
         cli_ops_repo=cli_ops_repo,
         prod_images_repo=prod_images_repo,
-        openai_api_key=openai_key,
+        llm_api_key=openai_key,
         admin_username=admin_username,
         admin_email=admin_email,
         admin_password=admin_password,

@@ -332,7 +332,7 @@ def build_setup_config_from_env(
         github_org=github_org,
         cli_ops_repo=(env.get("CLI_OPS_REPO") or "iblai-cli-ops").strip(),
         prod_images_repo=prod_images_repo_raw,
-        openai_api_key=(env.get("OPENAI_API_KEY") or "").strip(),
+        llm_api_key=(env.get("OPENAI_API_KEY") or "").strip(),
         admin_username=admin_username,
         admin_email=admin_email,
         admin_password=admin_password,

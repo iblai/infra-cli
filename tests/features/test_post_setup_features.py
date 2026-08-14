@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 import typer
+from pydantic import ValidationError
 
 from iblai_infra.features.llm import LLM_TAGS, llm_set_key
 from iblai_infra.features.platform import PLATFORM_TAGS, platform_create
@@ -21,10 +22,12 @@ from iblai_infra.models import (
     DNSConfig,
     Environment,
     InfraConfig,
+    LLMProvider,
     NetworkConfig,
     ProjectState,
     SSHConfig,
     SSHKeyMethod,
+    SetupConfig,
 )
 
 
@@ -104,18 +107,48 @@ class TestTagRouting:
 class TestLLM:
     def test_api_key_flag_skips_the_prompt(self, applied):
         with patch("questionary.password") as q:
-            llm_set_key(name="acme", api_key="test-key-value")
+            llm_set_key(name="acme", api_key="test-key-value", provider=None)
             q.assert_not_called()
         assert applied.tags == LLM_TAGS
-        assert applied.config.openai_api_key == "test-key-value"
+        assert applied.config.llm_api_key == "test-key-value"
 
     def test_empty_key_is_rejected(self, applied):
         with pytest.raises(typer.Exit):
-            llm_set_key(name="acme", api_key="   ")
+            llm_set_key(name="acme", api_key="   ", provider=None)
 
     def test_key_is_not_persisted_to_state(self, applied):
-        llm_set_key(name="acme", api_key="test-key-value")
+        llm_set_key(name="acme", api_key="test-key-value", provider=None)
         assert "test-key-value" not in applied.config.model_dump_json()
+
+    def test_defaults_to_openai_when_non_interactive(self, applied):
+        llm_set_key(name="acme", api_key="k", provider=None)
+        assert applied.config.llm_provider == LLMProvider.OPENAI
+
+    @pytest.mark.parametrize("given", ["anthropic", "Anthropic", "  ANTHROPIC  "])
+    def test_provider_is_normalised_to_lowercase(self, applied, given):
+        """The name is matched exactly on the server, so case must not survive."""
+        llm_set_key(name="acme", api_key="k", provider=given)
+        assert applied.config.llm_provider == LLMProvider.ANTHROPIC
+        assert applied.config.llm_provider.value == "anthropic"
+
+    @pytest.mark.parametrize("bad", ["gemini", "openai-2", "", "azure openai"])
+    def test_unknown_providers_are_rejected(self, applied, bad):
+        """A row named anything else is written and then never read."""
+        with pytest.raises(typer.Exit):
+            llm_set_key(name="acme", api_key="k", provider=bad)
+        assert applied.tags is None
+
+    def test_provider_reaches_ansible_as_a_plain_string(self):
+        """The role interpolates this into the credential name."""
+        from iblai_infra.ansible.runner import AnsibleRunner
+
+        state = _state()
+        config = SetupConfig.for_feature(
+            state, llm_provider=LLMProvider.ANTHROPIC, llm_api_key="k"
+        )
+        built = AnsibleRunner(state, config)._build_extra_vars()
+        assert built["llm_provider"] == "anthropic"
+        assert built["llm_api_key"] == "k"
 
 
 # ---------------------------------------------------------------------------
@@ -349,3 +382,125 @@ class TestNoOpRunIsNotSuccess:
         with patch.object(runner, "_run_ansible", return_value=(True, 1)), \
              patch.object(runner, "_print_final_table"):
             assert runner.run_partial(["smtp"]) is True
+
+
+# ---------------------------------------------------------------------------
+# The credential row the LLM task writes
+#
+# These assert on the role's script text rather than a live server. The shape
+# is a contract with the platform's data model, and getting it wrong fails
+# silently - the run reports success and the key is simply never used.
+# ---------------------------------------------------------------------------
+
+
+class TestLLMCredentialRow:
+    @staticmethod
+    def _task():
+        import yaml
+
+        tasks = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[2]
+                / "src/iblai_infra/ansible/templates/single-server"
+                / "roles/admin_setup/tasks/main.yml"
+            ).read_text()
+        )
+        # two tasks carry the tag now - the guard and the write itself
+        return next(t for t in tasks if "llm" in (t.get("tags") or []) and "shell" in t)
+
+    def test_writes_both_the_plaintext_and_encrypted_columns(self):
+        """Newer platforms read the encrypted column and never fall back."""
+        script = self._task()["shell"]
+        assert "'value', 'value_encrypted'" in script
+
+    def test_payload_is_the_same_key_object_for_both(self):
+        script = self._task()["shell"]
+        assert "value = {'key': '{{ llm_api_key }}'}" in script
+        # one object assigned to whichever columns exist - they cannot diverge
+        assert "defaults[column] = value" in script
+
+    def test_columns_are_probed_not_assumed(self):
+        """`value_encrypted` is absent on older deployments."""
+        script = self._task()["shell"]
+        assert "_meta.get_fields()" in script
+
+    def test_name_comes_from_the_provider_verbatim(self):
+        script = self._task()["shell"]
+        assert "name='{{ llm_provider }}'" in script
+
+    def test_other_providers_lose_preferred(self):
+        """The server takes the first preferred row with no tie-break."""
+        script = self._task()["shell"]
+        assert "exclude(name='{{ llm_provider }}').update(is_preferred=False)" in script
+
+    def test_the_key_is_not_echoed_on_failure(self):
+        assert self._task()["no_log"] is True
+
+    def test_task_is_skipped_without_a_key(self):
+        assert self._task()["when"] == "llm_api_key | length > 0"
+
+
+class TestLLMKeyIsNotCode:
+    """The key lands inside a Python program inside a shell string.
+
+    A quote ends the Python literal, a double quote ends the shell string, and
+    `$(...)` is substituted by the shell before the command runs. In CI the key
+    comes from a secret store, which is not necessarily the same trust boundary
+    as the operator running the command.
+    """
+
+    HOSTILE = [
+        "$(touch /tmp/pwned)",
+        "`touch /tmp/pwned`",
+        'x"; touch /tmp/pwned; echo "',
+        "x'); import os; os.system('id'); ('",
+        "key with spaces",
+        "key\nnewline",
+        "${IFS}",
+    ]
+
+    @pytest.mark.parametrize("hostile", HOSTILE)
+    def test_the_model_rejects_them(self, hostile):
+        with pytest.raises(ValidationError):
+            SetupConfig(
+                ssh_private_key_path=Path("/tmp/k.pem"),
+                target_host="192.0.2.10",
+                base_domain="acme.example.com",
+                llm_api_key=hostile,
+            )
+
+    @pytest.mark.parametrize("hostile", HOSTILE)
+    def test_the_command_rejects_them(self, applied, hostile):
+        with pytest.raises(typer.Exit):
+            llm_set_key(name="acme", api_key=hostile, provider=None)
+        assert applied.tags is None
+
+    @pytest.mark.parametrize(
+        "realistic",
+        [
+            "sk-proj-EXAMPLE_not-a-real-key",
+            "sk-ant-EXAMPLE_not-a-real-key",
+            "abc.def.ghi",
+            "A1",
+        ],
+    )
+    def test_real_provider_keys_still_pass(self, applied, realistic):
+        llm_set_key(name="acme", api_key=realistic, provider=None)
+        assert applied.config.llm_api_key == realistic
+
+    def test_the_role_checks_independently_of_the_cli(self):
+        """A role that builds a shell command must not trust its caller."""
+        import yaml
+
+        tasks = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[2]
+                / "src/iblai_infra/ansible/templates/single-server"
+                / "roles/admin_setup/tasks/main.yml"
+            ).read_text()
+        )
+        guards = [t for t in tasks if "ansible.builtin.assert" in t]
+        assert guards, "no guard assertion on the LLM task"
+        assertions = " ".join(guards[0]["ansible.builtin.assert"]["that"])
+        assert "llm_api_key is match" in assertions
+        assert "llm_provider in" in assertions

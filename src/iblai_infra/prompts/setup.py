@@ -798,7 +798,7 @@ def _prompt_credentials(
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,
-        "openai_api_key": openai_api_key,
+        "llm_api_key": openai_api_key,
         "admin_username": admin_username,
         "admin_email": admin_email,
         "admin_password": admin_password,

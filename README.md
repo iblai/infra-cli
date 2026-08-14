@@ -254,10 +254,10 @@ Prompts for test/live mode, secret and publishable keys, and optional pricing-ta
 
 ```bash
 iblai infra llm set-key <name>
-iblai infra llm set-key <name> --api-key <key>   # non-interactive
+iblai infra llm set-key <name> --provider anthropic --api-key <key>   # non-interactive
 ```
 
-Sets or rotates the credential the mentor service uses. Live immediately.
+Sets or rotates the credential the mentor service uses. Supported providers are `openai` (the default) and `anthropic`. Setting a key also makes that provider the preferred one, since the platform picks the preferred credential with no tie-break when several are marked. Live immediately.
 
 #### Tenant platform
 

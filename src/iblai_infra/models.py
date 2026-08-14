@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 import string
 from datetime import datetime, timezone
@@ -45,6 +46,17 @@ class SSHKeyMethod(str, Enum):
     GENERATE = "generate"
     EXISTING_FILE = "existing_file"
     AWS_KEYPAIR = "aws_keypair"
+
+
+class LLMProvider(str, Enum):
+    """Name of the credential row the mentor service looks up.
+
+    The value is written verbatim as the credential's name and matched
+    case-sensitively on the server, so these must stay lowercase.
+    """
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
 
 
 class CertMethod(str, Enum):
@@ -581,7 +593,34 @@ class SetupConfig(BaseModel):
     # currently dumps a SetupConfig, so this is defensive - but these two were
     # the only credentials without the guard, and that asymmetry is the kind
     # that stops being harmless the first time something does dump one.
-    openai_api_key: str = Field(default="", exclude=True)
+    # Which provider the key belongs to. This becomes the credential's name on
+    # the server, and the server matches it exactly - hence the enum rather
+    # than a free string.
+    llm_provider: LLMProvider = LLMProvider.OPENAI
+    llm_api_key: str = Field(default="", exclude=True)
+
+    @field_validator("llm_api_key")
+    @classmethod
+    def validate_llm_api_key(cls, v: str) -> str:
+        """Reject anything a provider would not issue as a key.
+
+        The key is interpolated into a shell command that wraps a Python
+        program, so a quote ends the Python string, a double quote ends the
+        shell string, and `$(...)` is substituted by the shell before the
+        command even runs - three ways to turn a key into code on the server.
+        Provider keys are alphanumeric with dashes, underscores and dots, so an
+        allowlist costs nothing and closes all three. Enforced here rather than
+        at one call site because a key arrives from the wizard, a flag and a
+        .env file, and a CI secret store is not always the same trust boundary
+        as the operator.
+        """
+        v = (v or "").strip()
+        if v and not re.fullmatch(r"[A-Za-z0-9_.\-]+", v):
+            raise ValueError(
+                "an API key may only contain letters, numbers, dashes, "
+                "underscores and dots"
+            )
+        return v
     admin_username: str = "platform_admin"
     admin_email: str = ""
     admin_password: str = Field(default="", exclude=True)

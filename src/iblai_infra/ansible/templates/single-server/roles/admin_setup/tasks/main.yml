@@ -15,6 +15,27 @@
 #
 # The columns are looked up on the model rather than assumed: `value_encrypted`
 # does not exist on older deployments, and naming it there would fail the task.
+
+# The key and the provider are both interpolated into the command below, which
+# is a Python program inside a double-quoted shell string. A quote ends the
+# Python literal, a double quote ends the shell string, and `$(...)` is
+# substituted by the shell before the command runs. The CLI already restricts
+# both values; this repeats the check so the role does not depend on its caller
+# having done so.
+- name: Refuse a key or provider that could carry shell or Python syntax
+  ansible.builtin.assert:
+    that:
+      - llm_api_key is match('^[A-Za-z0-9_.\-]+$')
+      - llm_provider in ['openai', 'anthropic']
+    fail_msg: >-
+      Refusing to write the credential: an API key may only contain letters,
+      numbers, dashes, underscores and dots, and the provider must be openai
+      or anthropic.
+    quiet: true
+  no_log: true
+  when: llm_api_key | length > 0
+  tags: [llm]
+
 - name: Configure the LLM credential
   become: false
   shell: |

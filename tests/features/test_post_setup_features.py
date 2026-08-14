@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 import typer
+from pydantic import ValidationError
 
 from iblai_infra.features.llm import LLM_TAGS, llm_set_key
 from iblai_infra.features.platform import PLATFORM_TAGS, platform_create
@@ -404,7 +405,8 @@ class TestLLMCredentialRow:
                 / "roles/admin_setup/tasks/main.yml"
             ).read_text()
         )
-        return next(t for t in tasks if "llm" in (t.get("tags") or []))
+        # two tasks carry the tag now - the guard and the write itself
+        return next(t for t in tasks if "llm" in (t.get("tags") or []) and "shell" in t)
 
     def test_writes_both_the_plaintext_and_encrypted_columns(self):
         """Newer platforms read the encrypted column and never fall back."""
@@ -436,3 +438,64 @@ class TestLLMCredentialRow:
 
     def test_task_is_skipped_without_a_key(self):
         assert self._task()["when"] == "llm_api_key | length > 0"
+
+
+class TestLLMKeyIsNotCode:
+    """The key lands inside a Python program inside a shell string.
+
+    A quote ends the Python literal, a double quote ends the shell string, and
+    `$(...)` is substituted by the shell before the command runs. In CI the key
+    comes from a secret store, which is not necessarily the same trust boundary
+    as the operator running the command.
+    """
+
+    HOSTILE = [
+        "$(touch /tmp/pwned)",
+        "`touch /tmp/pwned`",
+        'x"; touch /tmp/pwned; echo "',
+        "x'); import os; os.system('id'); ('",
+        "key with spaces",
+        "key\nnewline",
+        "${IFS}",
+    ]
+
+    @pytest.mark.parametrize("hostile", HOSTILE)
+    def test_the_model_rejects_them(self, hostile):
+        with pytest.raises(ValidationError):
+            SetupConfig(
+                ssh_private_key_path=Path("/tmp/k.pem"),
+                target_host="192.0.2.10",
+                base_domain="acme.example.com",
+                llm_api_key=hostile,
+            )
+
+    @pytest.mark.parametrize("hostile", HOSTILE)
+    def test_the_command_rejects_them(self, applied, hostile):
+        with pytest.raises(typer.Exit):
+            llm_set_key(name="acme", api_key=hostile, provider=None)
+        assert applied.tags is None
+
+    @pytest.mark.parametrize(
+        "realistic",
+        ["sk-proj-AbC123_def-456", "sk-ant-api03-xyz_789", "abc.def.ghi", "A1"],
+    )
+    def test_real_provider_keys_still_pass(self, applied, realistic):
+        llm_set_key(name="acme", api_key=realistic, provider=None)
+        assert applied.config.llm_api_key == realistic
+
+    def test_the_role_checks_independently_of_the_cli(self):
+        """A role that builds a shell command must not trust its caller."""
+        import yaml
+
+        tasks = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[2]
+                / "src/iblai_infra/ansible/templates/single-server"
+                / "roles/admin_setup/tasks/main.yml"
+            ).read_text()
+        )
+        guards = [t for t in tasks if "ansible.builtin.assert" in t]
+        assert guards, "no guard assertion on the LLM task"
+        assertions = " ".join(guards[0]["ansible.builtin.assert"]["that"])
+        assert "llm_api_key is match" in assertions
+        assert "llm_provider in" in assertions

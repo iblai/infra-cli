@@ -7,10 +7,12 @@
 - **Setting a key now clears `is_preferred` on the other providers.** The platform selects the preferred credential with no tie-break, so two preferred rows meant an arbitrary one won and a newly set key could be ignored.
 - **The key is no longer echoed if the task fails.** It is interpolated into the command, which Ansible prints on failure — and into any CI log capturing that output.
 
+- **An API key can no longer carry shell or Python syntax.** The key is interpolated into a command that wraps a Python program, where a quote ends the Python literal, a double quote ends the shell string, and `$(...)` is substituted by the shell before the command runs. Keys are now checked against an allowlist of the characters providers actually issue, on the model so every path is covered — wizard, flag and `.env` alike — and asserted again in the role so it does not depend on its caller. This matters most in CI, where the key comes from a secret store rather than from the operator running the command.
+
 ### Added
 - **`iblai infra llm set-key --provider openai|anthropic`.** The credential is named for its provider and the platform matches that name exactly, so the value is validated and lowercased rather than passed through. Interactive runs pick from a list; non-interactive runs default to `openai` as before.
 
-Test count: 910 passing.
+Test count: 929 passing.
 
 ## [1.19.0] — 2026-08-13
 

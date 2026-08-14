@@ -15,6 +15,7 @@ the preferred credential without any tie-break when several are marked.
 from __future__ import annotations
 
 import typer
+from pydantic import ValidationError
 
 from iblai_infra import ui
 from iblai_infra.features._common import load_feature_target, prompt_required, run_feature
@@ -82,9 +83,17 @@ def llm_set_key(
         ui.error("The API key is empty.")
         raise typer.Exit(1)
 
-    config = SetupConfig.for_feature(
-        state, llm_provider=llm_provider, llm_api_key=api_key
-    )
+    # SetupConfig rejects a key that could not have come from a provider - the
+    # value ends up inside a shell command. Caught here so an operator gets a
+    # sentence rather than a validation traceback.
+    try:
+        config = SetupConfig.for_feature(
+            state, llm_provider=llm_provider, llm_api_key=api_key
+        )
+    except ValidationError:
+        ui.error("That does not look like an API key.")
+        ui.muted("  Expected letters, numbers, dashes, underscores and dots only.")
+        raise typer.Exit(1)
 
     run_feature(
         state, config, tags=LLM_TAGS, labels=LLM_LABELS,

@@ -47,6 +47,17 @@ class SSHKeyMethod(str, Enum):
     AWS_KEYPAIR = "aws_keypair"
 
 
+class LLMProvider(str, Enum):
+    """Name of the credential row the mentor service looks up.
+
+    The value is written verbatim as the credential's name and matched
+    case-sensitively on the server, so these must stay lowercase.
+    """
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
 class CertMethod(str, Enum):
     ACM = "acm"           # AWS ACM (DNS-validated)
     MANAGED = "managed"   # GCP Google-managed SSL certificate
@@ -581,7 +592,11 @@ class SetupConfig(BaseModel):
     # currently dumps a SetupConfig, so this is defensive - but these two were
     # the only credentials without the guard, and that asymmetry is the kind
     # that stops being harmless the first time something does dump one.
-    openai_api_key: str = Field(default="", exclude=True)
+    # Which provider the key belongs to. This becomes the credential's name on
+    # the server, and the server matches it exactly - hence the enum rather
+    # than a free string.
+    llm_provider: LLMProvider = LLMProvider.OPENAI
+    llm_api_key: str = Field(default="", exclude=True)
     admin_username: str = "platform_admin"
     admin_email: str = ""
     admin_password: str = Field(default="", exclude=True)

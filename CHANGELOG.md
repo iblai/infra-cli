@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.19.1] — 2026-08-14
+
+### Fixed
+- **The LLM API key did not reach the platform.** The credential row has two columns holding the same secret — a plaintext one and an encrypted one — and current platform versions read the encrypted column as the sole source of truth, with no fallback. `iblai infra llm set-key` wrote only the plaintext column, so on a fresh environment the key stayed inert, and on a rotation the previous key remained in force while the command reported success. The platform's own backfill copies plaintext into the encrypted column only when that column is empty, so it did not repair a rotation either. Both columns are now written together with the same `{"key": "..."}` payload, and the columns are looked up on the model first so older deployments that never had the encrypted one still work.
+- **Setting a key now clears `is_preferred` on the other providers.** The platform selects the preferred credential with no tie-break, so two preferred rows meant an arbitrary one won and a newly set key could be ignored.
+- **The key is no longer echoed if the task fails.** It is interpolated into the command, which Ansible prints on failure — and into any CI log capturing that output.
+
+### Added
+- **`iblai infra llm set-key --provider openai|anthropic`.** The credential is named for its provider and the platform matches that name exactly, so the value is validated and lowercased rather than passed through. Interactive runs pick from a list; non-interactive runs default to `openai` as before.
+
+Test count: 910 passing.
+
 ## [1.19.0] — 2026-08-13
 
 ### Added

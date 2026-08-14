@@ -3,22 +3,42 @@
 # `iblai infra llm set-key <name>`. `update_or_create` makes that safe to
 # repeat, and the credential is read live by the mentor service, so no
 # restart is needed for a later change to take effect.
-- name: Configure OpenAI API key
+# The credential row has two columns holding the same secret: `value`
+# (plaintext) and `value_encrypted`. Newer platform versions read the
+# encrypted column as the sole source of truth and do NOT fall back to the
+# plaintext one, so writing only `value` - as this task used to - leaves the
+# key inert on a fresh install, and on a rotation leaves the OLD key in force
+# while the CLI reports success. The platform's own backfill migration copies
+# plaintext into encrypted only when encrypted is empty, so it does not repair
+# a rotation either. Both columns are therefore written together, with the
+# same {"key": "..."} payload.
+#
+# The columns are looked up on the model rather than assumed: `value_encrypted`
+# does not exist on older deployments, and naming it there would fail the task.
+- name: Configure the LLM credential
   become: false
   shell: |
     cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
     from ibl_ai_mentor.models import GlobalCredential
-    GlobalCredential.objects.update_or_create(
-        name='openai',
-        defaults={'value': {'key': '{{ openai_api_key }}'}, 'is_preferred': True},
-    )
-    print('OpenAI credential configured')
+    value = {'key': '{{ llm_api_key }}'}
+    columns = {f.name for f in GlobalCredential._meta.get_fields()}
+    defaults = {'is_preferred': True}
+    for column in ('value', 'value_encrypted'):
+        if column in columns:
+            defaults[column] = value
+    GlobalCredential.objects.update_or_create(name='{{ llm_provider }}', defaults=defaults)
+    GlobalCredential.objects.exclude(name='{{ llm_provider }}').update(is_preferred=False)
+    print('LLM credential configured: {{ llm_provider }}')
     "
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
-  when: openai_api_key | length > 0
+  # The key is interpolated into the command, which Ansible echoes when a task
+  # fails. Without this a failed run prints the key to the terminal and into
+  # any CI log capturing it.
+  no_log: true
+  when: llm_api_key | length > 0
   tags: [llm]
 
 - name: Create DM super admin

@@ -56,7 +56,7 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config rotate-secrets -f --include-auth
+    ibl secrets rotate --all-generated -y
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -73,12 +73,7 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    NEW_PASS=$(python3 -c "
-    import yaml
-    with open('{{ ibl_root }}/config.yml') as f:
-        cfg = yaml.safe_load(f) or {}
-    print(cfg.get('IBL_DM', {}).get('DB_PASSWORD', ''))
-    ")
+    NEW_PASS=$(ibl config get IBL_DM.DB_PASSWORD || true)
     if [ -n "$NEW_PASS" ]; then
       docker exec ibl_dm_db bash -c "psql -U \$POSTGRES_USER -d \$POSTGRES_DB -c \"ALTER USER \$POSTGRES_USER WITH PASSWORD '$NEW_PASS';\""
     fi
@@ -99,18 +94,8 @@
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
     OLD_ROOT_PASS="{{ mysql_old_root_pass.stdout | default('') | trim }}"
-    NEW_ROOT_PASS=$(python3 -c "
-    import yaml
-    with open('{{ ibl_root }}/config.yml') as f:
-        cfg = yaml.safe_load(f) or {}
-    print(cfg.get('IBL_EDX', {}).get('MYSQL_ROOT_PASSWORD', ''))
-    ")
-    NEW_OPENEDX_PASS=$(python3 -c "
-    import yaml
-    with open('{{ ibl_root }}/config.yml') as f:
-        cfg = yaml.safe_load(f) or {}
-    print(cfg.get('IBL_EDX', {}).get('OPENEDX_MYSQL_PASSWORD', ''))
-    ")
+    NEW_ROOT_PASS=$(ibl config get IBL_EDX.MYSQL_ROOT_PASSWORD || true)
+    NEW_OPENEDX_PASS=$(ibl config get IBL_EDX.OPENEDX_MYSQL_PASSWORD || true)
     if [ -n "$OLD_ROOT_PASS" ] && [ -n "$NEW_ROOT_PASS" ]; then
       docker exec ibl_prod_mysql mysql -u root -p"$OLD_ROOT_PASS" -e "ALTER USER 'root'@'%' IDENTIFIED BY '$NEW_ROOT_PASS'; ALTER USER 'root'@'localhost' IDENTIFIED BY '$NEW_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null
       docker exec ibl_prod_mysql mysql -u root -p"$NEW_ROOT_PASS" -e "ALTER USER 'openedx'@'%' IDENTIFIED BY '$NEW_OPENEDX_PASS'; FLUSH PRIVILEGES;" 2>/dev/null
@@ -139,26 +124,24 @@
 # of the known-bad placeholders — never on a real, unique key.
 # ---------------------------------------------------------------------------
 
-- name: Read current IBL_FERNET_KEY from config.yml
+# `ibl config get` exits 1 when the key is missing (fresh root, secrets
+# not generated yet) - `|| true` maps that to the empty string the
+# rotation flag below treats as "needs rotation".
+- name: Read current IBL_FERNET_KEY
   become: false
   shell: |
-    python3 -c "
-    import yaml
-    try:
-        with open('{{ ibl_root }}/config.yml') as f:
-            cfg = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        print('')
-    else:
-        key = (
-            cfg.get('IBL_EDX', {})
-               .get('IBL_EDX_SSO_BACKEND_APP', {})
-               .get('IBL_FERNET_KEY', '') or ''
-        )
-        print(key.strip())
-    "
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config get IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_FERNET_KEY || true
   args:
     executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   register: current_fernet_key
   changed_when: false
   no_log: true
@@ -171,15 +154,8 @@
         ['', 'BAD_FERNET_KEY', '1vCbtt_ffQ2BWc5-msIEeSBXTYNYDErBcSwPqoSjKuI=']
       }}
 
-- name: Ensure backups dir exists (rotate-secrets requires it)
-  file:
-    path: "{{ ibl_root }}/app/backups"
-    state: directory
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
-    mode: "0755"
-  when: fernet_needs_rotation | bool
-
+# No backups-dir precondition needed: `ibl secrets rotate` mkdirs its
+# backup dir itself and no-ops the backup when secrets.yml doesn't exist.
 - name: Rotate placeholder IBL_FERNET_KEY
   become: false
   shell: |
@@ -187,7 +163,7 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config rotate-secrets -f --only IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_FERNET_KEY
+    ibl secrets rotate IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_FERNET_KEY -y
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -208,14 +184,37 @@
         else 'IBL_FERNET_KEY already set to a non-placeholder value - skipped rotation.'
       }}
 
-- name: Configure edX version
+# Batched config write (multi-pair `ibl config set` is all-or-nothing).
+# Under 5.x every `--set` implicitly re-rendered; renders are explicit
+# now, so the render below must come before anything that reads rendered
+# output (the proxy launch).
+#
+# ALL scalar config lands here, before `ibl secrets generate`: secret
+# generation is gated on config state (required_for/required_if in the
+# upstream registry — e.g. Langfuse/Flowise secrets generate only when
+# ENABLE_IBL_AI(_PLUS) is on, meilisearch keys only on VERSION=sumac).
+# Setting a gate-affecting key after generate would leave its secrets
+# ungenerated and the final render would block on them.
+- name: Configure platform (domain, edX, API gateway, AI, RBAC)
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save --set IBL_EDX.VERSION='{{ edx_version }}'
+    ibl config set \
+      BASE_DOMAIN='{{ base_domain }}' \
+      IBL_EDX.VERSION='{{ edx_version }}' \
+      'IBL_REVERSE_PROXY.ENABLE_UNIFIED_API_GATEWAY=true' \
+      'IBL_EDX.IBL_EDX_MAGIC_LINK_LOGIN.ENABLE_JWT_AUTH=True' \
+      'IBL_EDX.IBL_EDX_CORS_HEADER.CORS_ORIGIN_ALLOW_ALL=true' \
+      'IBL_DM.ENABLE_IBL_AI={{ enable_ai }}' \
+      'IBL_DM.ENABLE_IBL_AI_PLUS={{ enable_ai }}' \
+      'IBL_DM.ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS=true' \
+      'IBL_DM.ENABLE_RBAC=true' \
+      'IBL_DM.ENABLE_RBAC_SEEDING=true' \
+      'IBL_DM.ENABLE_RBAC_GROUP_MANAGEMENT=true' \
+      'IBL_DM.ENABLE_TIMESCALEDB=true'
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -224,14 +223,17 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Configure base domain
+# Fills every missing generator-backed secret whose gate is active under
+# the config above (fresh setup); a no-op on resetup for already-present
+# values, but still fills secrets newly gated on (e.g. AI just enabled).
+- name: Generate secrets
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save --set BASE_DOMAIN='{{ base_domain }}'
+    ibl secrets generate
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -240,14 +242,14 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Enable unified API gateway
+- name: Render platform config (pre-proxy)
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save --set 'IBL_REVERSE_PROXY.ENABLE_UNIFIED_API_GATEWAY=true'
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -279,89 +281,41 @@
   failed_when: net_create.rc != 0 and 'already exists' not in (net_create.stderr | default(''))
   changed_when: net_create.rc == 0
 
-- name: Configure environment
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save --set ENVIRONMENT_CONFIG='{{ env_config }}'
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
-
-- name: Set edX feature flags
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save --set 'IBL_EDX.IBL_EDX_MAGIC_LINK_LOGIN.ENABLE_JWT_AUTH=True'
-    ibl config save --set 'IBL_EDX.IBL_EDX_CORS_HEADER.CORS_ORIGIN_ALLOW_ALL=true'
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
+# (ENVIRONMENT_CONFIG is gone under 6.x — removed from the registry;
+# service topology lives in services.yml via the init preset. The other
+# scalar sets that used to live here moved into the pre-generate batch
+# above, since secret gates depend on them.)
 
 # IBL_EDX.IBL_EDX_SSO_BACKEND_APP needs:
-#   - ENABLE_CORS_ORIGIN_WHITELIST: true   (bool — fine with `ibl config save --set`)
+#   - ENABLE_CORS_ORIGIN_WHITELIST: true
 #   - IBL_CSRF_EXEMPT_URLS: [/courses, /event, /api/mfe_context]
-#     (list — `ibl config save --set` cannot round-trip Python list repr,
-#     so we manipulate config.yml directly via PyYAML and let the next
-#     `ibl config save` re-render the templates.)
-#
-# Done in BOTH staging (~/.local/share/ibl/config.yml) and runtime
-# (/ibl/config.yml) to dodge the staging-vs-runtime drift class of bug
-# (skill iblai-infra-ops §7.5).
-- name: Configure SSO backend app — CORS whitelist + CSRF-exempt URLs
-  become: false
-  shell: |
-    python3 -c "
-    import yaml
-    TARGET_URLS = ['/courses', '/event', '/api/mfe_context']
-    files = [
-        '/home/{{ ansible_user }}/.local/share/ibl/config.yml',
-        '{{ ibl_root }}/config.yml',
-    ]
-    for path in files:
-        try:
-            with open(path) as f:
-                cfg = yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            continue
-        sso = cfg.setdefault('IBL_EDX', {}).setdefault('IBL_EDX_SSO_BACKEND_APP', {})
-        sso['ENABLE_CORS_ORIGIN_WHITELIST'] = True
-        existing = sso.get('IBL_CSRF_EXEMPT_URLS') or []
-        if not isinstance(existing, list):
-            existing = []
-        # Preserve existing custom URLs, add the required ones, dedupe.
-        sso['IBL_CSRF_EXEMPT_URLS'] = list(dict.fromkeys(existing + TARGET_URLS))
-        with open(path, 'w') as f:
-            yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
-        print('updated', path)
-    "
-  args:
-    executable: /bin/bash
-
-- name: Enable AI features for DM
+# The list append is read-modify-write: `ibl config get --json` for the
+# current value (preserve operator-added URLs), merge + dedupe in python,
+# write back as a JSON list — 6.x `ibl config set` takes JSON for
+# list-typed keys. Single config file now; the old staging-vs-runtime
+# dual write is gone.
+- name: Configure SSO backend app - CORS whitelist + CSRF-exempt URLs
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save --set IBL_DM.ENABLE_IBL_AI={{ enable_ai }} && \
-    ibl config save --set IBL_DM.ENABLE_IBL_AI_PLUS={{ enable_ai }} && \
-    ibl config save --set IBL_DM.ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS=true
+    MERGED=$(ibl config get IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_CSRF_EXEMPT_URLS --json | python3 -c "
+    import json, sys
+    target = ['/courses', '/event', '/api/mfe_context']
+    try:
+        data = json.load(sys.stdin)
+        existing = data.get('value') if data.get('found') else []
+    except Exception:
+        existing = []
+    if not isinstance(existing, list):
+        existing = []
+    print(json.dumps(list(dict.fromkeys(existing + target))))
+    ")
+    ibl config set \
+      'IBL_EDX.IBL_EDX_SSO_BACKEND_APP.ENABLE_CORS_ORIGIN_WHITELIST=true' \
+      "IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_CSRF_EXEMPT_URLS=$MERGED"
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -370,25 +324,9 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Enable DM RBAC
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save --set 'IBL_DM.ENABLE_RBAC=true'
-    ibl config save --set 'IBL_DM.ENABLE_RBAC_SEEDING=true'
-    ibl config save --set 'IBL_DM.ENABLE_RBAC_GROUP_MANAGEMENT=true'
-    ibl config save --set 'IBL_DM.ENABLE_TIMESCALEDB=true'
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
-
+# Same read-modify-write as the CSRF list above. Idempotent: the merge
+# only appends when missing. (The old PyYAML file surgery is gone, and
+# with it the runtime-copy drift risk.)
 - name: Ensure ibl-edx-uwsgi plugin is enabled
   become: false
   shell: |
@@ -396,24 +334,22 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    python3 -c "
-    import yaml
-    config_path = '{{ ibl_root }}/config.yml'
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f) or {}
-    edx = cfg.setdefault('IBL_EDX', {})
-    plugins = edx.get('PLUGINS', [])
+    MERGED=$(ibl config get IBL_EDX.PLUGINS --json | python3 -c "
+    import json, sys
+    try:
+        data = json.load(sys.stdin)
+        plugins = data.get('value') if data.get('found') else []
+    except Exception:
+        plugins = []
     if isinstance(plugins, str):
         plugins = [p.strip() for p in plugins.split(',') if p.strip()]
+    if not isinstance(plugins, list):
+        plugins = []
     if 'ibl-edx-uwsgi' not in plugins:
         plugins.append('ibl-edx-uwsgi')
-        edx['PLUGINS'] = plugins
-        with open(config_path, 'w') as f:
-            yaml.dump(cfg, f, default_flow_style=False)
-        print('Added ibl-edx-uwsgi to plugins')
-    else:
-        print('ibl-edx-uwsgi already in plugins')
-    "
+    print(json.dumps(plugins))
+    ")
+    ibl config set "IBL_EDX.PLUGINS=$MERGED"
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -422,17 +358,20 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Generate Langfuse secrets for AI
+# (Langfuse NEXTAUTH_SECRET/SALT are generator-backed under 6.x — filled
+# by `ibl secrets generate` above; a config-set of a secret key would now
+# hard-fail, so the old shell-generation block is gone.)
+
+# Second explicit render: the list merges above (CSRF-exempt URLs,
+# plugins) land in rendered output here.
+- name: Render platform config (post-config)
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    NEXTAUTH_SECRET=$(python3 -c "import secrets, string; print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))")
-    SALT=$(python3 -c "import secrets, string; print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)))")
-    ibl config save --set "IBL_DM.LANGFUSE_NEXTAUTH_SECRET=${NEXTAUTH_SECRET}"
-    ibl config save --set "IBL_DM.LANGFUSE_SALT=${SALT}"
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -440,7 +379,6 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
-  when: enable_ai | bool
 
 - name: Login to ECR
   become: false

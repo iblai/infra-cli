@@ -186,6 +186,16 @@ CI-generated deploy marker; fresh setups never have one.
 
 ## 3. `ibl_platform` (setup / resetup) — `single-server/roles/ibl_platform/tasks/main.yml`
 
+> **Ordering rule (applies to every converted role):** secret generation is
+> gated on config state (`required_for`/`required_if` in the upstream
+> registry — Langfuse/Flowise secrets generate only when
+> `ENABLE_IBL_AI(_PLUS)` is on [registry default False], meilisearch keys
+> only on `VERSION=sumac`). So every gate-affecting `ibl config set` must
+> precede `ibl secrets generate`, which must precede the render that needs
+> the secrets. In ibl_platform this pulled the whole scalar batch (edX
+> flags, AI, RBAC) into the pre-proxy set; only the non-gate list merges
+> (CSRF URLs, PLUGINS) stay after the proxy launch.
+
 | Line(s) | Current | Change |
 |---|---|---|
 | 59 | `ibl config rotate-secrets -f --include-auth` (resetup) | `ibl secrets rotate --all-generated -y` — 1:1 replacement (rotates every gate-active generator-backed secret, OAuth creds included; also fills missing ones). |

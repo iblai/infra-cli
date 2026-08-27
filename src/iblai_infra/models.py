@@ -559,6 +559,11 @@ class SetupConfig(BaseModel):
     base_domain: str
     edx_version: str = "sumac"
     env_config: str = "single-server"
+    # Node identity for the 6.x config system: `ibl render` requires NODE_ID
+    # in the process env. It only feeds CloudWatch log-group names and the
+    # Sentry env prefix, so the project name is the right default — empty
+    # means "use the project name" (AnsibleRunner resolves it from state.name).
+    node_id: str = ""
     # iblai-cli-ops install tag. Empty = "resolve from the prod-images pin":
     # iblai-prod-images' pyproject.toml pins ibl-cli via [tool.uv.sources]
     # (rev = "<tag>"), and the interactive/env flows resolve that pin via

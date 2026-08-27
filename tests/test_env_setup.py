@@ -224,6 +224,13 @@ class TestOptionalDefaults:
         assert config.create_playwright_platforms is False
         assert config.platform_name == "main"
         assert config.github_org == "iblai"
+        # NODE_ID unset -> empty; AnsibleRunner falls back to the project name
+        assert config.node_id == ""
+
+    def test_node_id_from_env(self, project_state):
+        env = _required_env(NODE_ID="custom-node")
+        config = build_setup_config_from_env(env, state=project_state)
+        assert config.node_id == "custom-node"
 
     def test_enable_ai_explicit_false(self, project_state):
         env = _required_env(ENABLE_AI="false")

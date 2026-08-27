@@ -633,6 +633,7 @@ def launch(
     admin_password: str = typer.Option("", "--admin-password", help="Admin password (required for single/multi-server, ignored for call-server)"),
     vpn_ip: str = typer.Option(..., "--vpn-ip", help="IP address allowed SSH access"),
     name: str | None = typer.Option(None, "--name", help="Project name (auto-generated from domain if omitted)"),
+    node_id: str = typer.Option("", "--node-id", help="Node ID for CloudWatch log-group names (default: project name)"),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH user"),
     aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region"),
     instance_type: str = typer.Option("t3.2xlarge", "--instance-type", help="EC2 instance type"),
@@ -792,6 +793,7 @@ def launch(
         ssh_public_key=ssh_public_key, ssh_key=ssh_key,
         git_token=git_token, admin_email=admin_email,
         admin_password=admin_password, vpn_ip=vpn_ip, name=name,
+        node_id=node_id,
         ssh_user=ssh_user, aws_region=aws_region,
         instance_type=instance_type, volume_size=volume_size,
         environment=environment, cli_tag=cli_tag,
@@ -896,6 +898,7 @@ def launch_env(
 
     # Optional with defaults
     name = env.get("NAME") or None
+    node_id = env.get("NODE_ID", "")  # empty = project name
     ssh_user = env.get("SSH_USER", "ubuntu")
     aws_region = env.get("AWS_DEFAULT_REGION", "us-east-1")
     instance_type = env.get("INSTANCE_TYPE", "t3.2xlarge")
@@ -1016,6 +1019,7 @@ def launch_env(
         ssh_public_key=ssh_public_key, ssh_key=ssh_key,
         git_token=git_token, admin_email=admin_email,
         admin_password=admin_password, vpn_ip=vpn_ip, name=name,
+        node_id=node_id,
         ssh_user=ssh_user, aws_region=aws_region,
         instance_type=instance_type, volume_size=volume_size,
         environment=environment, cli_tag=cli_tag,
@@ -1318,6 +1322,7 @@ def _run_launch(
     volume_size: int,
     environment: str,
     cli_tag: str,
+    node_id: str = "",
     admin_username: str,
     openai_key: str,
     enable_ai: bool,
@@ -1565,6 +1570,7 @@ def _run_launch(
         target_host=instance_ip,
         base_domain=domain,
         env_config=("call-only" if deploy_type == DeploymentType.CALL else "single-server"),
+        node_id=node_id,
         cli_ops_release_tag=cli_tag,
         enable_ai=enable_ai,
         create_playwright_platforms=create_playwright_platforms,
@@ -1654,6 +1660,7 @@ def service_update(
     git_token: str = typer.Option(..., "--git-token", help="GitHub Personal Access Token"),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH user"),
     name: str | None = typer.Option(None, "--name", help="Project name (auto-generated if omitted)"),
+    node_id: str = typer.Option("", "--node-id", help="Node ID for CloudWatch log-group names (default: project name)"),
     ami_id: str | None = typer.Option(None, "--ami-id", help="Launch EC2 from this AMI before updating"),
     subnet_id: str | None = typer.Option(None, "--subnet-id", help="Subnet to launch into (with --ami-id)"),
     security_group_id: str | None = typer.Option(None, "--security-group-id", help="Security group for EC2 (with --ami-id)"),
@@ -1696,12 +1703,14 @@ def service_update(
             instance_type=instance_type, volume_size=volume_size,
             aws_key_id=aws_key_id, aws_secret_key=aws_secret_key,
             aws_region=aws_region, ssh_key=ssh_key, git_token=git_token,
-            ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
+            ssh_user=ssh_user, name=name, node_id=node_id,
+            prod_images_tag=prod_images_tag,
         )
     elif host:
         _run_service_update(
             host=host, ssh_key=ssh_key, git_token=git_token,
-            ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
+            ssh_user=ssh_user, name=name, node_id=node_id,
+            prod_images_tag=prod_images_tag,
         )
     else:
         ui.error("Either --host or --ami-id is required.")
@@ -1715,6 +1724,7 @@ def _run_service_update(
     git_token: str,
     ssh_user: str,
     name: str | None,
+    node_id: str = "",
     prod_images_tag: str = "main",
 ) -> None:
     """Install latest images and restart all services."""
@@ -1765,6 +1775,7 @@ def _run_service_update(
         ssh_user=ssh_user,
         target_host=host,
         base_domain="service-update",
+        node_id=node_id,
         prod_images_tag=prod_images_tag,
         aws_access_key_id="",
         aws_secret_access_key="",
@@ -1855,6 +1866,7 @@ def _run_service_update_from_ami(
     git_token: str,
     ssh_user: str,
     name: str | None,
+    node_id: str = "",
     prod_images_tag: str = "main",
 ) -> None:
     """Launch EC2 from AMI, run service update, register in target group."""
@@ -1947,6 +1959,7 @@ def _run_service_update_from_ami(
         ssh_user=ssh_user,
         target_host=host,
         base_domain="service-update",
+        node_id=node_id,
         prod_images_tag=prod_images_tag,
         aws_access_key_id="",
         aws_secret_access_key="",

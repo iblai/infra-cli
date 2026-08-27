@@ -618,6 +618,9 @@ class AnsibleRunner:
             "base_domain": self.config.base_domain,
             "edx_version": self.config.edx_version,
             "env_config": self.config.env_config,
+            # Empty = not explicitly chosen — fall back to the project name
+            # (see SetupConfig.node_id).
+            "node_id": self.config.node_id or self.state.name,
             # Empty tag = unresolved (e.g. programmatic SetupConfig) — fall
             # back to the repo's main branch rather than emitting `@`.
             "cli_ops_release_tag": self.config.cli_ops_release_tag or "main",

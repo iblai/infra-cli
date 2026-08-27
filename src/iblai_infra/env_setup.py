@@ -319,6 +319,8 @@ def build_setup_config_from_env(
         base_domain=base_domain,
         edx_version=(env.get("EDX_VERSION") or "sumac").strip(),
         env_config=(env.get("ENV_CONFIG") or "single-server").strip(),
+        # Empty = fall back to the project name (resolved by AnsibleRunner).
+        node_id=(env.get("NODE_ID") or "").strip(),
         cli_ops_release_tag=cli_ops_tag,
         prod_images_tag=prod_images_tag,
         enable_ai=parse_bool(env.get("ENABLE_AI"), default=True),

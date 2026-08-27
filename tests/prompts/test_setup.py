@@ -204,12 +204,13 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
         assert config.env_config == "single-server"
+        assert config.node_id == "test-node"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
         assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
         assert config.enable_ai is True
@@ -237,7 +238,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, don't reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, False]
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "NEW_ACCESS_KEY", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "NEW_ACCESS_KEY", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -264,7 +265,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", "", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled (no reuse prompt when no access keys)
             mock_confirm.return_value.ask.side_effect = [True, True, False, False, False, False]
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ACCESS_KEY", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ACCESS_KEY", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -295,7 +296,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(new_key)
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -321,7 +322,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -347,7 +348,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -377,11 +378,12 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, True, True, False, False, False, False, True,
             ]
-            # texts: platform_name, cli_ops_tag, smtp_host, smtp_port, smtp_username,
+            # texts: node_id, platform_name, cli_ops_tag, smtp_host, smtp_port, smtp_username,
             #        smtp_sender_email,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "main",
                 "3.19.0",
                 "email-smtp.us-east-1.amazonaws.com",
@@ -437,10 +439,11 @@ class TestPromptSetup:
             ]
             # selects: stripe_mode
             mock_select.return_value.ask.return_value = "test"
-            # texts: platform_name, cli_ops_tag, pricing_table_id, pricing_table_id_returning,
+            # texts: node_id, platform_name, cli_ops_tag, pricing_table_id, pricing_table_id_returning,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "main",
                 "3.19.0",
                 "prctbl_abcdef",
@@ -491,10 +494,11 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, False, False, True, False, True,
             ]
-            # texts: platform_name, cli_ops_tag, google_sso_client_id, google_sso_organization,
+            # texts: node_id, platform_name, cli_ops_tag, google_sso_client_id, google_sso_organization,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "main",
                 "3.19.0",
                 "client-id.apps.googleusercontent.com",
@@ -541,11 +545,12 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, False, False, False, True, True,
             ]
-            # texts: platform_name, cli_ops_tag,
+            # texts: node_id, platform_name, cli_ops_tag,
             #        microsoft_sso_client_id, microsoft_sso_tenant_id, microsoft_sso_organization,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "tenant-platform",
                 "3.19.0",
                 "11111111-2222-3333-4444-555555555555",
@@ -585,6 +590,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "  TenantPlatform  ",  # mixed case + whitespace
                 "3.19.0",
                 "iblai",

@@ -115,6 +115,7 @@ def _prompt_platform_config(
     step: int,
     total: int,
     base_domain: str | None = None,
+    default_node_id: str = "",
 ) -> dict:
     """Collect platform configuration. Returns a dict of config values.
 
@@ -135,6 +136,20 @@ def _prompt_platform_config(
         base_domain = base_domain.strip()
 
     ui.success(f"Domain: [highlight]{base_domain}[/highlight]")
+
+    # Node ID — the 6.x config system requires NODE_ID in the env for
+    # `ibl render`. It only names CloudWatch log groups and the Sentry env
+    # prefix, so the project name is the right default.
+    node_id = questionary.text(
+        "Node ID (names CloudWatch log groups):",
+        default=default_node_id,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if node_id is None:
+        ui.abort()
+    node_id = node_id.strip() or default_node_id
+    ui.success(f"Node ID: [highlight]{node_id}[/highlight]")
 
     # Platform name — drives the SSO ansible roles (backend_name =
     # `<platform_name>-oauth2`, other_settings.platform_key) AND the
@@ -210,6 +225,7 @@ def _prompt_platform_config(
 
     return {
         "base_domain": base_domain,
+        "node_id": node_id,
         "platform_name": platform_name,
         "edx_version": edx_version,
         "env_config": env_config,
@@ -847,6 +863,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
         step=2,
         total=SETUP_STEPS,
         base_domain=state.config.dns.base_domain,
+        default_node_id=state.name,
     )
 
     # ----- Step 3: Credentials -----
@@ -1053,7 +1070,9 @@ def prompt_bootstrap() -> tuple[SetupConfig, dict]:
     ssh_user = ssh_user.strip()
 
     # ----- Step 3: Platform Configuration -----
-    platform = _prompt_platform_config(step=3, total=BOOTSTRAP_STEPS)
+    platform = _prompt_platform_config(
+        step=3, total=BOOTSTRAP_STEPS, default_node_id=project_name
+    )
 
     # ----- Step 4: Credentials -----
     cred = _prompt_credentials(step=4, total=BOOTSTRAP_STEPS)

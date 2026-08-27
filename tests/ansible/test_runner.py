@@ -309,6 +309,8 @@ class TestBuildExtraVars:
         assert extra["base_domain"] == "example.com"
         assert extra["edx_version"] == "sumac"
         assert extra["env_config"] == "single-server"
+        # node_id defaults to the project name when not explicitly set
+        assert extra["node_id"] == "testproject"
         assert extra["cli_ops_release_tag"] == "3.19.0"
         assert extra["is_resetup"] is False
         assert extra["enable_ai"] is True
@@ -349,6 +351,15 @@ class TestBuildExtraVars:
         extra = runner._build_extra_vars()
         assert extra["is_resetup"] is True
         assert extra["cli_ops_release_tag"] == "3.19.0"
+
+    def test_explicit_node_id_wins(self, project_state, setup_config):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config.model_copy(update={"node_id": "custom-node"})
+        runner.role_labels = ROLE_LABELS
+
+        extra = runner._build_extra_vars()
+        assert extra["node_id"] == "custom-node"
 
 
 # ---------------------------------------------------------------------------

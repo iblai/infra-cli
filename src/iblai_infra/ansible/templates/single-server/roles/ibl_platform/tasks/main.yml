@@ -63,6 +63,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: is_resetup | default(false) | bool
 
 - name: Sync postgres password after secret rotation
@@ -87,6 +88,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: is_resetup | default(false) | bool
 
 - name: Sync MySQL passwords after secret rotation
@@ -119,6 +121,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: is_resetup | default(false) | bool
   ignore_errors: true
 
@@ -191,6 +194,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: fernet_needs_rotation | bool
   register: fernet_rotation
   changed_when: fernet_rotation.rc == 0
@@ -218,6 +222,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Configure base domain
   become: false
@@ -233,6 +238,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Enable unified API gateway
   become: false
@@ -248,6 +254,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Launch global reverse proxy
   become: false
@@ -263,6 +270,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Ensure ibl_local_default docker network exists
   become: false
@@ -285,6 +293,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Set edX feature flags
   become: false
@@ -301,6 +310,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 # IBL_EDX.IBL_EDX_SSO_BACKEND_APP needs:
 #   - ENABLE_CORS_ORIGIN_WHITELIST: true   (bool — fine with `ibl config save --set`)
@@ -358,6 +368,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Enable DM RBAC
   become: false
@@ -376,6 +387,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Ensure ibl-edx-uwsgi plugin is enabled
   become: false
@@ -408,6 +420,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Generate Langfuse secrets for AI
   become: false
@@ -426,6 +439,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: enable_ai | bool
 
 - name: Login to ECR

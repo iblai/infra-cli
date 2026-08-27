@@ -59,6 +59,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: (platform_name | default('main')) != 'main'
 
 - name: Check whether tenant platform already exists

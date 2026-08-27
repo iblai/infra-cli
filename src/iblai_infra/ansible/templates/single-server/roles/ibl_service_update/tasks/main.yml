@@ -90,6 +90,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: fernet_needs_rotation | bool
   register: fernet_rotation
   changed_when: fernet_rotation.rc == 0
@@ -159,6 +160,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Save edX tutor config
   become: false
@@ -174,6 +176,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 # ---------------------------------------------------------------------------
 # edX: ensure running + health check
@@ -193,6 +196,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 600
 
 - name: Wait for LMS to be ready
@@ -268,6 +272,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   async: 3600
   poll: 30
 
@@ -407,6 +412,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 600
 
 - name: Run DM auth setup
@@ -423,6 +429,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 600
 
 - name: Sync edX with DM
@@ -439,6 +446,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 600
   ignore_errors: true
 
@@ -541,6 +549,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   ignore_errors: true
 
 # ---------------------------------------------------------------------------
@@ -591,6 +600,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Restart nginx
   shell: systemctl restart nginx

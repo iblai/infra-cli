@@ -67,6 +67,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Capture current MySQL root password before rotation
   become: false
@@ -90,6 +91,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 # ---------------------------------------------------------------------------
 # Sync database passwords after rotation
@@ -117,6 +119,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Sync MySQL passwords after secret rotation
   become: false
@@ -148,4 +151,5 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   ignore_errors: true

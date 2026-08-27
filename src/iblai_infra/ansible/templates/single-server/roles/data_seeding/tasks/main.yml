@@ -54,6 +54,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 # Skills enrollment + several other edX flows look up the learner's display
 # name from `auth_user.first_name` / `last_name` and `student.UserProfile.name`.

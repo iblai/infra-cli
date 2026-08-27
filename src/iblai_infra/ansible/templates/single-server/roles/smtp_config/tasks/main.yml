@@ -72,6 +72,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when: smtp_enabled | default(false) | bool
 
 # During a full setup the services start *after* this role, so they read the
@@ -107,6 +108,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when:
     - smtp_enabled | default(false) | bool
     - restart_services | default(false) | bool

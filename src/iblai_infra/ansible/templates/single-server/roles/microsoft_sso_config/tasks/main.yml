@@ -111,6 +111,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when:
     - microsoft_sso_enabled | default(false) | bool
     - config_patch.changed | default(false)
@@ -129,6 +130,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when:
     - microsoft_sso_enabled | default(false) | bool
     - config_patch.changed | default(false)
@@ -147,6 +149,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when:
     - microsoft_sso_enabled | default(false) | bool
     - config_patch.changed | default(false)
@@ -375,6 +378,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when:
     - microsoft_sso_enabled | default(false) | bool
     - spa_auth_patch.changed | default(false)

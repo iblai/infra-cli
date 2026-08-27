@@ -134,6 +134,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Set SPA quoted boolean values in config.yml
   become: false
@@ -168,6 +169,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Re-render templates with SPA configuration
   become: false
@@ -183,6 +185,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Login to ECR for SPA images
   become: false
@@ -292,6 +295,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Verify SPA containers are running
   command: docker ps --format "table {% raw %}{{.Names}}\t{{.Status}}{% endraw %}" --filter "name=spa"

@@ -40,9 +40,8 @@
 # the prod-images install. The prod-images package depends on `ibl-cli`
 # but its `[tool.uv.sources]` is ignored when uv pip installs from a git
 # URL — so the dependency falls through to PyPI's unrelated `ibl-cli`
-# package (v2.0.11), which is missing `ibl/templates/config/defaults.yml`
-# and crashes on `ibl --help`. Reinstalling here overrides the wrong
-# package with the right one (e.g. iblai/iblai-cli-ops@5.8.1, or a
+# package, which is not this CLI at all. Reinstalling here overrides the
+# wrong package with the right one (e.g. iblai/iblai-cli-ops@7.1.0, or a
 # subdir of a client monorepo like
 # <client>-iblai-infra-ops/iblai-cli-ops@v1.0.1).
 - name: Install iblai-cli-ops (override transitive ibl-cli with correct repo+tag)
@@ -76,3 +75,86 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
   changed_when: false
+
+# These playbook templates speak the 6.x config model (config.yml /
+# services.yml / secrets.yml, explicit `ibl render`), which ships as
+# ibl-cli-ops 7.x. An older CLI lacks the commands the tasks below run —
+# fail fast here instead of partway through a bootstrap. The version is
+# read from package metadata (the distribution is named `ibl-cli`), not
+# scraped from CLI output.
+- name: Read installed package versions
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    uv pip list --format json
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: pip_list_probe
+  changed_when: false
+
+# The anchored regex keeps only the leading X.Y.Z — upstream may suffix
+# the version (`7.1.0-<branch>`), which `is version` can't compare.
+- name: Extract installed ibl CLI version
+  set_fact:
+    ibl_cli_version: "{{ pip_list_probe.stdout | from_json | selectattr('name', 'equalto', 'ibl-cli') | map(attribute='version') | first | default('') | regex_search('^[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true) }}"
+
+- name: Enforce iblai-cli-ops version floor (>= 7.0.0)
+  fail:
+    msg: >-
+      Installed iblai-cli-ops is
+      '{{ ibl_cli_version | default('not installed', true) }}' but these
+      playbooks require >= 7.0.0 (the 6.x config model). Point the install
+      at a 7.x tag: the prod-images [tool.uv.sources] pin, or an explicit
+      cli_ops_release_tag override.
+  when: ibl_cli_version == '' or ibl_cli_version is version('7.0.0', '<')
+
+# Initialize the 6.x config root. Idempotent — rc 0 no-op on an existing
+# root (it prints "use `ibl services set-from` to change presets"), so
+# this is safe for setup, resetup, launch and service-update alike. The
+# upstream single-server preset owns the canonical service list; updating
+# the preset updates deployments, no disable list here.
+- name: Initialize IBL config root (single-server preset)
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl init --from single-server
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+# Fail-fast gate: any gate-active secret with no generator must be
+# supplied by an operator, and nothing later in the playbook would fill
+# it. rc 1 alone is NOT a failure here — it also fires for generatable
+# secrets that `ibl secrets generate` fills later in the run — so key the
+# check on `user_supplied` only.
+- name: Preflight - check for missing operator-supplied secrets
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl secrets check --json
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: secrets_check
+  changed_when: false
+  failed_when: (secrets_check.stdout | from_json).user_supplied | length > 0

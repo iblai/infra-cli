@@ -22,6 +22,25 @@
         executable: /bin/bash
       changed_when: false
 
+    # Legacy-layout guard: auth.yml only exists under the 5.x two-file
+    # config layout, which these templates no longer speak. Old 5.x AMIs
+    # fail here fast; new AMIs must be baked from a 6.x-provisioned server.
+    - name: Check for legacy 5.x config layout
+      stat:
+        path: "{{ ibl_root }}/auth.yml"
+      register: legacy_auth_yml
+      tags: always
+
+    - name: Fail on unmigrated legacy 5.x root
+      fail:
+        msg: >-
+          {{ ibl_root }}/auth.yml exists - this server still runs the
+          legacy 5.x config layout. Migrate it to the 6.x layout first
+          (operator runbook: docs/CONFIG_MIGRATION.md in ibl-cli-ops),
+          then re-run this command.
+      when: legacy_auth_yml.stat.exists
+      tags: always
+
   roles:
     - ibl_cli_ops
     - ibl_launch

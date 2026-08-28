@@ -41,10 +41,11 @@
 # Write PLATFORM_NAME (uppercase) at the root of /ibl/config.yml so the
 # iblai-cli-ops templates that read it (LMS display name, etc.) pick up
 # the tenant identity. Matches the on-disk shape seen on the canonical
-# multi-tenant deployments (`PLATFORM_NAME: ACME`). `ibl config save --set` is
-# naturally idempotent — re-running with the same value is a no-op.
-# Skipped when `platform_name == 'main'` per the same gate as the
-# launcher tasks below.
+# multi-tenant deployments (`PLATFORM_NAME: ACME`). Idempotent —
+# re-running with the same value is a no-op. Renders explicitly (6.x:
+# `ibl config set` does not render). Skipped when
+# `platform_name == 'main'` per the same gate as the launcher tasks
+# below.
 - name: Set PLATFORM_NAME (uppercase) in /ibl/config.yml
   become: false
   ansible.builtin.shell:
@@ -53,7 +54,8 @@
       export PATH="$PYENV_ROOT/bin:$PATH"
       eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
       pyenv activate "{{ venv_name }}"
-      ibl config save --set 'PLATFORM_NAME={{ platform_name | upper }}'
+      ibl config set 'PLATFORM_NAME={{ platform_name | upper }}'
+      ibl render
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:

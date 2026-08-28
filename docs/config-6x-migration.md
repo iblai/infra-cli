@@ -124,6 +124,13 @@ develop** — scratch roots per preset, full bootstrap contract exercised
   consequence: fresh single-servers switch from today's hardcoded
   auth/mentor/skills to the preset's `AUTH`/`LMS`/`OS`.
 
+**`ibl services list --json` LANDED** (composes with `-p`/`--all`;
+enabled-only by default; returns `{"<dotted key>": {value, description}}`
+with native-typed values). The `ibl_spa` deploy loop enumerates
+`RUN_*_SPA` toggles through it and validates the remaining naming
+convention (`RUN_<NAME>_SPA` ↔ `<NAME>.PORT` ↔ `app/ibl-spa/<name>/`)
+with loud failures.
+
 **Remaining upstream:** the release tag only — version is cut as **7.1.0**
 (`ibl/__about__.py`, changelog) but the newest pushed tag is still 7.0.0;
 pin the 7.1.0 tag once pushed. (Local-env note for anyone re-validating:

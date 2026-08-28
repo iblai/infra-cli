@@ -113,21 +113,35 @@
     - ibl_web_app_result.stdout_lines is defined
     - ibl_web_app_result.stdout_lines | length > 0
 
-- name: Set SPA configuration defaults
+# One batched, all-or-nothing write. The former "quoted boolean" PyYAML
+# surgery is gone: registry-typed `ibl config set` stores str-typed keys
+# ('true'/'false') exactly, and coerces the two bool-typed ones
+# (MENTOR.SKIP_TEST, MENTOR.ENABLE_APP_SITE_ASSOCIATION) to real bools —
+# the type upstream's templates expect.
+- name: Set SPA configuration
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save --set 'IBL_SPA.EDX_SSO_CLIENT_ID={{ spa_sso_client_id }}'
-    ibl config save --set 'IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID={{ ibl_web_client_id }}'
-    ibl config save --set 'IBL_SPA.AUTH.DOMAIN=https://auth.{{ base_domain }}'
-    ibl config save --set 'IBL_SPA.AUTH.DEFAULT_APP_URL=os.{{ base_domain }}'
-    ibl config save --set 'IBL_SPA.ENVIRONMENT={{ base_domain }}'
-    ibl config save --set 'IBL_SPA.MENTOR.IFRAME_MENTOR_DOMAIN=https://os.{{ base_domain }}'
-    ibl config save --set 'IBL_SPA.MENTOR.DOMAIN=https://os.{{ base_domain }}'
-    ibl config save --set 'IBL_SPA.SKILLS.DOMAIN=lms.{{ base_domain }}'
+    ibl config set \
+      'IBL_SPA.EDX_SSO_CLIENT_ID={{ spa_sso_client_id }}' \
+      'IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID={{ ibl_web_client_id }}' \
+      'IBL_SPA.AUTH.DOMAIN=https://auth.{{ base_domain }}' \
+      'IBL_SPA.AUTH.DEFAULT_APP_URL=os.{{ base_domain }}' \
+      'IBL_SPA.ENVIRONMENT={{ base_domain }}' \
+      'IBL_SPA.MENTOR.IFRAME_MENTOR_DOMAIN=https://os.{{ base_domain }}' \
+      'IBL_SPA.MENTOR.DOMAIN=https://os.{{ base_domain }}' \
+      'IBL_SPA.SKILLS.DOMAIN=lms.{{ base_domain }}' \
+      'IBL_SPA.MENTOR.ENABLE_RBAC=true' \
+      'IBL_SPA.MENTOR.STRIPE_ENABLED=false' \
+      'IBL_SPA.MENTOR.ENABLE_ADVERTISING=false' \
+      'IBL_SPA.MENTOR.SKIP_TEST=true' \
+      'IBL_SPA.MENTOR.ENABLE_APP_SITE_ASSOCIATION=true' \
+      'IBL_SPA.MENTOR.CANVAS_ADMIN_ONLY=false' \
+      'IBL_SPA.MENTOR.HIDE_ANALYTICS=false' \
+      'IBL_SPA.SKILLS.ENABLE_RBAC=true'
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -136,49 +150,14 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Set SPA quoted boolean values in config.yml
+- name: Render templates with SPA configuration
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    python3 -c "
-    import yaml
-    config_path = '{{ ibl_root }}/config.yml'
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f) or {}
-    spa = cfg.setdefault('IBL_SPA', {})
-    mentor = spa.setdefault('MENTOR', {})
-    mentor['ENABLE_RBAC'] = 'true'
-    mentor['STRIPE_ENABLED'] = 'false'
-    mentor['ENABLE_ADVERTISING'] = 'false'
-    mentor['SKIP_TEST'] = 'true'
-    mentor['ENABLE_APP_SITE_ASSOCIATION'] = 'true'
-    mentor['CANVAS_ADMIN_ONLY'] = 'false'
-    mentor['HIDE_ANALYTICS'] = 'false'
-    skills = spa.setdefault('SKILLS', {})
-    skills['ENABLE_RBAC'] = 'true'
-    with open(config_path, 'w') as f:
-        yaml.dump(cfg, f, default_flow_style=False)
-    print('SPA boolean config values set')
-    "
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
-
-- name: Re-render templates with SPA configuration
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl config save
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -199,96 +178,114 @@
     AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
     AWS_DEFAULT_REGION: "{{ aws_default_region }}"
 
-- name: Launch Auth SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose pull && docker compose down && docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-  register: auth_spa_result
-  retries: 2
-  delay: 5
-
-# Budget: 30 × 15s = 450s (7.5 min). SPA images don't ship with
-# node_modules baked in — the container runs `pnpm install` on first
-# boot (~80–120s observed) before Next.js can start. Combined with
-# `docker compose pull` and image-extraction overhead, cold start can
-# easily exceed the older 10-retry / 150s budget on a slower instance
-# or marginal network. 450s comfortably covers that without making
-# real failures take an unreasonable amount of time to surface.
-- name: Wait for Auth SPA to be ready
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: auth_health
-  until: auth_health.rc == 0
-  retries: 30
-  delay: 15
-
-- name: Launch Mentor SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose pull && docker compose down && docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-  register: mentor_spa_result
-  retries: 2
-  delay: 5
-
-- name: Wait for Mentor SPA to be ready
-  # Same 450s cold-start budget rationale as the Auth SPA wait above —
-  # node_modules install on first boot pushes ready-time past the older
-  # 150s budget on slower hosts.
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: mentor_health
-  until: mentor_health.rc == 0
-  retries: 30
-  delay: 15
-
-- name: Launch Skills SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose pull && docker compose down && docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-  register: skills_spa_result
-  retries: 2
-  delay: 5
-
-- name: Wait for Skills SPA to be ready
-  # Same 450s cold-start budget rationale as the Auth SPA wait above —
-  # node_modules install on first boot pushes ready-time past the older
-  # 150s budget on slower hosts.
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: skills_health
-  until: skills_health.rc == 0
-  retries: 30
-  delay: 15
-
-- name: Save config and reload proxy after SPA launch
+# The service toggles are the single source of truth for which SPAs
+# deploy — the init preset decides, this role follows. `ibl services
+# list --json` (enabled-only by default) enumerates them, so an SPA
+# added upstream deploys without a change here.
+#
+# The role still leans on the upstream naming convention — toggle
+# IBL_SPA.RUN_<NAME>_SPA ↔ port key IBL_SPA.<NAME>.PORT ↔ rendered dir
+# app/ibl-spa/<name lowercase>/. The port lookup is validated here
+# because its natural failure mode is a slow, confusing one (a 7.5-min
+# health-check timeout against an empty port); the dir needs no check —
+# the launch task's `cd` fails immediately with the path in the error.
+- name: Discover enabled SPAs
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl global-proxy reload
+    python3 - <<'PY'
+    import json
+    import re
+    import subprocess
+    import sys
+
+    listing = subprocess.run(
+        ['ibl', 'services', 'list', '--json', '-p', 'IBL_SPA.RUN_'],
+        capture_output=True, text=True,
+    )
+    if listing.returncode != 0:
+        sys.exit(f'ibl services list failed: {listing.stderr.strip()}')
+    toggles = json.loads(listing.stdout)
+    enabled = sorted(
+        m.group(1)
+        for key, entry in toggles.items()
+        for m in [re.fullmatch(r'IBL_SPA\.RUN_([A-Z0-9_]+)_SPA', key)]
+        if m and entry.get('value')
+    )
+    for name in enabled:
+        port = subprocess.run(
+            ['ibl', 'config', 'get', f'IBL_SPA.{name}.PORT'],
+            capture_output=True, text=True,
+        )
+        if port.returncode != 0 or not port.stdout.strip():
+            sys.exit(
+                f'IBL_SPA.RUN_{name}_SPA is enabled but IBL_SPA.{name}.PORT '
+                f'did not resolve - the toggle/port naming convention this '
+                f'role relies on may have changed upstream.'
+            )
+        print(json.dumps({'name': name.lower(), 'port': port.stdout.strip()}))
+    PY
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: spa_discovery
+  changed_when: false
+
+- name: Build enabled SPA list
+  set_fact:
+    enabled_spas: "{{ spa_discovery.stdout_lines | map('from_json') | list }}"
+
+- name: Verify at least one SPA is enabled
+  fail:
+    msg: >-
+      No IBL_SPA.RUN_*_SPA toggle is enabled - check services.yml (the
+      init preset should have enabled at least AUTH/LMS/OS).
+  when: enabled_spas | length == 0
+
+- name: Launch enabled SPAs
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-spa/{{ item.name }}/ && docker compose pull && docker compose down && docker compose up -d
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  loop: "{{ enabled_spas }}"
+
+# Budget: 30 × 15s = 450s (7.5 min) per SPA. SPA images don't ship with
+# node_modules baked in — the container runs `pnpm install` on first
+# boot (~80–120s observed) before Next.js can start. Combined with
+# `docker compose pull` and image-extraction overhead, cold start can
+# easily exceed a 150s budget on a slower instance or marginal network.
+# All SPAs were started above, so their cold starts overlap and the
+# waits after the first mostly return immediately.
+- name: Wait for enabled SPAs to be ready
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:{{ item.port }}/ 2>/dev/null | grep -qE '^(200|301|302)$'
+  args:
+    executable: /bin/bash
+  register: spa_health
+  until: spa_health.rc == 0
+  retries: 30
+  delay: 15
+  loop: "{{ enabled_spas }}"
+
+- name: Render config and reload proxy after SPA launch
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl render && ibl global-proxy reload
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"

@@ -175,9 +175,6 @@ def _prompt_platform_config(
     edx_version = "sumac"
     ui.success(f"Open edX version: [highlight]Sumac[/highlight]")
 
-    env_config = "single-server"
-    ui.success(f"Server type: [highlight]Single Server[/highlight]")
-
     # One version question: the prod-images release. iblai-cli-ops is
     # resolved from prod-images' [tool.uv.sources] pin after the GitHub
     # token is collected (see _resolve_cli_ops_release_tag).
@@ -228,7 +225,6 @@ def _prompt_platform_config(
         "node_id": node_id,
         "platform_name": platform_name,
         "edx_version": edx_version,
-        "env_config": env_config,
         "prod_images_tag": prod_images_tag,
         "enable_ai": enable_ai,
         "create_playwright_platforms": create_playwright_platforms,

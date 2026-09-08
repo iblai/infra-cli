@@ -295,7 +295,6 @@ class TestSetupConfig:
     def test_valid(self, setup_config):
         assert setup_config.ssh_user == "ubuntu"
         assert setup_config.edx_version == "sumac"
-        assert setup_config.env_config == "single-server"
 
     def test_defaults(self, tmp_path):
         key = tmp_path / "k.pem"
@@ -311,7 +310,6 @@ class TestSetupConfig:
         )
         assert sc.ssh_user == "ubuntu"
         assert sc.edx_version == "sumac"
-        assert sc.env_config == "single-server"
         assert sc.enable_ai is True
 
 

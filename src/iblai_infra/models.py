@@ -558,7 +558,6 @@ class SetupConfig(BaseModel):
     target_host: str
     base_domain: str
     edx_version: str = "sumac"
-    env_config: str = "single-server"
     # Node identity for the 6.x config system: `ibl render` requires NODE_ID
     # in the process env. It only feeds CloudWatch log-group names and the
     # Sentry env prefix, so the project name is the right default — empty

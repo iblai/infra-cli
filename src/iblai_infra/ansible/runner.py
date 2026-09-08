@@ -636,7 +636,6 @@ class AnsibleRunner:
             "prod_images_subdir": prod_images_subdir or "",
             "base_domain": self.config.base_domain,
             "edx_version": self.config.edx_version,
-            "env_config": self.config.env_config,
             # Empty = not explicitly chosen — fall back to the project name
             # (see SetupConfig.node_id).
             "node_id": self.config.node_id or self.state.name,

@@ -1569,7 +1569,6 @@ def _run_launch(
         ssh_user=ssh_user,
         target_host=instance_ip,
         base_domain=domain,
-        env_config=("call-only" if deploy_type == DeploymentType.CALL else "single-server"),
         node_id=node_id,
         cli_ops_release_tag=cli_tag,
         enable_ai=enable_ai,
@@ -2392,10 +2391,7 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
     ])
     if not is_call:
         rows.append(("edX version", setup_config.edx_version))
-    rows.extend([
-        ("Env config", setup_config.env_config),
-        ("AWS region", setup_config.aws_default_region),
-    ])
+    rows.append(("AWS region", setup_config.aws_default_region))
     ui.summary_panel("Setup Summary", rows)
 
     import questionary
@@ -2420,9 +2416,6 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
         save_state(state)
 
     if is_call:
-        # ibl_call role uses env_config; make sure it's set even if the prompt defaulted
-        if not setup_config.env_config or setup_config.env_config == "single-server":
-            setup_config.env_config = "call-only"
         runner = AnsibleRunner(
             state, setup_config,
             playbook="call_playbook.yml",

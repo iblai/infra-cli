@@ -308,7 +308,6 @@ class TestBuildExtraVars:
         assert extra["aws_default_region"] == "us-east-1"
         assert extra["base_domain"] == "example.com"
         assert extra["edx_version"] == "sumac"
-        assert extra["env_config"] == "single-server"
         # node_id defaults to the project name when not explicitly set
         assert extra["node_id"] == "testproject"
         assert extra["cli_ops_release_tag"] == "3.19.0"

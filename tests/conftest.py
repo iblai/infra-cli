@@ -123,7 +123,6 @@ def setup_config(tmp_path: Path) -> SetupConfig:
         target_host="54.123.45.67",
         base_domain="example.com",
         edx_version="sumac",
-        env_config="single-server",
         cli_ops_release_tag="3.19.0",
         aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
         aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",

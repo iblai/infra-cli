@@ -209,7 +209,6 @@ class TestPromptSetup:
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
         assert config.node_id == "test-node"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
         assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
@@ -243,7 +242,6 @@ class TestPromptSetup:
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
         assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
         assert config.enable_ai is True
@@ -270,7 +268,6 @@ class TestPromptSetup:
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
         assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
         assert config.git_access_token == "ghp_testtoken"

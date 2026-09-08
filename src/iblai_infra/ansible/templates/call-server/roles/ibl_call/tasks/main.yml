@@ -10,7 +10,6 @@
 #                         prepends "call." when generating the LiveKit WS URL, so
 #                         passing "call.stg1.iblai.org" yields wss://call.call.stg1…
 #                         Always pass the parent; let the CLI add the prefix.
-#   - env_config        — should be "call-only"
 #   - aws_*             — ECR auth for image pulls
 #   - git_access_token  — unused here but accepted for parity
 
@@ -56,7 +55,7 @@
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save --set BASE_DOMAIN='{{ base_domain }}'
+    ibl config set BASE_DOMAIN='{{ base_domain }}'
   args:
     executable: /bin/bash
   environment:
@@ -64,18 +63,38 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Configure environment profile (call-only)
+# The 5.x `call-only` environment preset is gone; a bare `ibl init`
+# (done in the ibl_cli_ops role) starts with every service off, and the
+# call server enables exactly the one it runs. Ordering matters: the
+# LiveKit API key/secret are generator-backed secrets gated on
+# RUN_LIVEKIT, so the toggle must be on before `ibl secrets generate`
+# fills them, and the render that writes the call templates comes last.
+- name: Enable LiveKit service
   become: false
-  # Single-quote the env_config arg to match the shell-quoting convention used by
-  # the single-server ibl_platform role. env_config is CLI-controlled, but we
-  # still don't want a stray space or shell metachar to change command semantics.
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config environment '{{ env_config | default("call-only") }}'
+    ibl services enable IBL_CALL.RUN_LIVEKIT
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Generate secrets and render call templates
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl secrets generate
+    ibl render
   args:
     executable: /bin/bash
   environment:

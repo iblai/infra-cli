@@ -216,7 +216,6 @@ class TestOptionalDefaults:
         config = build_setup_config_from_env(_required_env(), state=project_state)
         assert config.ssh_user == "ubuntu"
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
         # CLI_OPS_RELEASE_TAG unset -> resolved from the prod-images pin
         assert config.cli_ops_release_tag == "5.39.0"
         assert config.prod_images_tag == "main"

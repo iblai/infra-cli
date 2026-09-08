@@ -201,10 +201,18 @@ class AnsibleRunner:
         setup config carries secrets and is deliberately never persisted - so
         the server is the only source of truth for a `status` command.
 
-        Read-only: runs `ibl config printvalue` per key over SSH.
+        Read-only: runs `ibl config get --json` per key over SSH. The CLI
+        emits one JSON doc per line (JSONL), so the output parses
+        line-by-line; non-JSON noise lines are skipped. A value whose
+        `source` is "default" comes from the registry, not from the
+        operator, and reads back as "" - `status` must not present a stock
+        default (e.g. IBL_SMTP_HOST's sendgrid placeholder) as something
+        the operator configured.
         """
+        # `|| true` because `config get` exits 1 on a missing key and the
+        # ssh exit code is the last command's.
         script = "; ".join(
-            f'echo "{k}=$(ibl config printvalue {k} 2>/dev/null)"' for k in keys
+            f"ibl config get {k} --json 2>/dev/null || true" for k in keys
         )
         remote = (
             'export PYENV_ROOT="$HOME/.pyenv"; export PATH="$PYENV_ROOT/bin:$PATH"; '
@@ -237,12 +245,23 @@ class AnsibleRunner:
 
         values: dict[str, str] = {}
         for line in result.stdout.splitlines():
-            if "=" not in line:
+            line = line.strip()
+            if not line:
                 continue
-            key, _, raw = line.partition("=")
-            if key in keys:
-                # printvalue emits a Python repr for strings; strip the quotes.
-                values[key] = raw.strip().strip("'\"")
+            try:
+                data = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            key = data.get("key")
+            if key not in keys:
+                continue
+            if not data.get("found") or data.get("source") == "default":
+                values[key] = ""
+            else:
+                value = data.get("value")
+                values[key] = "" if value is None else str(value)
         return values
 
     def run_partial(

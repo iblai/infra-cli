@@ -220,12 +220,39 @@ class TestReadConfigValues:
 
         return AnsibleRunner(_state(), SetupConfig.for_feature(_state()))
 
-    def test_parses_and_unquotes(self):
+    def _stdout(self, *blobs: dict) -> str:
+        import json
+
+        # `ibl config get --json` emits one JSON doc per line (JSONL).
+        return "".join(f"{json.dumps(b)}\n" for b in blobs)
+
+    def test_parses_json_blobs(self):
         runner = self._runner()
-        out = MagicMock(returncode=0, stdout="IBL_SMTP_HOST='smtp.example.com'\nIBL_SMTP_PORT=587\n")
+        out = MagicMock(returncode=0, stdout=self._stdout(
+            {"key": "IBL_SMTP_HOST", "found": True, "value": "smtp.example.com", "source": "config"},
+            {"key": "IBL_SMTP_SYSTEM_PORT", "found": True, "value": 587, "source": "config"},
+        ))
         with patch("subprocess.run", return_value=out):
-            values = runner.read_config_values(["IBL_SMTP_HOST", "IBL_SMTP_PORT"])
-        assert values == {"IBL_SMTP_HOST": "smtp.example.com", "IBL_SMTP_PORT": "587"}
+            values = runner.read_config_values(["IBL_SMTP_HOST", "IBL_SMTP_SYSTEM_PORT"])
+        assert values == {"IBL_SMTP_HOST": "smtp.example.com", "IBL_SMTP_SYSTEM_PORT": "587"}
+
+    def test_registry_default_reads_as_unset(self):
+        """A registry default is not operator configuration - it must not make
+        `status` claim the feature is configured."""
+        runner = self._runner()
+        out = MagicMock(returncode=0, stdout=self._stdout(
+            {"key": "IBL_SMTP_HOST", "found": True, "value": "smtp.sendgrid.net", "source": "default"},
+        ))
+        with patch("subprocess.run", return_value=out):
+            assert runner.read_config_values(["IBL_SMTP_HOST"]) == {"IBL_SMTP_HOST": ""}
+
+    def test_missing_key_reads_as_unset(self):
+        runner = self._runner()
+        out = MagicMock(returncode=0, stdout=self._stdout(
+            {"key": "IBL_SMTP_HOST", "found": False, "value": None, "source": "default"},
+        ))
+        with patch("subprocess.run", return_value=out):
+            assert runner.read_config_values(["IBL_SMTP_HOST"]) == {"IBL_SMTP_HOST": ""}
 
     def test_unreachable_host_returns_none(self):
         runner = self._runner()
@@ -241,7 +268,19 @@ class TestReadConfigValues:
 
     def test_unrequested_keys_are_ignored(self):
         runner = self._runner()
-        out = MagicMock(returncode=0, stdout="IBL_SMTP_HOST='a'\nSOMETHING_ELSE='b'\n")
+        out = MagicMock(returncode=0, stdout=self._stdout(
+            {"key": "IBL_SMTP_HOST", "found": True, "value": "a", "source": "config"},
+            {"key": "SOMETHING_ELSE", "found": True, "value": "b", "source": "config"},
+        ))
+        with patch("subprocess.run", return_value=out):
+            assert runner.read_config_values(["IBL_SMTP_HOST"]) == {"IBL_SMTP_HOST": "a"}
+
+    def test_garbage_lines_are_skipped(self):
+        runner = self._runner()
+        stdout = "pyenv noise\n" + self._stdout(
+            {"key": "IBL_SMTP_HOST", "found": True, "value": "a", "source": "config"},
+        )
+        out = MagicMock(returncode=0, stdout=stdout)
         with patch("subprocess.run", return_value=out):
             assert runner.read_config_values(["IBL_SMTP_HOST"]) == {"IBL_SMTP_HOST": "a"}
 

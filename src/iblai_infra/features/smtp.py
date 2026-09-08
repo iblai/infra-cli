@@ -34,7 +34,9 @@ SMTP_TAGS = ["smtp"]
 SMTP_LABELS = {"smtp_config": "SMTP Config"}
 AFFECTED_SERVICES = "Data Manager and Open edX"
 
-STATUS_KEYS = ["IBL_SMTP_HOST", "IBL_SMTP_PORT", "IBL_SMTP_USER", "IBL_SMTP_SENDER_MAIL"]
+# The role writes IBL_SMTP_SYSTEM_PORT (the legacy IBL_SMTP_PORT is never
+# written and would read back as its registry default).
+STATUS_KEYS = ["IBL_SMTP_HOST", "IBL_SMTP_SYSTEM_PORT", "IBL_SMTP_USER", "IBL_SMTP_SENDER_MAIL"]
 
 
 @smtp_app.command("enable")

@@ -4,12 +4,12 @@
 # `--microsoft-sso-client-id` for launch).
 #
 # Two things get configured:
-#   1. `IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND` block in `/ibl/config.yml`
-#      — populated via direct Python yaml manipulation (the block has
-#      nested dicts + a list, which `ibl config save --set` cannot
-#      round-trip). After patching we run `ibl config save` to regenerate
-#      the LMS settings + compose files, then restart edX so the new
-#      Django settings actually take effect.
+#   1. The `IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND.*` leaf keys — written
+#      via a batched `ibl config set` (the registry registers each leaf
+#      individually; list/dict-typed leaves take JSON values). After
+#      writing we run `ibl render` to regenerate the LMS settings +
+#      compose files, then restart edX so the new Django settings
+#      actually take effect.
 #   2. An `OAuth2ProviderConfig` row on the LMS for the `azuread-oauth2`
 #      slug, with `backend_name` = `azuread-oauth2` (the standard Azure AD
 #      social-auth backend — must match the slug and the Azure-registered
@@ -20,10 +20,10 @@
 #      platform_key/backend_uri/logout_url JSON blob.
 #
 # Idempotency:
-#   - The config patch task only runs `ibl config save` + edX restart
-#     when the existing `IBL_EDX_BASE_OAUTH_SSO_BACKEND` block already
-#     differs from the desired values. Re-runs against an
-#     already-configured environment skip the heavy restart.
+#   - The config patch task compares every desired leaf against its
+#     resolved value (`ibl config get --json`) and only writes + marks
+#     changed when something differs, so re-runs against an
+#     already-configured environment skip the render + heavy edX restart.
 #   - The `OAuth2ProviderConfig` task uses `current(slug)` to check
 #     whether the latest revision already matches; only saves a new
 #     revision when something changed.
@@ -46,58 +46,10 @@
   delay: 10
   when: microsoft_sso_enabled | default(false) | bool
 
-- name: Patch /ibl/config.yml with IBL_EDX_BASE_OAUTH_SSO_BACKEND block
-  become: false
-  ansible.builtin.shell:
-    cmd: |
-      python3 <<'PY'
-      import yaml
-
-      PATH = "{{ ibl_root }}/config.yml"
-      PLATFORM_NAME = "{{ platform_name | default('main') }}"
-      TENANT_ID = "{{ microsoft_sso_tenant_id }}"
-      BASE_DOMAIN = "{{ base_domain }}"
-      # Azure AD requires the standard `azuread-oauth2` social-auth backend.
-      # It must equal the OAuth2ProviderConfig slug AND the registered redirect
-      # URI (/auth/complete/azuread-oauth2/). The old `<platform>-oauth2` value
-      # was not a real Azure backend, so SSO never completed.
-      BACKEND_NAME = "azuread-oauth2"
-
-      desired = {
-          "ENABLE_EDX_BASE_OAUTH_SSO_BACKEND": True,
-          "IBL_OAUTH_SSO_NAME": BACKEND_NAME,
-          "TRACKED_PROVIDERS": [BACKEND_NAME],
-          "IBL_OAUTH_SSO_OIDC_ENDPOINT": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0",
-          "IBL_OAUTH_SSO_JWKS_URI": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0/.well-known",
-          "IBL_OAUTH_USE_IDP_USERNAME": False,
-          "IBL_OAUTH_SSO_JWT_DECODE_OPTIONS": {"verify_nbf": False},
-          "SOCIAL_AUTH_REDIRECT_IS_HTTPS": True,
-          "IBL_OAUTH_SSO_USE_IDTOKEN_FIELDS": True,
-          "LEARNER_PORTAL_URL_ROOT": "https://mentor." + BASE_DOMAIN,
-      }
-
-      try:
-          with open(PATH) as f:
-              cfg = yaml.safe_load(f) or {}
-      except FileNotFoundError:
-          cfg = {}
-
-      current = cfg.get("IBL_EDX", {}).get("IBL_EDX_BASE_OAUTH_SSO_BACKEND")
-      if current == desired:
-          print("CONFIG_UNCHANGED")
-      else:
-          cfg.setdefault("IBL_EDX", {})["IBL_EDX_BASE_OAUTH_SSO_BACKEND"] = desired
-          with open(PATH, "w") as f:
-              yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
-          print("CONFIG_PATCHED")
-      PY
-    executable: /bin/bash
-  register: config_patch
-  changed_when: "'CONFIG_PATCHED' in (config_patch.stdout | default(''))"
-  no_log: true
-  when: microsoft_sso_enabled | default(false) | bool
-
-- name: Save platform config (regenerate LMS settings + compose files)
+# LEARNER_PORTAL_URL_ROOT (written under 5.x) is gone: the key is
+# neither registered nor consumed by any rendered template upstream, so
+# writing it would fail registry validation and would render nowhere.
+- name: Set IBL_EDX_BASE_OAUTH_SSO_BACKEND config keys
   become: false
   ansible.builtin.shell:
     cmd: |
@@ -105,7 +57,69 @@
       export PATH="$PYENV_ROOT/bin:$PATH"
       eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
       pyenv activate "{{ venv_name }}"
-      ibl config save
+      python3 - <<'PY'
+      import json
+      import subprocess
+
+      TENANT_ID = "{{ microsoft_sso_tenant_id }}"
+      # Azure AD requires the standard `azuread-oauth2` social-auth backend.
+      # It must equal the OAuth2ProviderConfig slug AND the registered redirect
+      # URI (/auth/complete/azuread-oauth2/). The old `<platform>-oauth2` value
+      # was not a real Azure backend, so SSO never completed.
+      BACKEND_NAME = "azuread-oauth2"
+      P = "IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND"
+
+      desired = {
+          f"{P}.ENABLE_EDX_BASE_OAUTH_SSO_BACKEND": True,
+          f"{P}.IBL_OAUTH_SSO_NAME": BACKEND_NAME,
+          f"{P}.TRACKED_PROVIDERS": [BACKEND_NAME],
+          f"{P}.IBL_OAUTH_SSO_OIDC_ENDPOINT": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0",
+          f"{P}.IBL_OAUTH_SSO_JWKS_URI": "https://login.microsoftonline.com/" + TENANT_ID + "/v2.0/.well-known",
+          f"{P}.IBL_OAUTH_USE_IDP_USERNAME": False,
+          f"{P}.IBL_OAUTH_SSO_JWT_DECODE_OPTIONS": {"verify_nbf": False},
+          f"{P}.SOCIAL_AUTH_REDIRECT_IS_HTTPS": True,
+          f"{P}.IBL_OAUTH_SSO_USE_IDTOKEN_FIELDS": True,
+      }
+
+      def resolved(key):
+          out = subprocess.run(
+              ["ibl", "config", "get", key, "--json"],
+              capture_output=True, text=True,
+          )
+          if out.returncode != 0:
+              return None
+          return json.loads(out.stdout).get("value")
+
+      if all(resolved(k) == v for k, v in desired.items()):
+          print("CONFIG_UNCHANGED")
+      else:
+          pairs = [
+              f"{k}={json.dumps(v) if isinstance(v, (list, dict)) else v}"
+              for k, v in desired.items()
+          ]
+          subprocess.run(["ibl", "config", "set", *pairs], check=True)
+          print("CONFIG_PATCHED")
+      PY
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: config_patch
+  changed_when: "'CONFIG_PATCHED' in (config_patch.stdout | default(''))"
+  no_log: true
+  when: microsoft_sso_enabled | default(false) | bool
+
+- name: Render platform config (regenerate LMS settings + compose files)
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl render
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
@@ -285,29 +299,33 @@
 #     `?next=...` that completes the OAuth dance back into the SPA's
 #     /login/complete callback. The inner client_id MUST be the same
 #     EDX_SSO_CLIENT_ID the ibl_spa role minted for the `spa-sso`
-#     Application — we read it from config.yml rather than re-deriving it.
+#     Application — we read it back via `ibl config get` rather than
+#     re-deriving it.
 #
 # Tenant ID: uses `microsoft_sso_tenant_id` when set; falls back to "common"
 # (multi-tenant) when blank. Same pattern as the existing logout_url in the
 # OAuth2ProviderConfig.other_settings JSON above.
 #
 # Idempotent: only marks `changed` (and triggers the downstream
-# `ibl config save` + SPA restart) when the resolved values differ from
-# what's already in config.yml.
+# `ibl render` + SPA restart) when the resolved values differ from
+# what's already configured.
 # ---------------------------------------------------------------------------
 
-- name: Patch IBL_SPA.AUTH with Microsoft SSO logout + direct-SSO URLs
+- name: Set IBL_SPA.AUTH Microsoft SSO logout + direct-SSO URLs
   become: false
   ansible.builtin.shell:
     cmd: |
-      python3 <<'PY'
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      python3 - <<'PY'
+      import json
+      import subprocess
       import sys
-      import yaml
       from urllib.parse import quote
 
-      PATH = "{{ ibl_root }}/config.yml"
       BASE_DOMAIN = "{{ base_domain }}"
-      PLATFORM_NAME = "{{ platform_name | default('main') }}"
       TENANT_ID = "{{ microsoft_sso_tenant_id }}".strip() or "common"
       # Azure AD requires the standard `azuread-oauth2` social-auth backend.
       # It must equal the OAuth2ProviderConfig slug AND the registered redirect
@@ -315,16 +333,13 @@
       # was not a real Azure backend, so SSO never completed.
       BACKEND_NAME = "azuread-oauth2"
 
-      with open(PATH) as f:
-          cfg = yaml.safe_load(f) or {}
-
-      spa = cfg.setdefault("IBL_SPA", {})
-      auth = spa.setdefault("AUTH", {})
-
-      spa_sso_client_id = (spa.get("EDX_SSO_CLIENT_ID") or "").strip()
+      cid = subprocess.run(
+          ["ibl", "config", "get", "IBL_SPA.EDX_SSO_CLIENT_ID"],
+          capture_output=True, text=True,
+      )
+      spa_sso_client_id = cid.stdout.strip() if cid.returncode == 0 else ""
       if not spa_sso_client_id:
-          print("ERROR: IBL_SPA.EDX_SSO_CLIENT_ID is empty — ibl_spa role must run first")
-          sys.exit(1)
+          sys.exit("ERROR: IBL_SPA.EDX_SSO_CLIENT_ID is empty - ibl_spa role must run first")
 
       external_logout = (
           "https://login.microsoftonline.com/" + TENANT_ID +
@@ -347,24 +362,39 @@
       )
 
       desired = {
-          "EXTERNAL_IDP_LOGOUT_URL": external_logout,
-          "IBL_DIRECT_SSO_URL": direct_sso,
+          "IBL_SPA.AUTH.EXTERNAL_IDP_LOGOUT_URL": external_logout,
+          "IBL_SPA.AUTH.IBL_DIRECT_SSO_URL": direct_sso,
       }
-      current = {k: auth.get(k) for k in desired}
-      if current == desired:
+
+      def resolved(key):
+          out = subprocess.run(
+              ["ibl", "config", "get", key, "--json"],
+              capture_output=True, text=True,
+          )
+          if out.returncode != 0:
+              return None
+          return json.loads(out.stdout).get("value")
+
+      if all(resolved(k) == v for k, v in desired.items()):
           print("SPA_AUTH_UNCHANGED")
       else:
-          auth.update(desired)
-          with open(PATH, "w") as f:
-              yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
+          subprocess.run(
+              ["ibl", "config", "set", *[f"{k}={v}" for k, v in desired.items()]],
+              check=True,
+          )
           print("SPA_AUTH_PATCHED")
       PY
     executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   register: spa_auth_patch
   changed_when: "'SPA_AUTH_PATCHED' in (spa_auth_patch.stdout | default(''))"
   when: microsoft_sso_enabled | default(false) | bool
 
-- name: Save platform config (regenerate SPA env files)
+- name: Render platform config (regenerate SPA env files)
   become: false
   ansible.builtin.shell:
     cmd: |
@@ -372,7 +402,7 @@
       export PATH="$PYENV_ROOT/bin:$PATH"
       eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
       pyenv activate "{{ venv_name }}"
-      ibl config save
+      ibl render
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:

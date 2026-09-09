@@ -131,9 +131,10 @@ with native-typed values). The `ibl_spa` deploy loop enumerates
 convention (`RUN_<NAME>_SPA` ↔ `<NAME>.PORT` ↔ `app/ibl-spa/<name>/`)
 with loud failures.
 
-**Remaining upstream:** the release tag only — version is cut as **7.1.0**
-(`ibl/__about__.py`, changelog) but the newest pushed tag is still 7.0.0;
-pin the 7.1.0 tag once pushed. (Local-env note for anyone re-validating:
+**Remaining upstream:** the release tag only. Upstream has since moved to
+**7.6.0** (single-line `--json` output for secrets check / config get /
+services list landed along the way); the version floor stays ≥7.0.0 —
+pin whatever ≥7.1.0 tag is current at release. (Local-env note for anyone re-validating:
 `ibl render` shells out to `tutor` by name — the venv's bin dir must be on
 `PATH`, which the playbook's pyenv-activate blocks already guarantee.)
 

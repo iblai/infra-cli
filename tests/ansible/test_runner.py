@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import CLI_OPS_TEST_TAG
+
 from iblai_infra.ansible.runner import (
     CALL_ROLE_LABELS,
     LAUNCH_ROLE_LABELS,
@@ -310,7 +312,7 @@ class TestBuildExtraVars:
         assert extra["edx_version"] == "sumac"
         # node_id defaults to the project name when not explicitly set
         assert extra["node_id"] == "testproject"
-        assert extra["cli_ops_release_tag"] == "3.19.0"
+        assert extra["cli_ops_release_tag"] == CLI_OPS_TEST_TAG
         assert extra["is_resetup"] is False
         assert extra["enable_ai"] is True
         # SMTP fields default to disabled / empty when SetupConfig isn't given them
@@ -349,7 +351,7 @@ class TestBuildExtraVars:
 
         extra = runner._build_extra_vars()
         assert extra["is_resetup"] is True
-        assert extra["cli_ops_release_tag"] == "3.19.0"
+        assert extra["cli_ops_release_tag"] == CLI_OPS_TEST_TAG
 
     def test_explicit_node_id_wins(self, project_state, setup_config):
         runner = AnsibleRunner.__new__(AnsibleRunner)

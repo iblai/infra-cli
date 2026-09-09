@@ -14,6 +14,8 @@ from unittest.mock import patch
 import pytest
 import typer
 
+from tests.conftest import CLI_OPS_TEST_TAG
+
 from iblai_infra.env_setup import (
     build_bootstrap_state_from_env,
     build_setup_config_from_env,
@@ -72,7 +74,7 @@ def _pin_resolver():
     prod-images pin over the network. Stub it for determinism/offline."""
     with patch(
         "iblai_infra.env_setup.resolve_pinned_cli_ops_tag",
-        return_value="5.39.0",
+        return_value=CLI_OPS_TEST_TAG,
     ) as m:
         yield m
 
@@ -217,7 +219,7 @@ class TestOptionalDefaults:
         assert config.ssh_user == "ubuntu"
         assert config.edx_version == "sumac"
         # CLI_OPS_RELEASE_TAG unset -> resolved from the prod-images pin
-        assert config.cli_ops_release_tag == "5.39.0"
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG
         assert config.prod_images_tag == "main"
         assert config.enable_ai is True
         assert config.create_playwright_platforms is False
@@ -402,7 +404,7 @@ class TestCliOpsTagResolution:
         config = build_setup_config_from_env(
             _required_env(PROD_IMAGES_TAG="1.64.0"), state=project_state
         )
-        assert config.cli_ops_release_tag == "5.39.0"
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG
         _pin_resolver.assert_called_once_with(
             "test-pat-value", "iblai", "iblai-prod-images", "1.64.0", subdir=None
         )

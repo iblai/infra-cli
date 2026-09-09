@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import CLI_OPS_TEST_TAG
+
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
@@ -36,7 +38,7 @@ def _pin_resolver():
     test; tests can assert on / override the resolved value via this mock."""
     with mock.patch(
         "iblai_infra.prompts.setup.resolve_pinned_cli_ops_tag",
-        return_value="5.39.0",
+        return_value=CLI_OPS_TEST_TAG,
     ) as m:
         yield m
 
@@ -211,7 +213,7 @@ class TestPromptSetup:
         assert config.edx_version == "sumac"
         assert config.node_id == "test-node"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.enable_ai is True
         assert config.smtp_enabled is False
         assert config.aws_access_key_id == "AKIA"
@@ -243,7 +245,7 @@ class TestPromptSetup:
 
         assert config.edx_version == "sumac"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.enable_ai is True
         assert config.aws_access_key_id == "NEW_ACCESS_KEY"
         assert config.aws_secret_access_key == "NEW_SECRET"
@@ -269,7 +271,7 @@ class TestPromptSetup:
 
         assert config.edx_version == "sumac"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.git_access_token == "ghp_testtoken"
 
     def test_ssh_key_not_found_prompts(self, tmp_path):
@@ -662,7 +664,7 @@ class TestPromptResetup:
         assert config.is_resetup is True
         assert config.base_domain == "new.example.com"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.target_host == "54.1.2.3"
         assert config.aws_access_key_id == "AKIA"
         assert config.aws_secret_access_key == "SECRET"
@@ -813,7 +815,7 @@ class TestResolveCliOpsReleaseTag:
         from iblai_infra.prompts.setup import _resolve_cli_ops_release_tag
 
         tag = _resolve_cli_ops_release_tag(self.CRED, "1.64.0")
-        assert tag == "5.39.0"
+        assert tag == CLI_OPS_TEST_TAG
         _pin_resolver.assert_called_once_with(
             "ghp_x", "iblai", "iblai-prod-images", "1.64.0", subdir=None
         )

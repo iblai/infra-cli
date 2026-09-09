@@ -49,7 +49,7 @@ The **right-hand side** of each volume (the in-container path) depends on the Tu
 Before picking between the Sumac (§3) and Olive (§4) override, confirm the release running on the host:
 
 ```bash
-ibl config printvalue IBL_EDX.VERSION
+ibl config get IBL_EDX.VERSION
 ```
 
 Prints either `sumac` or `olive` — that decides which section applies. Use the Sumac block for `sumac`, the Olive block for `olive`. The mount paths are not interchangeable.

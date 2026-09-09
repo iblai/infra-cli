@@ -151,7 +151,7 @@ SMTP, SSO, Stripe, the LLM key and extra tenants are all skippable at setup and 
 - It reads server state first via `AnsibleRunner.run_remote_script()` to build the source picker and allocate a free port from 5060; the stock SPAs hold 5000-5009.
 The clone copies the source's *rendered* `.env` rather than re-rendering from config, then rewrites `PORT` — written, not substituted, since older deployments have no `PORT` line, and a missing one leaves the clone listening on the source's port while compose publishes another. Its nginx block goes in `/etc/nginx/conf.d/custom_domains/`, which `reverse_proxy_task.py` excludes from the proxy sync, so it survives `ibl global-proxy`; the stock `nginx.conf` include isn't recursive, so that subdirectory's include is added idempotently.
 
-`status` currently exists only for `smtp`; it reads values back off the server via `AnsibleRunner.read_config_values()` (`ibl config printvalue` over SSH), because `SetupConfig` carries secrets and is never persisted, so there is no local source of truth.
+`status` currently exists only for `smtp`; it reads values back off the server via `AnsibleRunner.read_config_values()` (`ibl config get --json` per key over SSH, parsed as JSONL), because `SetupConfig` carries secrets and is never persisted, so there is no local source of truth. A value whose `source` is `default` reads back as empty — registry defaults are not operator configuration, and `status` must not present them as such.
 
 ### DNS Verification
 
@@ -183,16 +183,15 @@ Returns `SetupConfig` with `is_resetup=True`. Does **not** prompt for image tags
 **What `is_resetup=True` triggers in Ansible** (`ibl_platform/tasks/main.yml`):
 1. Restore postgres data dir ownership (uid 999) → restart postgres → wait for ready
 2. Capture current MySQL root password
-3. `ibl config rotate-secrets -f --include-auth` — regenerate all secrets
-4. Sync new postgres password (`ALTER USER` from config.yml)
+3. `ibl secrets rotate --all-generated -y` — regenerate every gate-active generator-backed secret
+4. Sync new postgres password (`ALTER USER` from `ibl config get`)
 5. Sync new MySQL passwords (root + openedx users, using old→new password)
 
 All other tasks (domain config, proxy, ECR login, edX settings) run unconditionally.
 
 **Domain update flow** — when `resetup` changes the base domain:
-- `config.yml`: `BASE_DOMAIN` updated via `ibl config save`
-- `auth.yml`: OAuth/OIDC redirect URIs rewritten by the `integrations` role
-- Nginx proxy: `ibl global-proxy launch-without-security` regenerates all server_name directives
+- `config.yml`: `BASE_DOMAIN` updated via `ibl config set` + explicit `ibl render`
+- Nginx proxy: `ibl global-proxy launch-without-security` regenerates all server_name directives (reads rendered output — the render must precede it)
 - DB registrations: `integrations` re-creates oauth/oidc clients with new domain URLs
 
 ### Launch Command
@@ -371,12 +370,14 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - DM postgres tasks read `$POSTGRES_USER` and `$POSTGRES_DB` from container env (not hardcoded)
 - DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
 - The finalization work is split across three roles (it used to live in one `final_steps` role, since removed):
-  - `integrations`: config save, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, edx sync-with-manager
+  - `integrations`: render, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, edx sync-with-manager
   - `admin_setup`: configure OpenAI credential (if provided), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform
   - `data_seeding`: seed flows/llm-registry/base-mentors/tools/rbac-data, demo course, magic-link email templates, name backfill, TimescaleDB + analytics views
 - Django `JSONField` values must be passed as dicts, not `json.dumps()` strings — auto-serialization handles encoding
-- SPA boolean config values (`ENABLE_RBAC`, `STRIPE_ENABLED`, etc.) must be written as quoted strings (`'true'`/`'false'`) via Python yaml — `ibl config save --set` cannot handle quoted string values
-- `ibl-edx-uwsgi` plugin and other list-type config values must be manipulated via Python yaml, not `ibl config save --set` — the CLI's `printvalue` returns Python list repr that can't be round-tripped
+- Config writes go through `ibl config set` (multi-pair, all-or-nothing, registry-validated) followed by an explicit `ibl render` — nothing renders implicitly under the 6.x model. "Quoted boolean" SPA values are str-typed registry keys, so `'true'`/`'false'` store exactly; genuinely bool/int-typed keys coerce
+- List/dict-typed keys (`IBL_EDX.PLUGINS`, CSRF-exempt URLs) take JSON values; appends are read-modify-write via `ibl config get K --json` piped to python3, never PyYAML file surgery
+- Secret writes go through `ibl secrets set` (prefer `--from-env` — argv is visible in `ps`); writing a secret key via `config set`, or any unregistered key, is a hard error
+- Shell-form `ibl config get` captures must be rc-guarded (`VAL=$(ibl config get K) || exit 1`): an unset secret resolves to its enforced `""` default with rc 0, while a nonzero rc means registry drift — and the not-found notice prints to stdout, so never consume stdout from a failed get
 
 ### IAM Permission Checks
 
@@ -436,7 +437,7 @@ Three Terraform topologies selected via `DeploymentType` enum:
   - Always open: TCP 22 (SSH, `vpn_ip/32`), TCP 80/443, TCP 7880 (API/WS), TCP 7881 (ICE-TCP), UDP 7882 (ICE mux), UDP 50000-60000 (ICE host), TCP 5349 (TURN/TLS), UDP 3478 (TURN/STUN)
   - SIP stack (opened only when `enable_sip=true`): TCP+UDP 5060, TCP 5061, UDP 10000-20000 (RTP)
 - Ansible: `docker` + `awscli` + `python` + `ibl_cli_ops` + `ibl_call` (5 roles). Skips `ibl_platform`, `ibl_dm`, `ibl_edx`, `ibl_spa`, `integrations`, `admin_setup`, `data_seeding` — LiveKit is standalone.
-- `ibl_call` role runs: persist `IBL_ROOT=/ibl/` in `~/.bashrc` → `ibl config save --set BASE_DOMAIN=…` → `ibl config environment call-only` → ECR login → `ibl call up` → wait for `:7880` → `ibl call show-call-secrets` (printed to operator terminal, never persisted locally). **Use `ibl call up`, not `ibl call start`** — `start` in `iblai-cli-ops ≤ 5.8.1` passes `--remove-orphans` to a `docker compose` subcommand that Docker Compose v5 rejects.
+- `ibl_call` role runs: persist `IBL_ROOT`/`NODE_ID` in `~/.bashrc` → `ibl config set BASE_DOMAIN=…` → `ibl services enable IBL_CALL.RUN_LIVEKIT` → `ibl secrets generate` + `ibl render` (the LiveKit key/secret are generator-backed, gated on the toggle — enable must precede generate) → ECR login → `ibl call up` → wait for `:7880` → `ibl call show-call-secrets` (printed to operator terminal, never persisted locally; under 6.x the values exist in `secrets.yml` pre-boot). **Use `ibl call up`, not `ibl call start`** — `start` in `iblai-cli-ops ≤ 5.8.1` passes `--remove-orphans` to a `docker compose` subcommand that Docker Compose v5 rejects.
 - **BASE_DOMAIN convention:** pass the **parent** domain (e.g. `stg1.iblai.org`), NOT `call.stg1.iblai.org`. `ibl call` auto-prepends `call.` when generating `LIVEKIT_WS_URL`, so the doubled form produces `wss://call.call.stg1.iblai.org`. Provision prompt asks for "Call server base domain" and shows the WS URL that will be generated.
 
 **Open source safety:** Templates contain zero hardcoded IPs, SSH keys, account IDs, or secrets. DB passwords and Redis auth tokens are generated at runtime via `generate_password()`, passed through `terraform.tfvars` (in `~/.iblai-infra/` workspace, not in the repo), and excluded from `state.json` serialization via `Field(exclude=True)`. LiveKit API key + secret are generated by `ibl call start` on the server and printed to the operator via Ansible `debug` — they never hit the local machine.

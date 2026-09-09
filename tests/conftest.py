@@ -31,6 +31,13 @@ from iblai_infra.models import (
 )
 
 
+
+# The iblai-cli-ops tag test fixtures pretend was pinned/resolved. Arbitrary
+# but kept realistic (>= the 7.0.0 floor the ansible role enforces).
+# Production never hardcodes a version - the tag is resolved at runtime from
+# the prod-images [tool.uv.sources] pin.
+CLI_OPS_TEST_TAG = "7.7.0"
+
 @pytest.fixture
 def aws_credentials() -> AWSCredentials:
     return AWSCredentials(
@@ -123,7 +130,7 @@ def setup_config(tmp_path: Path) -> SetupConfig:
         target_host="54.123.45.67",
         base_domain="example.com",
         edx_version="sumac",
-        cli_ops_release_tag="3.19.0",
+        cli_ops_release_tag=CLI_OPS_TEST_TAG,
         aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
         aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         aws_default_region="us-east-1",
@@ -141,7 +148,7 @@ def resetup_config(tmp_path: Path) -> SetupConfig:
         ssh_user="ubuntu",
         target_host="54.123.45.67",
         base_domain="newdomain.com",
-        cli_ops_release_tag="3.19.0",
+        cli_ops_release_tag=CLI_OPS_TEST_TAG,
         is_resetup=True,
         aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
         aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",

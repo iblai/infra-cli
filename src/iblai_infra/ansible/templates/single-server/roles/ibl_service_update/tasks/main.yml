@@ -35,26 +35,27 @@
 # invalidate encrypted data in the DB).
 # ---------------------------------------------------------------------------
 
-- name: Read current IBL_FERNET_KEY from config.yml
+# An unset secret resolves to its enforced "" default (rc 0) - that is
+# the "needs rotation" signal below. A nonzero rc can only mean the key
+# is unregistered (registry drift) or the CLI broke, so fail loudly
+# instead of defaulting: `|| exit 1` also stops the not-found notice
+# (printed to stdout) from being mistaken for a real key.
+- name: Read current IBL_FERNET_KEY
   become: false
   shell: |
-    python3 -c "
-    import yaml
-    try:
-        with open('{{ ibl_root }}/config.yml') as f:
-            cfg = yaml.safe_load(f) or {}
-    except FileNotFoundError:
-        print('')
-    else:
-        key = (
-            cfg.get('IBL_EDX', {})
-               .get('IBL_EDX_SSO_BACKEND_APP', {})
-               .get('IBL_FERNET_KEY', '') or ''
-        )
-        print(key.strip())
-    "
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    FERNET_KEY=$(ibl config get IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_FERNET_KEY) || exit 1
+    echo "$FERNET_KEY"
   args:
     executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   register: current_fernet_key
   changed_when: false
   no_log: true
@@ -67,14 +68,8 @@
         ['', 'BAD_FERNET_KEY', '1vCbtt_ffQ2BWc5-msIEeSBXTYNYDErBcSwPqoSjKuI=']
       }}
 
-- name: Ensure backups dir exists (rotate-secrets requires it)
-  file:
-    path: "{{ ibl_root }}/app/backups"
-    state: directory
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
-    mode: "0755"
-  when: fernet_needs_rotation | bool
+# No backups-dir precondition needed: `ibl secrets rotate` mkdirs its
+# backup dir itself and no-ops the backup when secrets.yml doesn't exist.
 
 - name: Rotate placeholder IBL_FERNET_KEY
   become: false
@@ -83,7 +78,7 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config rotate-secrets -f --only IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_FERNET_KEY
+    ibl secrets rotate IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_FERNET_KEY -y
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -105,55 +100,32 @@
       }}
 
 # IBL_EDX.IBL_EDX_SSO_BACKEND_APP needs CORS whitelist + CSRF-exempt URLs
-# alongside IBL_FERNET_KEY. List values can't be round-tripped via
-# `ibl config save --set`, so we edit config.yml in PyYAML and let the
-# next `Save platform config` step re-render. Done in both staging and
-# runtime to avoid drift (skill §7.5). Idempotent: ENABLE_CORS_ORIGIN_WHITELIST
-# unconditionally true; IBL_CSRF_EXEMPT_URLS merges with whatever's there.
-- name: Configure SSO backend app — CORS whitelist + CSRF-exempt URLs
-  become: false
-  shell: |
-    python3 -c "
-    import yaml
-    TARGET_URLS = ['/courses', '/event', '/api/mfe_context']
-    files = [
-        '/home/{{ ansible_user }}/.local/share/ibl/config.yml',
-        '{{ ibl_root }}/config.yml',
-    ]
-    for path in files:
-        try:
-            with open(path) as f:
-                cfg = yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            continue
-        sso = cfg.setdefault('IBL_EDX', {}).setdefault('IBL_EDX_SSO_BACKEND_APP', {})
-        sso['ENABLE_CORS_ORIGIN_WHITELIST'] = True
-        existing = sso.get('IBL_CSRF_EXEMPT_URLS') or []
-        if not isinstance(existing, list):
-            existing = []
-        sso['IBL_CSRF_EXEMPT_URLS'] = list(dict.fromkeys(existing + TARGET_URLS))
-        with open(path, 'w') as f:
-            yaml.safe_dump(cfg, f, default_flow_style=False, sort_keys=False)
-        print('updated', path)
-    "
-  args:
-    executable: /bin/bash
-
-# ---------------------------------------------------------------------------
-# Config save (regenerate all compose files with latest prod-images)
-#
-# Runs AFTER fernet guard + SSO backend config so the re-rendered settings
-# pick up everything.
-# ---------------------------------------------------------------------------
-
-- name: Save platform config
+# alongside IBL_FERNET_KEY. The list append is read-modify-write:
+# `ibl config get --json` for the current value (preserve operator-added
+# URLs), merge + dedupe in python, write back as a JSON list. Single
+# config file now; the old staging-vs-runtime dual write is gone.
+- name: Configure SSO backend app - CORS whitelist + CSRF-exempt URLs
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save
+    MERGED=$(ibl config get IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_CSRF_EXEMPT_URLS --json | python3 -c "
+    import json, sys
+    target = ['/courses', '/event', '/api/mfe_context']
+    try:
+        data = json.load(sys.stdin)
+        existing = data.get('value') if data.get('found') else []
+    except Exception:
+        existing = []
+    if not isinstance(existing, list):
+        existing = []
+    print(json.dumps(list(dict.fromkeys(existing + target))))
+    ")
+    ibl config set \
+      'IBL_EDX.IBL_EDX_SSO_BACKEND_APP.ENABLE_CORS_ORIGIN_WHITELIST=true' \
+      "IBL_EDX.IBL_EDX_SSO_BACKEND_APP.IBL_CSRF_EXEMPT_URLS=$MERGED"
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -162,14 +134,22 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Save edX tutor config
+# ---------------------------------------------------------------------------
+# Render (regenerate all compose files with latest prod-images)
+#
+# Runs AFTER fernet guard + SSO backend config so the rendered settings
+# pick up everything. The 5.x `ibl tutor config save` step is folded into
+# `ibl render`.
+# ---------------------------------------------------------------------------
+
+- name: Render platform config
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl tutor config save
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -501,27 +481,28 @@
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
 
-    # Read SSO client credentials from LMS database (source of truth)
-    # Use grep with a unique marker to avoid Django startup noise
-    SSO_CREDS=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
+    # Read the SSO client id from the LMS database (source of truth).
+    # Only the id: IBL_SPA.EDX_SSO_CLIENT_SECRET was dropped from the 6.x
+    # registry (nothing renders it - spa-sso is a public authorization-code
+    # client, enforced by the task above, and public clients have no
+    # usable secret), so it is neither read nor written here.
+    # Use grep with a unique marker to avoid Django startup noise.
+    SSO_CLIENT_ID=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
     from oauth2_provider.models import Application
     try:
         app = Application.objects.get(name='spa-sso')
-        print('SSO_RESULT:' + app.client_id + '|' + app.client_secret)
+        print('SSO_RESULT:' + app.client_id)
     except Application.DoesNotExist:
         print('SSO_RESULT:MISSING')
     " 2>/dev/null | grep '^SSO_RESULT:' | sed 's/^SSO_RESULT://')
 
-    if [ -z "$SSO_CREDS" ] || [ "$SSO_CREDS" = "MISSING" ]; then
+    if [ -z "$SSO_CLIENT_ID" ] || [ "$SSO_CLIENT_ID" = "MISSING" ]; then
       echo "No spa-sso app in LMS, skipping"
     else
-      IFS='|' read SSO_CLIENT_ID SSO_CLIENT_SECRET <<< "$SSO_CREDS"
       echo "SSO client_id: ${SSO_CLIENT_ID:0:15}..."
-      echo "SSO secret: ${SSO_CLIENT_SECRET:0:10}..."
 
       # Write back to config so Auth SPA env.js picks it up
-      ibl config save --set "IBL_SPA.EDX_SSO_CLIENT_ID=$SSO_CLIENT_ID" 2>/dev/null
-      ibl config save --set "IBL_SPA.EDX_SSO_CLIENT_SECRET=$SSO_CLIENT_SECRET" 2>/dev/null
+      ibl config set "IBL_SPA.EDX_SSO_CLIENT_ID=$SSO_CLIENT_ID" 2>/dev/null
 
       # Also read ibl_web client ID
       IBL_WEB_ID=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
@@ -534,12 +515,12 @@
       " 2>/dev/null | grep '^WEB_RESULT:' | sed 's/^WEB_RESULT://')
 
       if [ -n "$IBL_WEB_ID" ]; then
-        ibl config save --set "IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID=$IBL_WEB_ID" 2>/dev/null
+        ibl config set "IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID=$IBL_WEB_ID" 2>/dev/null
         echo "ibl_web client_id: ${IBL_WEB_ID:0:15}..."
       fi
 
-      # Regenerate config with SSO creds and restart Auth SPA
-      ibl config save 2>/dev/null
+      # Re-render with the SSO client ids and restart the Auth SPA
+      ibl render 2>/dev/null
       cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down 2>/dev/null; docker compose up -d
       echo "Auth SPA restarted with synced SSO credentials"
     fi
@@ -609,12 +590,24 @@
 # Smoke test: verify SSO login + DM API + Mentor chat before handing off
 # ---------------------------------------------------------------------------
 
+# The 6.x rendered ibl-dm-pro tree no longer contains a config.yml
+# (compose + env templates only) - read the resolved value from the
+# config system instead of grepping rendered output.
 - name: "Smoke test - get base domain from config"
   become: false
   shell: |
-    grep -E '^BASE_DOMAIN' {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/config.yml | head -1 | awk '{print $2}' | tr -d "\"'"
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config get BASE_DOMAIN
   args:
     executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   register: base_domain_result
 
 - name: "Smoke test - set domain fact"

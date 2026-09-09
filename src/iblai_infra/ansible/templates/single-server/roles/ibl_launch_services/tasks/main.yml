@@ -26,7 +26,7 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl dm update
+    ibl render && ibl dm update
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -77,14 +77,14 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
 
-- name: Save config and tutor config for edX
+- name: Render config for edX
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl tutor config save
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -124,30 +124,20 @@
 # ---------------------------------------------------------------------------
 # SPA config — flip stripe / advertising off by default (override the
 # values baked into the AMI's config.yml). Matches the fresh-install
-# defaults set in `ibl_spa`. Direct yaml patch because `ibl config save
-# --set` cannot round-trip quoted-string booleans.
+# defaults set in `ibl_spa`; both keys are str-typed in the registry, so
+# `ibl config set` stores the exact 'false' strings.
 # ---------------------------------------------------------------------------
 
-- name: Set SPA quoted boolean defaults in config.yml
+- name: Set SPA boolean defaults
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    python3 -c "
-    import yaml
-    config_path = '{{ ibl_root }}/config.yml'
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f) or {}
-    spa = cfg.setdefault('IBL_SPA', {})
-    mentor = spa.setdefault('MENTOR', {})
-    mentor['STRIPE_ENABLED'] = 'false'
-    mentor['ENABLE_ADVERTISING'] = 'false'
-    with open(config_path, 'w') as f:
-        yaml.dump(cfg, f, default_flow_style=False)
-    print('SPA boolean config values set')
-    "
+    ibl config set \
+      'IBL_SPA.MENTOR.STRIPE_ENABLED=false' \
+      'IBL_SPA.MENTOR.ENABLE_ADVERTISING=false'
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -156,14 +146,14 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
-- name: Re-render templates with SPA config defaults
+- name: Render templates with SPA config defaults
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
@@ -252,14 +242,14 @@
 # Proxy reload
 # ---------------------------------------------------------------------------
 
-- name: Save config and reload proxy
+- name: Render config and reload proxy
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl global-proxy reload
+    ibl render && ibl global-proxy reload
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"

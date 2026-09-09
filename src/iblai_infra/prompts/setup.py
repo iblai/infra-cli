@@ -555,8 +555,8 @@ def _prompt_microsoft_sso_config() -> dict:
     short_name. The role then writes a Django `OAuth2ProviderConfig` row
     on the LMS for the `azuread-oauth2` slug (with `backend_name` derived
     from the operator's `platform_name`) AND patches
-    `IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND` in `/ibl/config.yml`. After
-    config save the role restarts edX so the new Django settings take
+    the `IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND` config keys. After
+    rendering, the role restarts edX so the new Django settings take
     effect. Client secret is collected via `questionary.password` (no
     echo); none of these values are persisted locally — they ride
     extra_vars to ansible at run time only.

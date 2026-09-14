@@ -131,10 +131,13 @@ with native-typed values). The `ibl_spa` deploy loop enumerates
 convention (`RUN_<NAME>_SPA` ↔ `<NAME>.PORT` ↔ `app/ibl-spa/<name>/`)
 with loud failures.
 
-**Remaining upstream:** the release tag only. Upstream has since moved to
-**7.6.0** (single-line `--json` output for secrets check / config get /
-services list landed along the way); the version floor stays ≥7.0.0 —
-pin whatever ≥7.1.0 tag is current at release. (Local-env note for anyone re-validating:
+**Release pair RESOLVED:** **prod-images 1.221.0**, whose
+`[tool.uv.sources]` pins **ibl-cli-ops 7.9.0** (verified 2026-09-14 via
+the GitHub contents API) — clears the ≥7.0.0 floor. Validation and the
+cutover use `PROD_IMAGES_TAG=1.221.0` / `--prod-images-tag 1.221.0`; the
+cli-ops tag resolves from the pin as usual. (Along the way upstream also
+landed single-line `--json` output for secrets check / config get /
+services list.) (Local-env note for anyone re-validating:
 `ibl render` shells out to `tutor` by name — the venv's bin dir must be on
 `PATH`, which the playbook's pyenv-activate blocks already guarantee.)
 

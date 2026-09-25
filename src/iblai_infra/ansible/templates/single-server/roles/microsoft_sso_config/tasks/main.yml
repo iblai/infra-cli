@@ -413,20 +413,26 @@
     - microsoft_sso_enabled | default(false) | bool
     - spa_auth_patch.changed | default(false)
 
-# `docker compose down && up -d` (not `restart`) because compose only
-# re-reads the env file at container creation time. The Auth SPA owns the
-# IBL_DIRECT_SSO_URL / EXTERNAL_IDP_LOGOUT_URL renders directly; the Mentor
-# SPA reuses the same AUTH block for its login deep link.
+# Recreate (compose re-reads the env file only at container creation) the
+# Auth SPA, which renders IBL_DIRECT_SSO_URL / EXTERNAL_IDP_LOGOUT_URL, and
+# the mentor-derived SPA that reuses the AUTH block for its login deep link.
+# `ibl spa restart` skips SPAs whose RUN_<NAME>_SPA is off and pairs mentor
+# with os, so this covers servers running either.
 - name: Restart Auth + Mentor SPAs to pick up new IBL_SPA.AUTH values
   become: false
   ansible.builtin.shell:
     cmd: |
-      set -e
-      cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down && docker compose up -d
-      cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose down && docker compose up -d
+      export PYENV_ROOT="{{ pyenv_root }}"
+      export PATH="$PYENV_ROOT/bin:$PATH"
+      eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+      pyenv activate "{{ venv_name }}"
+      ibl spa restart auth mentor
     executable: /bin/bash
+    chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   when:
     - microsoft_sso_enabled | default(false) | bool
     - spa_auth_patch.changed | default(false)

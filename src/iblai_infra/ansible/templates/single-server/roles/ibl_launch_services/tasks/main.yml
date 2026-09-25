@@ -166,77 +166,36 @@
 # SPA restart
 # ---------------------------------------------------------------------------
 
-- name: Restart Auth SPA
+- name: Discover enabled SPAs
+  ansible.builtin.import_role:
+    name: ibl_spa
+    tasks_from: discover
+
+- name: Restart enabled SPAs
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose pull && docker compose down && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/{{ item.name }}/ && docker compose pull && docker compose down && docker compose up -d
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+  loop: "{{ enabled_spas }}"
   retries: 2
   delay: 5
 
-- name: Wait for Auth SPA to be ready
-  # 30 × 15s = 450s. The SPA image runs `pnpm install` on first boot
-  # before Next.js starts, which can push cold-start past the older
-  # 150s budget on slower hosts. See ibl_spa role for the long-form
-  # comment.
+# 30 x 15s per SPA - the SPA image runs `pnpm install` on first boot before
+# Next.js starts (see ibl_spa). All were restarted above, so the waits overlap.
+- name: Wait for enabled SPAs to be ready
   become: false
   shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ 2>/dev/null | grep -qE '^(200|301|302)$'
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:{{ item.port }}/ 2>/dev/null | grep -qE '^(200|301|302)$'
   args:
     executable: /bin/bash
-  register: auth_health
-  until: auth_health.rc == 0
+  register: spa_health
+  until: spa_health.rc == 0
   retries: 30
   delay: 15
-
-- name: Restart Mentor SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose pull && docker compose down && docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-  retries: 2
-  delay: 5
-
-- name: Wait for Mentor SPA to be ready
-  # 450s cold-start budget — same rationale as the Auth SPA wait above.
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: mentor_health
-  until: mentor_health.rc == 0
-  retries: 30
-  delay: 15
-
-- name: Restart Skills SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose pull && docker compose down && docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-  retries: 2
-  delay: 5
-
-- name: Wait for Skills SPA to be ready
-  # 450s cold-start budget — same rationale as the Auth SPA wait above.
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: skills_health
-  until: skills_health.rc == 0
-  retries: 30
-  delay: 15
+  loop: "{{ enabled_spas }}"
 
 # ---------------------------------------------------------------------------
 # Proxy reload

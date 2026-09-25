@@ -281,98 +281,34 @@
 # SPAs: force restart (containers may have exited from AMI shutdown)
 # ---------------------------------------------------------------------------
 
-- name: Restart Auth SPA
+- name: Discover enabled SPAs
+  ansible.builtin.import_role:
+    name: ibl_spa
+    tasks_from: discover
+
+- name: Restart enabled SPAs
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down 2>/dev/null; docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/{{ item.name }}/ && docker compose down 2>/dev/null; docker compose up -d
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+  loop: "{{ enabled_spas }}"
 
-- name: Wait for Auth SPA to be ready
+# 30 x 15s per SPA: a recreated SPA container runs `pnpm install` before
+# Next.js starts (see ibl_spa). All were restarted above, so the waits overlap.
+- name: Wait for enabled SPAs to be ready
   become: false
   shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ 2>/dev/null | grep -qE '^(200|301|302)$'
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:{{ item.port }}/ 2>/dev/null | grep -qE '^(200|301|302)$'
   args:
     executable: /bin/bash
-  register: auth_health
-  until: auth_health.rc == 0
-  retries: 10
+  register: spa_health
+  until: spa_health.rc == 0
+  retries: 30
   delay: 15
-
-- name: Restart Mentor SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose down 2>/dev/null; docker compose up -d
-    echo "Mentor container started, waiting 30s for initial boot..."
-    sleep 30
-    STATUS=$(docker ps --filter "name=mentor" --format "{{ '{{' }}.Status{{ '}}' }}")
-    HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null || echo "000")
-    echo "Container status: $STATUS | HTTP: $HTTP"
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-
-- name: Wait for Mentor SPA to be ready (with debug)
-  become: false
-  shell: |
-    HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null)
-    echo "Mentor HTTP: $HTTP"
-    if echo "$HTTP" | grep -qE '^(200|301|302)$'; then
-      exit 0
-    fi
-    # If empty reply, try a restart
-    if [ "$HTTP" = "000" ]; then
-      echo "Empty reply detected, restarting mentor..."
-      cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose restart 2>/dev/null
-      sleep 15
-      HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null)
-      echo "After restart: HTTP $HTTP"
-      echo "$HTTP" | grep -qE '^(200|301|302)$'
-    else
-      exit 1
-    fi
-  args:
-    executable: /bin/bash
-  register: mentor_health
-  until: mentor_health.rc == 0
-  retries: 10
-  delay: 20
-  ignore_errors: true
-
-- name: Show Mentor SPA final status
-  become: false
-  shell: |
-    HTTP=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null)
-    STATUS=$(docker ps --filter "name=mentor" --format "{{ '{{' }}.Names{{ '}}' }}: {{ '{{' }}.Status{{ '}}' }}")
-    echo "Final - HTTP: $HTTP | Container: $STATUS"
-    docker logs mentor-mentor_spa-1 --tail 5 2>&1
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-
-- name: Restart Skills SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose down 2>/dev/null; docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-
-- name: Wait for Skills SPA to be ready
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: skills_health
-  until: skills_health.rc == 0
-  retries: 10
-  delay: 15
+  loop: "{{ enabled_spas }}"
 
 # ---------------------------------------------------------------------------
 # Integrations (OAuth/OIDC — prevents 409 auth errors)
@@ -502,7 +438,7 @@
       echo "SSO client_id: ${SSO_CLIENT_ID:0:15}..."
 
       # Write back to config so Auth SPA env.js picks it up
-      ibl config set "IBL_SPA.EDX_SSO_CLIENT_ID=$SSO_CLIENT_ID" 2>/dev/null
+      ibl config set "IBL_SPA.EDX_SSO_CLIENT_ID=$SSO_CLIENT_ID" || exit 1
 
       # Also read ibl_web client ID
       IBL_WEB_ID=$(docker exec ibl_prod_lms ./manage.py lms shell -c "
@@ -515,12 +451,12 @@
       " 2>/dev/null | grep '^WEB_RESULT:' | sed 's/^WEB_RESULT://')
 
       if [ -n "$IBL_WEB_ID" ]; then
-        ibl config set "IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID=$IBL_WEB_ID" 2>/dev/null
+        ibl config set "IBL_SPA.AUTH.IBL_OAUTH2_CLIENT_ID=$IBL_WEB_ID" || exit 1
         echo "ibl_web client_id: ${IBL_WEB_ID:0:15}..."
       fi
 
       # Re-render with the SSO client ids and restart the Auth SPA
-      ibl render 2>/dev/null
+      ibl render || exit 1
       cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose down 2>/dev/null; docker compose up -d
       echo "Auth SPA restarted with synced SSO credentials"
     fi

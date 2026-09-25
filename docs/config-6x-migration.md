@@ -73,7 +73,7 @@ the review pass is listed under "Remaining upstream" below.
 | Root | `user_supplied` after generate |
 |---|---|
 | bare `ibl init` (call-server shape) | none |
-| `single-server` | **none** (`IBL_SPA.VIDEOAI.OPENAI_API_KEY` dropped upstream) |
+| `single-server` | **none** with AI off (`IBL_SPA.VIDEOAI.OPENAI_API_KEY` dropped upstream). With AI on, `IBL_DM.LIVEKIT_API_KEY`/`_SECRET`: the preset enables `IBL_DM.RUN_AI_CALL`, whose LiveKit credentials come from a call server — `ibl_platform` turns the service off unless they are set (released 7.9.0 and 7.21.0) |
 | `app-scalable` | `IBL_DM.REDIS_PASSWORD`, `IBL_EDX.MYSQL_ROOT_PASSWORD`, `IBL_EDX.MONGODB_PASSWORD`, `IBL_EDX.REDIS_PASSWORD` (copy from the node running the stores — correct cross-node semantics) |
 | `app-single` | none |
 | `all-services` | none |
@@ -143,6 +143,12 @@ services list.) (Local-env note for anyone re-validating:
 
 Manifest (`deployment_manifest.json`): non-issue for this tool —
 CI-generated deploy marker; fresh setups never have one.
+
+**Checked against released 7.9.0 and 7.21.0** (the playbooks' config steps run on a scratch root):
+a secret defaulting to another one (`IBL_DM.DB_READ_REPLICA_PASSWORD`, `IBL_DM.OIDC_RP_CLIENT_ID`/`_SECRET`)
+reports as `user_supplied` until `ibl secrets generate` has run, so the preflight follows a generate.
+On a call-only root `ibl render` still runs `tutor config save` with an empty `JWT_RSA_PRIVATE_KEY`
+and fails — an upstream fix (skip tutor when edX is off) is needed before call servers render.
 
 ## 1. CLI install + version pinning
 

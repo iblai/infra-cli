@@ -130,6 +130,25 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
+# Some secrets default to another secret (e.g. IBL_DM.DB_READ_REPLICA_PASSWORD
+# to IBL_DM.DB_PASSWORD), so on a fresh root they read as operator-supplied
+# until the generated ones exist. Fill those first; present values are kept.
+- name: Generate missing secrets
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl secrets generate
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
 # Fail-fast gate: any gate-active secret with no generator must be
 # supplied by an operator, and nothing later in the playbook would fill
 # it. rc 1 alone is NOT a failure here — it also fires for generatable

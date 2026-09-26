@@ -637,6 +637,7 @@ class AnsibleRunner:
             "s3_static_bucket": self.config.s3_static_bucket,
             "s3_media_bucket": self.config.s3_media_bucket,
             "s3_region": self.config.s3_region,
+            "create_test_users": self.config.create_test_users,
             "base_domain": self.config.base_domain,
             "edx_version": self.config.edx_version,
             # Empty = not explicitly chosen — fall back to the project name

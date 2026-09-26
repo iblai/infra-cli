@@ -602,6 +602,8 @@ class SetupConfig(BaseModel):
     s3_static_bucket: str = ""
     s3_media_bucket: str = ""
     s3_region: str = ""
+    # service-update: create the Playwright test users, whose password is fixed.
+    create_test_users: bool = False
     # Excluded from serialization like every other secret on this model. Nothing
     # currently dumps a SetupConfig, so this is defensive - but these two were
     # the only credentials without the guard, and that asymmetry is the kind

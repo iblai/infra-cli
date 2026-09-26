@@ -158,6 +158,26 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
+# service-update is pointed at a host, not a project, so the domain comes
+# from the server's own config.
+- name: Read the server's base domain
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl config get BASE_DOMAIN
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: server_base_domain
+  changed_when: false
+
 # ---------------------------------------------------------------------------
 # edX: ensure running + health check
 # ---------------------------------------------------------------------------
@@ -227,6 +247,11 @@
   # the time is spent pulling the new DM image on the one-shot container.
   async: 3600
   poll: 30
+
+- name: Fill the Flowise secrets
+  ansible.builtin.import_role:
+    name: ibl_platform
+    tasks_from: flowise_secrets
 
 - name: Update DM via `ibl dm update`
   # `ibl dm update` is the canonical update path — it pulls new images and
@@ -315,21 +340,9 @@
 # ---------------------------------------------------------------------------
 
 - name: Run OAuth and OIDC integrations
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl launch --ibl-oauth --ibl-oidc --ibl-edx-manager
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
-  timeout: 600
+  ansible.builtin.import_role:
+    name: integrations
+    tasks_from: clients
 
 - name: Run DM auth setup
   become: false
@@ -378,9 +391,9 @@
     docker exec ibl_prod_lms ./manage.py lms shell -c "
     from oauth2_provider.models import Application
     REDIRECT_URIS = ' '.join([
-        'https://auth.{{ base_domain }}/login/complete',
+        'https://auth.{{ server_base_domain.stdout | trim }}/login/complete',
         'https://auth.ibl.ai/login/complete',
-        'https://auth.{{ base_domain }}/login/mobile/complete',
+        'https://auth.{{ server_base_domain.stdout | trim }}/login/mobile/complete',
         'https://auth.ibl.ai/login/mobile/complete',
     ])
     try:
@@ -470,7 +483,8 @@
   ignore_errors: true
 
 # ---------------------------------------------------------------------------
-# Ensure Playwright test users exist in LMS with correct password
+# Playwright test users (opt-in: `--test-users`). They get a fixed, known
+# password, which does not belong on a client's LMS.
 # ---------------------------------------------------------------------------
 
 - name: Ensure all browser test users exist in LMS
@@ -498,10 +512,16 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
   ignore_errors: true
+  when: create_test_users | default(false) | bool
 
 # ---------------------------------------------------------------------------
 # Nginx + proxy reload
 # ---------------------------------------------------------------------------
+
+- name: Make proxy upstreams resolvable
+  ansible.builtin.import_role:
+    name: ibl_platform
+    tasks_from: proxy_hosts
 
 - name: Reload proxy and restart nginx
   become: false
@@ -583,11 +603,14 @@
   args:
     executable: /bin/bash
   register: smoke_login
+  when: create_test_users | default(false) | bool
 
 - name: "Smoke test - fail if test user auth broken"
   ansible.builtin.fail:
     msg: "Test user authentication failed. Fix test users before running Playwright tests. Output: {{ smoke_login.stdout_lines | default([]) | select('match', '^FAIL') | list | join(', ') }}"
-  when: smoke_login.rc != 0
+  when:
+    - create_test_users | default(false) | bool
+    - smoke_login.rc != 0
 
 - name: "Smoke test - verify DM API responds"
   become: false
@@ -605,16 +628,18 @@
   register: smoke_dm
   ignore_errors: true
 
-- name: "Smoke test - verify Mentor SPA and API"
+- name: "Smoke test - verify SPAs and the Mentor API"
   become: false
   shell: |
-    echo "=== Mentor Smoke Test ==="
-    HTTP=$(curl -sk -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null)
-    echo "Mentor SPA HTTP - $HTTP"
-    if ! echo "$HTTP" | grep -qE '^(200|301|302)$'; then
-      echo "FAIL - Mentor SPA not responding (HTTP $HTTP)"
-      exit 1
-    fi
+    echo "=== SPA + Mentor Smoke Test ==="
+    for PORT in {{ enabled_spas | map(attribute='port') | join(' ') }}; do
+      HTTP=$(curl -sk -o /dev/null -w '%{http_code}' "http://localhost:$PORT/" 2>/dev/null)
+      echo "SPA on :$PORT HTTP - $HTTP"
+      if ! echo "$HTTP" | grep -qE '^(200|301|302)$'; then
+        echo "FAIL - SPA on :$PORT not responding (HTTP $HTTP)"
+        exit 1
+      fi
+    done
     CHAT_HTTP=$(curl -sk -o /dev/null -w '%{http_code}' http://localhost:8400/api/ibl/manage/v1/mentor/ 2>/dev/null)
     echo "DM Mentor API HTTP - $CHAT_HTTP"
     if echo "$CHAT_HTTP" | grep -qE '^(200|301|302|401|403|404)$'; then
@@ -632,7 +657,7 @@
   ansible.builtin.debug:
     msg: |
       === SMOKE TEST RESULTS ===
-      SSO Login:   {{ 'PASS' if (smoke_login.rc | default(1)) == 0 else 'FAIL' }}
+      Test users:  {{ ('PASS' if (smoke_login.rc | default(1)) == 0 else 'FAIL') if (create_test_users | default(false) | bool) else 'SKIPPED' }}
       DM API:      {{ 'PASS' if (smoke_dm.rc | default(1)) == 0 else 'FAIL' }}
-      Mentor:      {{ 'PASS' if (smoke_mentor.rc | default(1)) == 0 else 'FAIL' }}
-      {{ 'All smoke tests passed. Environment is ready for Playwright tests.' if ((smoke_login.rc | default(1)) == 0 and (smoke_dm.rc | default(1)) == 0 and (smoke_mentor.rc | default(1)) == 0) else 'WARNING - Some smoke tests failed. Check logs above.' }}
+      SPAs:        {{ 'PASS' if (smoke_mentor.rc | default(1)) == 0 else 'FAIL' }}
+      {{ 'All smoke tests passed.' if (((smoke_login.rc | default(1)) == 0 or not (create_test_users | default(false) | bool)) and (smoke_dm.rc | default(1)) == 0 and (smoke_mentor.rc | default(1)) == 0) else 'WARNING - Some smoke tests failed. Check logs above.' }}

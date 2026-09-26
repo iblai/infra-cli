@@ -1671,6 +1671,11 @@ def service_update(
     aws_secret_key: str | None = typer.Option(None, "--aws-secret-key", help="AWS secret access key (with --ami-id)"),
     aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region (with --ami-id)"),
     prod_images_tag: str = typer.Option("main", "--prod-images-tag", help="iblai-prod-images git tag or branch"),
+    github_org: str = typer.Option("iblai", "--github-org", help="GitHub org owning the private CLI ops + prod images repos"),
+    cli_ops_repo: str = typer.Option("iblai-cli-ops", "--cli-ops-repo", help="CLI ops repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
+    prod_images_repo: str = typer.Option("iblai-prod-images", "--prod-images-repo", help="Prod images repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
+    cli_tag: str = typer.Option("", "--cli-tag", help="iblai-cli-ops tag (default: the one --prod-images-tag pins)"),
+    test_users: bool = typer.Option(False, "--test-users/--no-test-users", help="Create the Playwright test users (they get a fixed password)"),
 ) -> None:
     """Update container images and restart services.
 
@@ -1678,6 +1683,13 @@ def service_update(
       --host: update an existing server directly
       --ami-id: launch EC2 from AMI, update services, register in target group
     """
+    packages = {
+        "github_org": github_org,
+        "cli_ops_repo": cli_ops_repo,
+        "prod_images_repo": prod_images_repo,
+        "cli_tag": cli_tag,
+    }
+
     if ami_id:
         missing = []
         if not subnet_id:
@@ -1704,16 +1716,56 @@ def service_update(
             aws_region=aws_region, ssh_key=ssh_key, git_token=git_token,
             ssh_user=ssh_user, name=name, node_id=node_id,
             prod_images_tag=prod_images_tag,
+            packages=packages, create_test_users=test_users,
         )
     elif host:
         _run_service_update(
             host=host, ssh_key=ssh_key, git_token=git_token,
             ssh_user=ssh_user, name=name, node_id=node_id,
             prod_images_tag=prod_images_tag,
+            packages=packages, create_test_users=test_users,
         )
     else:
         ui.error("Either --host or --ami-id is required.")
         raise typer.Exit(1)
+
+
+def _service_update_packages(
+    *,
+    git_token: str,
+    prod_images_tag: str,
+    github_org: str = "iblai",
+    cli_ops_repo: str = "iblai-cli-ops",
+    prod_images_repo: str = "iblai-prod-images",
+    cli_tag: str = "",
+) -> dict:
+    """Which repos and cli-ops tag service-update installs.
+
+    Without --cli-tag the tag comes from the pin in --prod-images-tag, so
+    the CLI matches the images it is installed with.
+    """
+    if not cli_tag:
+        from iblai_infra.env_utils import resolve_pinned_cli_ops_tag
+        from iblai_infra.models import parse_repo_path
+
+        pi_repo, pi_subdir = parse_repo_path(prod_images_repo)
+        cli_tag = resolve_pinned_cli_ops_tag(
+            git_token, github_org, pi_repo, prod_images_tag, subdir=pi_subdir
+        ) or ""
+        if cli_tag:
+            ui.info(f"iblai-cli-ops [highlight]{cli_tag}[/highlight] (pinned by {pi_repo}@{prod_images_tag})")
+        else:
+            cli_tag = "main"
+            ui.warning(
+                f"Could not read the iblai-cli-ops pin from {pi_repo}@{prod_images_tag}; "
+                "falling back to 'main'. Pass --cli-tag to override."
+            )
+    return {
+        "github_org": github_org,
+        "cli_ops_repo": cli_ops_repo,
+        "prod_images_repo": prod_images_repo,
+        "cli_ops_release_tag": cli_tag,
+    }
 
 
 def _run_service_update(
@@ -1725,6 +1777,8 @@ def _run_service_update(
     name: str | None,
     node_id: str = "",
     prod_images_tag: str = "main",
+    packages: dict | None = None,
+    create_test_users: bool = False,
 ) -> None:
     """Install latest images and restart all services."""
     import os
@@ -1768,6 +1822,10 @@ def _run_service_update(
         ui.error("ansible-playbook not found. Install with: pip install ansible-core")
         raise typer.Exit(1)
 
+    packages = _service_update_packages(
+        git_token=git_token, prod_images_tag=prod_images_tag, **(packages or {})
+    )
+
     # Build SetupConfig with minimal values (only SSH + git needed)
     setup_config = SetupConfig(
         ssh_private_key_path=ssh_key,
@@ -1780,6 +1838,8 @@ def _run_service_update(
         aws_secret_access_key="",
         aws_default_region="us-east-1",
         git_access_token=git_token,
+        create_test_users=create_test_users,
+        **(packages or {}),
     )
 
     # Create or update state
@@ -1867,6 +1927,8 @@ def _run_service_update_from_ami(
     name: str | None,
     node_id: str = "",
     prod_images_tag: str = "main",
+    packages: dict | None = None,
+    create_test_users: bool = False,
 ) -> None:
     """Launch EC2 from AMI, run service update, register in target group."""
     import os
@@ -1916,6 +1978,10 @@ def _run_service_update_from_ami(
         ui.error("ansible-playbook not found. Install with: pip install ansible-core")
         raise typer.Exit(1)
 
+    packages = _service_update_packages(
+        git_token=git_token, prod_images_tag=prod_images_tag, **(packages or {})
+    )
+
     # Create boto3 session
     import boto3
     session = boto3.Session(
@@ -1964,6 +2030,8 @@ def _run_service_update_from_ami(
         aws_secret_access_key="",
         aws_default_region=aws_region,
         git_access_token=git_token,
+        create_test_users=create_test_users,
+        **(packages or {}),
     )
 
     workspace_path = str(WORKSPACE_ROOT / f"{project_name}-service-update")

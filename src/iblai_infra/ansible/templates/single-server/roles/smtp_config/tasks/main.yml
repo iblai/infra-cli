@@ -6,10 +6,10 @@
 # Writes the IBL_SMTP_* + IBL_SMTP_SYSTEM_* config keys (single config
 # root under 6.x — the old staging/runtime dual write is gone). The
 # password is a registry secret: it goes through `ibl secrets set
-# --from-env` (env form keeps it out of `ps` and argv), and ONLY
-# IBL_SMTP_PASSWORD — IBL_SMTP_SYSTEM_PASSWORD was removed upstream (DM
-# mirrors compute from IBL_SMTP_PASSWORD; writing the removed key is a
-# hard error).
+# --from-env` (env form keeps it out of `ps` and argv) — IBL_SMTP_PASSWORD
+# plus the DM's IBL_DM.EMAIL_HOST_PASSWORD, which setup gives a placeholder
+# until SMTP exists. IBL_SMTP_SYSTEM_PASSWORD was removed upstream (writing
+# the removed key is a hard error).
 #
 # Runs BEFORE service-start roles in both setup and launch playbooks, so
 # the rendered Compose templates pick up SMTP_HOST/USER/PASSWORD env vars
@@ -23,7 +23,8 @@
       export PATH="$PYENV_ROOT/bin:$PATH"
       eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
       pyenv activate "{{ venv_name }}"
-      ibl secrets set --from-env IBL_SMTP_PASSWORD=SMTP_PASSWORD
+      ibl secrets set --from-env IBL_SMTP_PASSWORD=SMTP_PASSWORD \
+        --from-env IBL_DM.EMAIL_HOST_PASSWORD=SMTP_PASSWORD
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:

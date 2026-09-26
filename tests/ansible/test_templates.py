@@ -231,3 +231,25 @@ class TestInstallUrls:
             for line in _shell(task).splitlines():
                 if "pip install" in line:
                     assert "git_access_token" not in line
+
+
+class TestDmNotifications:
+    def test_notifications_on_before_the_first_render(self):
+        """The DM's other apps import its notifications app; with it off the DM
+        can't migrate or start."""
+        tasks = _tasks("single-server", "ibl_platform")
+        assert _first(tasks, r"IBL_DM\.ENABLE_NOTIFICATIONS=true") < _first(tasks, r"\bibl render\b")
+
+    def test_email_password_only_filled_when_empty(self):
+        """With notifications on, render requires it; a real SMTP password must win."""
+        tasks = _tasks("single-server", "ibl_platform")
+        i = _first(tasks, r"--from-env IBL_DM\.EMAIL_HOST_PASSWORD=")
+        script = _shell(tasks[i])
+        assert script.index("ibl config get IBL_DM.EMAIL_HOST_PASSWORD") < script.index("ibl secrets set")
+        assert i < _first(tasks, r"\bibl render\b")
+
+    def test_smtp_writes_the_dm_email_password_too(self):
+        """Otherwise the setup placeholder would keep the DM's mail from authenticating."""
+        tasks = _tasks("single-server", "smtp_config")
+        script = _shell(tasks[_first(tasks, r"--from-env IBL_SMTP_PASSWORD=")])
+        assert "--from-env IBL_DM.EMAIL_HOST_PASSWORD=" in script

@@ -220,6 +220,7 @@
       'IBL_DM.ENABLE_TIMESCALEDB=true' \
       'IBL_DM.ENABLE_TIME_SPENT_UPDATE_API=true' \
       'IBL_DM.ENABLE_CREDITS=true' \
+      'IBL_DM.ENABLE_NOTIFICATIONS=true' \
       'IBL_DM.ENABLE_NOTIFICATION_CELERY_QUEUES=true' \
       'IBL_REVERSE_PROXY.IBL_GLOBAL_PROXY.ENABLE_200_RESPONSE=true'
   args:
@@ -283,6 +284,33 @@
     - aws_access_key_id | default('') | length > 0
     - aws_secret_access_key | default('') | length > 0
   no_log: true
+
+# The DM can't start without its notifications app (other apps import it),
+# and with notifications on the config requires IBL_DM.EMAIL_HOST_PASSWORD,
+# which defaults to the SMTP password. Until SMTP is set up it gets a
+# random placeholder; the smtp_config role writes the real one over it.
+- name: Give the DM email account a password until SMTP is set up
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    EMAIL_PASSWORD=$(ibl config get IBL_DM.EMAIL_HOST_PASSWORD) || exit 1
+    if [ -z "$EMAIL_PASSWORD" ]; then
+      EMAIL_PLACEHOLDER=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))') \
+        ibl secrets set --from-env IBL_DM.EMAIL_HOST_PASSWORD=EMAIL_PLACEHOLDER || exit 1
+      echo "EMAIL_PASSWORD_PLACEHOLDER_SET"
+    fi
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: dm_email_password
+  changed_when: "'EMAIL_PASSWORD_PLACEHOLDER_SET' in dm_email_password.stdout"
 
 # Only when both buckets are given: nothing here ever turns S3 storage off,
 # so a resetup (which doesn't ask for buckets) keeps what setup configured.

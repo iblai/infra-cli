@@ -8,6 +8,26 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
 
+# Some of the mentors `seed_flows` creates, the health check's among them, get
+# no settings row, and chat with them fails reading it.
+- name: Give every mentor a settings row
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from ibl_ai_mentor.models import Mentor
+      from ibl_ai_mentor.utils.mentor_utils import get_or_create_mentor_settings
+
+      missing = Mentor.objects.filter(mentorsettings__isnull=True)
+      created = [m.name for m in missing if get_or_create_mentor_settings(m)[1]]
+      print("MENTOR_SETTINGS_CREATED " + ", ".join(created) if created else "MENTOR_SETTINGS_PRESENT")
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: mentor_settings
+  changed_when: "'MENTOR_SETTINGS_CREATED' in mentor_settings.stdout"
+
 - name: Seed LLM registry
   become: false
   ansible.builtin.shell:

@@ -291,3 +291,11 @@ class TestDmNotifications:
         tasks = _tasks("single-server", "smtp_config")
         script = _shell(tasks[_first(tasks, r"--from-env IBL_SMTP_PASSWORD=")])
         assert "--from-env IBL_DM.EMAIL_HOST_PASSWORD=" in script
+
+
+class TestDataSeeding:
+    def test_mentor_settings_follow_the_mentor_seed(self):
+        """Chat reads the settings row; `seed_flows` creates mentors without one."""
+        tasks = _tasks("single-server", "data_seeding")
+        assert _first(tasks, r"\bseed_flows\b") < _first(tasks, r"get_or_create_mentor_settings")
+

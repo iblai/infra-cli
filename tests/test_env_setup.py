@@ -413,3 +413,34 @@ class TestCliOpsTagResolution:
         _pin_resolver.return_value = None
         config = build_setup_config_from_env(_required_env(), state=project_state)
         assert config.cli_ops_release_tag == "main"
+
+
+# ---------------------------------------------------------------------------
+# S3 storage buckets
+# ---------------------------------------------------------------------------
+
+
+class TestS3Buckets:
+    def test_both_buckets_set_storage_with_the_setup_region(self, project_state):
+        env = _required_env(S3_STATIC_BUCKET="acme-dm-static", S3_MEDIA_BUCKET="acme-dm-media")
+        config = build_setup_config_from_env(env, state=project_state)
+        assert (config.s3_static_bucket, config.s3_media_bucket) == ("acme-dm-static", "acme-dm-media")
+        assert config.s3_region == config.aws_default_region
+
+    def test_explicit_region_wins(self, project_state):
+        env = _required_env(S3_STATIC_BUCKET="acme-dm-static", S3_MEDIA_BUCKET="acme-dm-media", S3_REGION="eu-west-1")
+        assert build_setup_config_from_env(env, state=project_state).s3_region == "eu-west-1"
+
+    def test_no_buckets_leaves_storage_alone(self, project_state):
+        config = build_setup_config_from_env(_required_env(S3_REGION="eu-west-1"), state=project_state)
+        assert (config.s3_static_bucket, config.s3_media_bucket, config.s3_region) == ("", "", "")
+
+    @pytest.mark.parametrize("key", ["S3_STATIC_BUCKET", "S3_MEDIA_BUCKET"])
+    def test_one_bucket_alone_is_rejected(self, project_state, key):
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(_required_env(**{key: "acme-bucket"}), state=project_state)
+
+    def test_invalid_bucket_name_is_rejected(self, project_state):
+        env = _required_env(S3_STATIC_BUCKET="Acme_Static", S3_MEDIA_BUCKET="acme-dm-media")
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(env, state=project_state)

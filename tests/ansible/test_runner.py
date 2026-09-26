@@ -353,6 +353,31 @@ class TestBuildExtraVars:
         assert extra["is_resetup"] is True
         assert extra["cli_ops_release_tag"] == CLI_OPS_TEST_TAG
 
+    def test_storage_and_test_user_vars_reach_ansible(self, project_state, setup_config):
+        """The roles gate S3 storage and the test users on these vars."""
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config.model_copy(update={
+            "s3_static_bucket": "acme-dm-static",
+            "s3_media_bucket": "acme-dm-media",
+            "s3_region": "us-east-1",
+            "create_test_users": True,
+        })
+        runner.role_labels = ROLE_LABELS
+
+        extra = runner._build_extra_vars()
+        assert extra["s3_static_bucket"] == "acme-dm-static"
+        assert extra["s3_media_bucket"] == "acme-dm-media"
+        assert extra["s3_region"] == "us-east-1"
+        assert extra["create_test_users"] is True
+
+    def test_test_users_off_by_default(self, project_state, setup_config):
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config
+        runner.role_labels = ROLE_LABELS
+        assert runner._build_extra_vars()["create_test_users"] is False
+
     def test_explicit_node_id_wins(self, project_state, setup_config):
         runner = AnsibleRunner.__new__(AnsibleRunner)
         runner.state = project_state

@@ -8,11 +8,13 @@ from unittest.mock import patch
 import pytest
 import typer
 from pydantic import ValidationError
+from typer.testing import CliRunner
 
 from iblai_infra.features.llm import LLM_TAGS, llm_set_key
 from iblai_infra.features.platform import PLATFORM_TAGS, platform_create
+from iblai_infra.features.smtp import smtp_app
 from iblai_infra.features.sso import GOOGLE_TAGS, MICROSOFT_TAGS, sso_google, sso_microsoft
-from iblai_infra.features.stripe import STRIPE_TAGS, stripe_enable
+from iblai_infra.features.stripe import STRIPE_TAGS, stripe_app, stripe_enable
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
@@ -73,7 +75,7 @@ class _Captured:
 def applied(monkeypatch):
     """Patch run_feature in every feature module and capture the call."""
     cap = _Captured()
-    for mod in ("llm", "platform", "sso", "stripe"):
+    for mod in ("llm", "platform", "smtp", "sso", "stripe"):
         monkeypatch.setattr(f"iblai_infra.features.{mod}.run_feature", cap)
     monkeypatch.setattr(
         "iblai_infra.terraform.state.load_state", lambda name: _state()
@@ -284,6 +286,25 @@ class TestStripe:
             s.return_value.ask.return_value = "test"
             stripe_enable(name="acme")
         assert applied.config.restart_services is False
+
+
+class TestEnableEnvFiles:
+    """The `-f` file is read from the path given on the command line; a plain
+    string there crashed both commands before anything was applied."""
+
+    def test_smtp(self, applied, tmp_path):
+        env_file = tmp_path / "smtp.env"
+        env_file.write_text("SMTP_HOST=smtp.example.com\nSMTP_PORT=2525\nSMTP_PASSWORD=pw\n")
+        result = CliRunner().invoke(smtp_app, ["enable-env", "acme", "-f", str(env_file)])
+        assert result.exit_code == 0, result.output
+        assert (applied.config.smtp_host, applied.config.smtp_port) == ("smtp.example.com", 2525)
+
+    def test_stripe(self, applied, tmp_path):
+        env_file = tmp_path / "stripe.env"
+        env_file.write_text("STRIPE_SECRET_KEY=sk_test_x\nSTRIPE_MODE=live\n")
+        result = CliRunner().invoke(stripe_app, ["enable-env", "acme", "-f", str(env_file)])
+        assert result.exit_code == 0, result.output
+        assert (applied.config.stripe_secret_key, applied.config.stripe_mode) == ("sk_test_x", "live")
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,8 @@ have to be recreated.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from iblai_infra import ui
@@ -107,7 +109,7 @@ def smtp_enable(
 @smtp_app.command("enable-env")
 def smtp_enable_env(
     name: str = typer.Argument(help="Environment name"),
-    env_file: str = typer.Option(..., "-f", "--file", help="Path to a .env file"),
+    env_file: Path = typer.Option(..., "-f", "--file", help="Path to a .env file"),
     no_restart: bool = typer.Option(False, "--no-restart", help="Skip the service restart"),
 ) -> None:
     """Non-interactive SMTP enable, reading the same keys as `setup-env`."""

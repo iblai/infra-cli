@@ -1266,6 +1266,11 @@ def setup_env(
     if setup_config.microsoft_sso_enabled:
         integrations.append("Microsoft SSO")
     rows.append(("Integrations", ", ".join(integrations) if integrations else "(none)"))
+    if setup_config.s3_static_bucket:
+        rows.append((
+            "S3 storage",
+            f"{setup_config.s3_static_bucket}, {setup_config.s3_media_bucket} ({setup_config.s3_region})",
+        ))
     ui.summary_panel("Setup Configuration", rows)
 
     ui.newline()

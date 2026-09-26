@@ -28,6 +28,43 @@
   register: mentor_settings
   changed_when: "'MENTOR_SETTINGS_CREATED' in mentor_settings.stdout"
 
+# The health-check mentors are seeded with the legacy `fake-llm` provider,
+# which only long-lived installs still have a row for; on a fresh one the
+# mentor health check, and the readiness gate of `ibl dm update`, fail.
+- name: Register the provider the health-check mentors use
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from django.apps import apps
+
+      try:
+          LLM = apps.get_model("ibl_ai_mentor", "LLM")
+      except LookupError:
+          LLM = None
+      if LLM is None:
+          print("FAKE_LLM_PROVIDER_NOT_NEEDED")
+      else:
+          description = "Fake llm used for testing purposes"
+          chat_models = [{"llm_name": "fake-llm-model", "description": "", "is_multimodal": False,
+                          "training_data": "", "context_window": "infinite"}]
+          _, created = LLM.objects.get_or_create(
+              name="fake-llm",
+              defaults={
+                  "description": description,
+                  "chat_models": chat_models,
+                  "flow": {"name": "fake-llm", "display_name": "Fake LLM", "description": description,
+                           "chat_models": chat_models},
+              },
+          )
+          print("FAKE_LLM_PROVIDER_CREATED" if created else "FAKE_LLM_PROVIDER_PRESENT")
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: fake_llm_provider
+  changed_when: "'FAKE_LLM_PROVIDER_CREATED' in fake_llm_provider.stdout"
+
 - name: Seed LLM registry
   become: false
   ansible.builtin.shell:

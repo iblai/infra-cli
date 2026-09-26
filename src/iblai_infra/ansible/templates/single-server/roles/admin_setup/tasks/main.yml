@@ -162,11 +162,15 @@
         'mfe.{{ base_domain }}',
         'status.{{ base_domain }}',
     ]
+    # The model stores each domain as https://<host>, so a lookup by the bare
+    # host never matches and get_or_create failed on every re-run.
+    existing = {x.lower() for x in CsrfExemptDomain.objects.values_list('domain', flat=True)}
     created = 0
     for d in domains:
-        _, was_created = CsrfExemptDomain.objects.get_or_create(domain=d)
-        if was_created:
-            created += 1
+        if d.lower() in existing or f'https://{d}'.lower() in existing:
+            continue
+        CsrfExemptDomain.objects.create(domain=d)
+        created += 1
     print(f'CSRF exempt domains: {created} created, {len(domains) - created} already existed')
     "
   args:

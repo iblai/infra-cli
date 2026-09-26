@@ -177,12 +177,19 @@ class TestDmBootstrap:
         for tasks_file, task in _all_tasks():
             assert not re.search(r"\bibl dm launch\b", _shell(task)), tasks_file
 
-    def test_dm_is_up_before_anything_execs_into_web(self):
+    def test_nothing_execs_into_web_before_the_dm_starts(self):
+        """`docker compose exec web` fails until `ibl dm up -d` has started it."""
         tasks = _tasks("single-server", "ibl_dm")
-        migrate = _first(tasks, r"\bibl dm migrate\b")
         up = _first(tasks, r"\bibl dm up -d\b")
-        exec_web = _first(tasks, r"compose exec -T[\s\S]*?\bweb\b")
-        assert migrate < up < exec_web
+        assert _first(tasks, r"\bibl dm migrate\b") < up
+        for task in tasks[:up]:
+            assert not re.search(r"compose exec", _shell(task)), task["name"]
+
+    def test_main_platform_exists_before_the_dm_starts(self):
+        """With notifications on, the web container's start-up loads fixtures that
+        reference the main platform; without it the container crash-loops."""
+        tasks = _tasks("single-server", "ibl_dm")
+        assert _first(tasks, r"\binitialize_manager\b") < _first(tasks, r"\bibl dm up -d\b")
 
     def test_dm_sso_runs_only_after_edx_is_launched(self):
         """`ibl dm sso` registers the DM's OIDC client in edX."""

@@ -146,9 +146,11 @@ The playbook runs 16 roles in phases:
 |---|---|---|
 | Host setup | `docker`, `awscli`, `python` | Docker + compose, AWS CLI v2, pyenv + Python 3.11.8 |
 | Platform install | `ibl_cli_ops`, `ibl_platform` | Installs the pinned platform packages; configures domain, gateway, defaults |
-| Core services | `ibl_dm`, `ibl_edx`, `ibl_spa` | Data Manager (Django/Postgres/Redis/Celery), Open edX (LMS/CMS/MySQL/Mongo/ES), and the Auth/Mentor/Skills SPAs |
+| Core services | `ibl_dm`, `ibl_edx`, `ibl_spa` | Data Manager (Django/Postgres/Redis/Celery), Open edX (LMS/CMS/MySQL/Mongo/ES), and the SPAs the preset enables (Auth/LMS/OS on a fresh server) |
 | Finalization | `integrations`, `admin_setup`, `data_seeding`, `ibl_tenant_platform` | OAuth/OIDC, edX↔DM sync, super admin, data seeding, optional tenant launch |
 | Optional | `smtp_config`, `stripe_config`, `google_sso_config`, `microsoft_sso_config` | Each no-ops unless its trigger key is set |
+
+**Monitoring.** The single-server preset enables Grafana, but setup does not start the monitoring stack (Prometheus, Alertmanager, Grafana and a health monitor). Start it on the server with `ibl utility prometheus start`.
 
 ### 4. Non-interactive provision + setup (`.env` file)
 
@@ -258,6 +260,8 @@ iblai infra llm set-key <name> --provider anthropic --api-key <key>   # non-inte
 ```
 
 Sets or rotates the credential the mentor service uses. Supported providers are `openai` (the default) and `anthropic`. Setting a key also makes that provider the preferred one, since the platform picks the preferred credential with no tie-break when several are marked. Live immediately.
+
+**Without an ibl.ai gateway key.** The key set here is a global one. The platform's daily model-catalogue sync marks most models, OpenAI's included, as served through the ibl.ai gateway, and a platform then calls a provider directly only with a key of its own. So without an `iblai` gateway key, chat stops working after the first sync, usually within a day of setup. The default agent mentor uses the gateway model (`iblai-pro`) and needs that key from the start. Either set an `iblai` key, or give each platform its own key: in the Data Manager admin (`https://base.manager.<domain>/admin/ibl_ai_mentor/llmcredential/`) add a credential named after the provider (`openai`) for that platform, and point mentors that use `iblai-pro` at one of the provider's models.
 
 #### Tenant platform
 

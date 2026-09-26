@@ -37,6 +37,7 @@ from iblai_infra.models import (
     ProjectState,
     RESERVED_ADMIN_USERNAMES,
     RESERVED_PLATFORM_NAMES,
+    S3_BUCKET_NAME_RE,
     SetupConfig,
     SSHConfig,
     SSHKeyMethod,
@@ -285,6 +286,19 @@ def build_setup_config_from_env(
     microsoft_sso_client_id = (env.get("MICROSOFT_SSO_CLIENT_ID") or "").strip()
     microsoft_sso_enabled = bool(microsoft_sso_client_id)
 
+    # S3 storage for DM media/static — both buckets or neither.
+    s3_static_bucket = (env.get("S3_STATIC_BUCKET") or "").strip()
+    s3_media_bucket = (env.get("S3_MEDIA_BUCKET") or "").strip()
+    if bool(s3_static_bucket) != bool(s3_media_bucket):
+        raise _fail(
+            "Set both S3_STATIC_BUCKET and S3_MEDIA_BUCKET, or neither.",
+            hint="The DM stores static files and uploaded media in separate buckets.",
+        )
+    for key, bucket in (("S3_STATIC_BUCKET", s3_static_bucket), ("S3_MEDIA_BUCKET", s3_media_bucket)):
+        if bucket and not S3_BUCKET_NAME_RE.fullmatch(bucket):
+            raise _fail(f"{key}={bucket!r} is not a valid S3 bucket name.")
+    s3_region = (env.get("S3_REGION") or "").strip() or region
+
     github_org = (env.get("GITHUB_ORG") or "iblai").strip()
     prod_images_repo_raw = (env.get("PROD_IMAGES_REPO") or "iblai-prod-images").strip()
     prod_images_tag = (env.get("PROD_IMAGES_TAG") or "main").strip()
@@ -333,6 +347,9 @@ def build_setup_config_from_env(
         github_org=github_org,
         cli_ops_repo=(env.get("CLI_OPS_REPO") or "iblai-cli-ops").strip(),
         prod_images_repo=prod_images_repo_raw,
+        s3_static_bucket=s3_static_bucket,
+        s3_media_bucket=s3_media_bucket,
+        s3_region=s3_region if s3_static_bucket else "",
         llm_api_key=(env.get("OPENAI_API_KEY") or "").strip(),
         admin_username=admin_username,
         admin_email=admin_email,

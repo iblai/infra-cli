@@ -551,6 +551,9 @@ def is_reserved_platform_name(value: str) -> bool:
     return (value or "").strip().lower() in RESERVED_PLATFORM_NAMES
 
 
+S3_BUCKET_NAME_RE = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+
+
 class SetupConfig(BaseModel):
     """Variables needed to bootstrap a provisioned VM. Never persisted to disk."""
     ssh_private_key_path: Path
@@ -593,6 +596,12 @@ class SetupConfig(BaseModel):
     # install URL is built.
     cli_ops_repo: str = "iblai-cli-ops"
     prod_images_repo: str = "iblai-prod-images"
+    # S3 buckets for DM media and static files, both or neither. Empty leaves
+    # the server's storage settings as they are; the region defaults to
+    # aws_default_region.
+    s3_static_bucket: str = ""
+    s3_media_bucket: str = ""
+    s3_region: str = ""
     # Excluded from serialization like every other secret on this model. Nothing
     # currently dumps a SetupConfig, so this is defensive - but these two were
     # the only credentials without the guard, and that asymmetry is the kind
@@ -681,6 +690,20 @@ class SetupConfig(BaseModel):
     microsoft_sso_client_secret: str = Field(default="", exclude=True)
     microsoft_sso_tenant_id: str = ""
     microsoft_sso_organization: str = ""
+
+    @field_validator("s3_static_bucket", "s3_media_bucket")
+    @classmethod
+    def _validate_bucket_name(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not S3_BUCKET_NAME_RE.fullmatch(v):
+            raise ValueError(f"{v!r} is not a valid S3 bucket name")
+        return v
+
+    @model_validator(mode="after")
+    def _s3_buckets_together(self) -> "SetupConfig":
+        if bool(self.s3_static_bucket) != bool(self.s3_media_bucket):
+            raise ValueError("set both S3 buckets (static and media) or neither")
+        return self
 
     @field_validator("admin_username")
     @classmethod

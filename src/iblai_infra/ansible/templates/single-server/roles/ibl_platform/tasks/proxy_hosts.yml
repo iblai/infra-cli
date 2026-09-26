@@ -1,0 +1,41 @@
+---
+# The meilisearch vhost proxies to IBL_EDX.MEILISEARCH_URL, which defaults
+# to the Docker service name (http://meilisearch:7700). Host nginx resolves
+# it when loading config, so `nginx -t` fails unless the host can; tutor
+# publishes meilisearch on LOCALHOST_ADDRESS. Containers keep Docker DNS.
+- name: Read the meilisearch upstream the proxy uses
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    RUN=$(ibl config get IBL_EDX.RUN_MEILISEARCH) || exit 1
+    URL=$(ibl config get IBL_EDX.MEILISEARCH_URL) || exit 1
+    ADDR=$(ibl config get LOCALHOST_ADDRESS) || exit 1
+    HOST=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$URL")
+    if getent hosts "$HOST" >/dev/null; then RESOLVES=yes; else RESOLVES=no; fi
+    printf '{"run": "%s", "host": "%s", "addr": "%s", "resolves": "%s"}\n' "$RUN" "$HOST" "$ADDR" "$RESOLVES"
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: meilisearch_upstream
+  changed_when: false
+
+- name: Make the meilisearch upstream resolvable on the host
+  become: true
+  vars:
+    upstream: "{{ meilisearch_upstream.stdout_lines | last | from_json }}"
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^\S+\s+{{ upstream.host | regex_escape }}$'
+    line: "{{ upstream.addr }} {{ upstream.host }}"
+  when:
+    - upstream.run == "True"
+    - upstream.host | length > 0
+    - upstream.resolves == "no"
+    - upstream.host is not match('^[0-9.]+$')

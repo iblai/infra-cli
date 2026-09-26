@@ -634,6 +634,9 @@ class AnsibleRunner:
             "cli_ops_subdir": cli_ops_subdir or "",
             "prod_images_repo": prod_images_repo,
             "prod_images_subdir": prod_images_subdir or "",
+            "s3_static_bucket": self.config.s3_static_bucket,
+            "s3_media_bucket": self.config.s3_media_bucket,
+            "s3_region": self.config.s3_region,
             "base_domain": self.config.base_domain,
             "edx_version": self.config.edx_version,
             # Empty = not explicitly chosen — fall back to the project name

@@ -17,14 +17,23 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
 
+# Current DM releases no longer ship this command.
 - name: Seed base mentors
   become: false
   ansible.builtin.shell:
     cmd: |
-      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_base_mentors
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/
+      COMMANDS=$(docker compose exec -T web ./manage.py help --commands) || exit 1
+      if ! grep -qx seed_base_mentors <<< "$COMMANDS"; then
+        echo "SEED_BASE_MENTORS_UNAVAILABLE"
+        exit 0
+      fi
+      docker compose exec -T web ./manage.py seed_base_mentors
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+  register: seed_base_mentors
+  changed_when: "'SEED_BASE_MENTORS_UNAVAILABLE' not in seed_base_mentors.stdout"
 
 - name: Seed tools
   become: false

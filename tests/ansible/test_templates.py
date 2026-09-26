@@ -6,7 +6,10 @@ usually as the first `ibl render` failing mid-bootstrap.
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -299,3 +302,69 @@ class TestDataSeeding:
         tasks = _tasks("single-server", "data_seeding")
         assert _first(tasks, r"\bseed_flows\b") < _first(tasks, r"get_or_create_mentor_settings")
 
+
+_REDIRECT_KEY = "IBL_EDX.IBL_EDX_REDIRECTOR.IBL_REDIRECTOR_EXTERNAL_ROOT_URL"
+_FAKE_IBL = """#!/usr/bin/env python3
+import json, os, sys
+path = os.environ["FAKE_IBL_STATE"]
+state = json.load(open(path))
+args = sys.argv[1:]
+if args[:3] == ["services", "list", "--json"]:
+    print(json.dumps({k: {"value": True} for k in state["enabled"]}))
+elif args[:2] == ["config", "get"]:
+    value, source = state["config"][args[2]]
+    print(json.dumps({"key": args[2], "value": value, "source": source}))
+elif args[:2] == ["config", "set"]:
+    key, value = args[2].split("=", 1)
+    state["config"][key] = [value, "config"]
+    state["sets"].append(args[2])
+    json.dump(state, open(path, "w"))
+else:
+    sys.exit("unexpected: " + " ".join(args))
+"""
+
+
+class TestLmsRootRedirect:
+    TASK = "Send the LMS root to the LMS SPA when the skills SPA is off"
+
+    def _script(self) -> str:
+        task = next(t for t in _tasks("single-server", "ibl_platform") if t["name"] == self.TASK)
+        return re.search(r"<<'PY'\n(.*?)\nPY\n", _shell(task), re.S).group(1)
+
+    def _run(self, tmp_path, enabled, value, source):
+        (tmp_path / "ibl").write_text(_FAKE_IBL)
+        (tmp_path / "ibl").chmod(0o755)
+        state = tmp_path / "state.json"
+        config = {"BASE_DOMAIN": ["new.example.com", "config"], _REDIRECT_KEY: [value, source]}
+        state.write_text(json.dumps({"enabled": enabled, "config": config, "sets": []}))
+        env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "FAKE_IBL_STATE": str(state)}
+        subprocess.run([sys.executable, "-"], input=self._script(), text=True, env=env, check=True)
+        return json.loads(state.read_text())["sets"]
+
+    def test_runs_before_the_first_render(self):
+        """edX renders its settings from config; a later write waits for the next render."""
+        tasks = _tasks("single-server", "ibl_platform")
+        assert _first(tasks, r"IBL_REDIRECTOR_EXTERNAL_ROOT_URL") < _first(tasks, r"\bibl render\b")
+
+    @pytest.mark.parametrize(
+        "value, source",
+        [("https://skills.new.example.com", "default"), ("https://lms.old.example.com", "config")],
+        ids=["preset-default", "previous-domain"],
+    )
+    def test_points_the_root_at_the_lms_spa(self, tmp_path, value, source):
+        """The preset runs the LMS SPA and not skills, whose host doesn't exist."""
+        enabled = ["IBL_SPA.RUN_AUTH_SPA", "IBL_SPA.RUN_LMS_SPA", "IBL_SPA.RUN_OS_SPA"]
+        assert self._run(tmp_path, enabled, value, source) == [f"{_REDIRECT_KEY}=https://lms.new.example.com"]
+
+    @pytest.mark.parametrize(
+        "enabled, value, source",
+        [
+            (["IBL_SPA.RUN_LMS_SPA"], "https://lms.new.example.com", "config"),
+            (["IBL_SPA.RUN_LMS_SPA"], "https://landing.example.org/", "config"),
+            (["IBL_SPA.RUN_LMS_SPA", "IBL_SPA.RUN_SKILLS_SPA"], "https://skills.new.example.com", "default"),
+            (["IBL_SPA.RUN_AUTH_SPA"], "https://skills.new.example.com", "default"),
+        ],
+        ids=["already-set", "operator-value", "skills-spa-on", "no-lms-spa"],
+    )
+    def test_leaves_the_root_alone(self, tmp_path, enabled, value, source):
+        assert self._run(tmp_path, enabled, value, source) == []

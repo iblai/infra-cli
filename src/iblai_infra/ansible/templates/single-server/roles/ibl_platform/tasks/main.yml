@@ -258,6 +258,55 @@
   register: ai_call_gate
   changed_when: "'AI_CALL_DISABLED' in ai_call_gate.stdout"
 
+# The LMS root redirects to the skills SPA by default, which the preset
+# doesn't run. A value an operator set is left alone.
+- name: Send the LMS root to the LMS SPA when the skills SPA is off
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    python3 - <<'PY'
+    import json
+    import subprocess
+    import sys
+
+    KEY = "IBL_EDX.IBL_EDX_REDIRECTOR.IBL_REDIRECTOR_EXTERNAL_ROOT_URL"
+
+
+    def ibl(*args):
+        p = subprocess.run(["ibl", *args], capture_output=True, text=True)
+        if p.returncode != 0:
+            sys.exit(f"ibl {' '.join(args)} failed: {p.stderr.strip()}")
+        return p.stdout
+
+
+    def get(key):
+        return json.loads(ibl("config", "get", key, "--json").strip().splitlines()[-1])
+
+
+    spas = json.loads(ibl("services", "list", "--json", "-p", "IBL_SPA.RUN_"))
+    enabled = {k for k, v in spas.items() if v.get("value")}
+    if "IBL_SPA.RUN_SKILLS_SPA" in enabled or "IBL_SPA.RUN_LMS_SPA" not in enabled:
+        sys.exit(0)
+    root = get(KEY)
+    target = f"https://lms.{get('BASE_DOMAIN')['value']}"
+    ours = root["source"] == "default" or str(root["value"]).startswith("https://lms.")
+    if ours and root["value"] != target:
+        ibl("config", "set", f"{KEY}={target}")
+        print("LMS_ROOT_REDIRECT_SET")
+    PY
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: lms_root_redirect
+  changed_when: "'LMS_ROOT_REDIRECT_SET' in lms_root_redirect.stdout"
+
 # The platform reads the AWS keys from secrets.yml (S3 storage, SCORM
 # uploads and backups default to them); `aws configure` alone never
 # reaches the rendered services.

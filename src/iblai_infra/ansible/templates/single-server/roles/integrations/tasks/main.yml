@@ -35,22 +35,6 @@
 - name: Register OAuth and OIDC clients
   ansible.builtin.import_tasks: clients.yml
 
-- name: Set up DM applications and OAuth clients
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl dm auth-setup
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
-
 - name: Sync edX with DM
   become: false
   shell: |

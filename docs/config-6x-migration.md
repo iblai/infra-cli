@@ -272,7 +272,7 @@ and fails — an upstream fix (skip tutor when edX is off) is needed before call
 | `ibl_spa/tasks/main.yml:172-185` | "Re-render templates with SPA configuration" → `ibl render`. |
 | `ibl_spa/tasks/main.yml:202,232,258` | Hardcoded start tasks for exactly auth/mentor/skills → **loop over enabled `IBL_SPA.RUN_*_SPA` toggles** (read via `ibl services list -p IBL_SPA` or `ibl config get K --json`), `docker compose up` each. services.yml becomes the single source of truth for which SPAs deploy — the preset decides, the role follows (§0 gap 2). Compose dirs render unconditionally, so the loop can't hit a missing dir. |
 | `ibl_spa/tasks/main.yml:281-294` | `save && global-proxy reload` → `render && reload`. |
-| `integrations/tasks/main.yml:9-12` | Chain head `ibl config save && ...` → `ibl render && ...` (oauth/oidc/edx-manager launch + dm auth-setup unchanged). |
+| `integrations/tasks/main.yml:9-12` | Chain head `ibl config save && ...` → `ibl render && ...`. `ibl launch --ibl-oauth --ibl-oidc --ibl-edx-manager` and `ibl dm auth-setup` can't re-run on 7.13+ → `integrations/tasks/clients.yml` and `ibl_dm/tasks/credentials.yml`, which update the rows to the current config. |
 | `ibl_tenant_platform/tasks/main.yml:41-61` | `--set PLATFORM_NAME` → `ibl config set` + render. |
 | `spa_clone` / `spa_clone_remove` | **No change** — deliberately copies rendered `.env` (bypasses config system); custom_domains nginx survival unaffected. Keep the bypass. |
 

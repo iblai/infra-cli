@@ -1,9 +1,8 @@
 ---
-# The OAuth, OIDC and edx-manager clients `ibl launch --ibl-oauth --ibl-oidc
-# --ibl-edx-manager` registers, without its first step: a checked
-# `docker network create` that fails once the network exists, which it
-# always does by now.
-- name: Register the OAuth, OIDC and edx-manager clients
+# The OAuth and OIDC clients `ibl launch --ibl-oauth --ibl-oidc` registers,
+# without its first step: a checked `docker network create` that fails once
+# the network exists, which it always does by now.
+- name: Register the OAuth and OIDC clients
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
@@ -16,16 +15,12 @@
     import click
 
     from ibl.cli import cli, setup
-    from ibl.tasks.secrets_task import (
-        EdxManagerConfigTaskRunner,
-        OauthConfigTaskRunner,
-        OidcConfigTaskRunner,
-    )
+    from ibl.tasks.secrets_task import OauthConfigTaskRunner, OidcConfigTaskRunner
 
     ctx = click.Context(cli)
     with ctx:
         setup(ctx, os.environ["IBL_ROOT"])
-        for runner in (OauthConfigTaskRunner, OidcConfigTaskRunner, EdxManagerConfigTaskRunner):
+        for runner in (OauthConfigTaskRunner, OidcConfigTaskRunner):
             runner(ctx).launch()
     PY
   args:
@@ -35,3 +30,59 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
+
+# `ibl launch --ibl-edx-manager` skips an existing row, which would leave edX
+# calling the DM with a client that a resetup rotated away.
+- name: Register the edX credentials for the DM
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    set -o pipefail
+    EDX_MANAGER_CREDENTIALS=$(python3 - <<'PY' | tail -n 1
+    import json
+    import os
+
+    import click
+
+    from ibl.cli import cli, setup
+
+    ctx = click.Context(cli)
+    with ctx:
+        setup(ctx, os.environ["IBL_ROOT"])
+        c = ctx.obj.config
+        print(json.dumps({
+            "access_token_url": c.IBL_DM.TOKEN_URL,
+            "client_id": c.IBL_OAUTH.IBL_EDX.CLIENT_ID,
+            "client_secret": c.IBL_OAUTH.IBL_EDX.CLIENT_SECRET,
+        }, default=str))
+    PY
+    ) || exit 1
+    export EDX_MANAGER_CREDENTIALS
+    docker exec -i -e EDX_MANAGER_CREDENTIALS ibl_prod_lms python manage.py lms shell <<'PY'
+    import json
+    import os
+
+    from ibl_api_auth.models import OAuthCredentials
+
+    fields = json.loads(os.environ["EDX_MANAGER_CREDENTIALS"])
+    row, created = OAuthCredentials.objects.get_or_create(app_id="manager")
+    if created or any(getattr(row, k) != v for k, v in fields.items()):
+        for k, v in fields.items():
+            setattr(row, k, v)
+        row.access_token, row.created_on, row.expires_on = "", None, None
+        row.save()
+        print("EDX_MANAGER_CREDENTIALS_CHANGED")
+    PY
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: edx_manager_credentials
+  changed_when: "'EDX_MANAGER_CREDENTIALS_CHANGED' in edx_manager_credentials.stdout"
+  no_log: true

@@ -211,6 +211,37 @@ class TestClientRegistration:
         assert _imports(_tasks("single-server", "ibl_service_update"), "clients") >= 0
 
 
+class TestCredentialRegistration:
+    def test_no_role_runs_the_create_only_helpers(self):
+        """They fail or skip once their rows exist: a re-run failed on a duplicate
+        client, and a resetup's rotated clients never reached the DM or edX."""
+        for tasks_file, task in _all_tasks():
+            assert not re.search(
+                r"\bibl dm auth-setup\b|manager_credential_setup|EdxManagerConfigTaskRunner|add_new_credentials",
+                _shell(task),
+            ), tasks_file
+
+    @pytest.mark.parametrize("role", ["ibl_dm", "ibl_service_update"])
+    def test_setup_and_service_update_share_the_dm_step(self, role):
+        tasks = _tasks("single-server", role)
+        assert _first(tasks, r"\bmigrate\b") < _imports(tasks, "credentials")
+
+    def test_dm_step_follows_the_admin_user(self):
+        """The DM's application for edX belongs to that user."""
+        tasks = _tasks("single-server", "ibl_dm")
+        assert _first(tasks, r"create_superuser") < _imports(tasks, "credentials")
+
+    @pytest.mark.parametrize("file", ["ibl_dm/tasks/credentials.yml", "integrations/tasks/clients.yml"])
+    def test_client_secrets_stay_off_command_lines_and_logs(self, file):
+        """The upstream helpers put them in the command, which a failure printed."""
+        tasks = yaml.safe_load((TEMPLATES / "single-server/roles" / file).read_text())
+        payloads = [t for t in tasks if re.search(r"docker (compose run|exec) .*-e \w+", _shell(t))]
+        assert payloads
+        for task in payloads:
+            assert task.get("no_log") is True, task["name"]
+            assert not re.search(r"-e \w+=", _shell(task)), task["name"]
+
+
 class TestServiceUpdateOnClientServers:
     def test_spa_sso_redirects_use_the_servers_domain(self):
         """service-update targets a host; its base_domain extra-var is a placeholder."""

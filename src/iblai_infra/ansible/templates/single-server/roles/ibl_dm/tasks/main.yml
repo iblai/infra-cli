@@ -189,40 +189,5 @@
       Common cause: missing database migrations — try 'ibl dm migrate'.
   when: dm_restart_count.stdout | trim | int > 0
 
-# Upstream's own helpers, called directly so the steps above stay in charge
-# of ordering: the OAuth rows and application the DM uses to reach edX, the
-# DM's token endpoints for LMS, CMS and itself, and the AI service user.
 - name: Register the DM OAuth credentials
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    python3 - <<'PY'
-    import os
-
-    import click
-
-    from ibl.cli import cli, setup
-    from ibl.tasks.dm_task import DmTaskRunner
-    from ibl.utils.dm_utils import manager_credential_setup
-
-    ctx = click.Context(cli)
-    with ctx:
-        setup(ctx, os.environ["IBL_ROOT"])
-        config = ctx.obj.config
-        task = DmTaskRunner(ctx)
-        manager_credential_setup(task.absolute_app_directory, config)
-        task.configure_oauth_credentials()
-        if config.IBL_DM.ENABLE_IBL_AI:
-            task.create_ai_user()
-    PY
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
-  no_log: true
+  ansible.builtin.import_tasks: credentials.yml

@@ -50,20 +50,7 @@
   ignore_errors: true
 
 - name: Rotate secrets and auth credentials
-  become: false
-  shell: |
-    export PYENV_ROOT="{{ pyenv_root }}"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
-    pyenv activate "{{ venv_name }}"
-    ibl secrets rotate --all-generated -y
-  args:
-    executable: /bin/bash
-    chdir: "{{ repo_dir }}"
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-    IBL_ROOT: "{{ ibl_root }}/"
-    NODE_ID: "{{ node_id }}"
+  ansible.builtin.import_tasks: rotate_secrets.yml
   when: is_resetup | default(false) | bool
 
 - name: Sync postgres password after secret rotation

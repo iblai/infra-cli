@@ -183,7 +183,7 @@ Returns `SetupConfig` with `is_resetup=True`. Does **not** prompt for image tags
 **What `is_resetup=True` triggers in Ansible** (`ibl_platform/tasks/main.yml`):
 1. Restore postgres data dir ownership (uid 999) → restart postgres → wait for ready
 2. Capture current MySQL root password
-3. `ibl secrets rotate --all-generated -y` — regenerate every gate-active generator-backed secret
+3. `ibl_platform/tasks/rotate_secrets.yml` (shared with `launch`) — rotate every gate-active generator-backed secret except the keys that encrypt stored data (`IBL_DM.FIELD_ENCRYPTION_KEY`, `IBL_DM.LANGFUSE_ENCRYPTION_KEY`, the SSO backend's `IBL_FERNET_KEY`, `IBL_BACKUPS.ENCRYPTION.CRYPT_PASSWORD`): `--all-generated` rotates those too, and nothing re-encrypts, so the DM could no longer read its own credential rows
 4. Sync new postgres password (`ALTER USER` from `ibl config get`)
 5. Sync new MySQL passwords (root + openedx users, using old→new password)
 

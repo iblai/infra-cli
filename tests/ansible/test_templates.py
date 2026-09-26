@@ -392,3 +392,20 @@ class TestTenantDisplayName:
 
     def test_a_later_tenant_leaves_it(self, tmp_path):
         assert self._run(tmp_path, "config") == []
+
+
+class TestSecretRotation:
+    def test_no_role_rotates_every_generated_secret(self):
+        """`--all-generated` also rotates the keys that encrypt stored data; after
+        a resetup the DM could no longer read its own credential rows."""
+        for tasks_file, task in _all_tasks():
+            assert "--all-generated" not in _shell(task), tasks_file
+
+    def test_the_dm_field_encryption_key_is_kept(self):
+        script = _shell(_tasks("single-server", "ibl_platform", "rotate_secrets.yml")[0])
+        keep = script[script.index("KEEP = {"):script.index("}", script.index("KEEP = {"))]
+        assert '"IBL_DM.FIELD_ENCRYPTION_KEY"' in keep
+
+    @pytest.mark.parametrize("role", ["ibl_platform", "ibl_launch"])
+    def test_resetup_and_launch_share_the_rotation(self, role):
+        assert _imports(_tasks("single-server", role), "rotate_secrets") >= 0

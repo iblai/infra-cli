@@ -19,6 +19,8 @@
     path: "{{ repo_dir }}"
     state: directory
 
+# Auth comes from the GIT_CONFIG insteadOf rewrite in `environment:`, so the
+# token never appears in the URL (uv and git print URLs when an install fails).
 - name: Install prod images package (cli-ops + image definitions)
   become: false
   shell: |
@@ -27,7 +29,7 @@
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    uv pip install "iblai-images[sumac] @ git+https://{{ git_access_token }}@github.com/{{ github_org | default('iblai') }}/{{ prod_images_repo | default('iblai-prod-images') }}@{{ prod_images_tag | default('main') }}#egg=iblai-images{% if prod_images_subdir | default('') %}&subdirectory={{ prod_images_subdir }}{% endif %}" --reinstall
+    uv pip install "iblai-images[sumac] @ git+https://github.com/{{ github_org | default('iblai') }}/{{ prod_images_repo | default('iblai-prod-images') }}@{{ prod_images_tag | default('main') }}#egg=iblai-images{% if prod_images_subdir | default('') %}&subdirectory={{ prod_images_subdir }}{% endif %}" --reinstall
   args:
     executable: /bin/bash
   environment:
@@ -49,7 +51,7 @@
     eval "$(pyenv init -)"
     eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    uv pip install "git+https://{{ git_access_token }}@github.com/{{ github_org | default('iblai') }}/{{ cli_ops_repo | default('iblai-cli-ops') }}@{{ cli_ops_release_tag | default('main') }}{% if cli_ops_subdir | default('') %}#subdirectory={{ cli_ops_subdir }}{% endif %}" --reinstall
+    uv pip install "git+https://github.com/{{ github_org | default('iblai') }}/{{ cli_ops_repo | default('iblai-cli-ops') }}@{{ cli_ops_release_tag | default('main') }}{% if cli_ops_subdir | default('') %}#subdirectory={{ cli_ops_subdir }}{% endif %}" --reinstall
   args:
     executable: /bin/bash
   environment:

@@ -319,6 +319,8 @@ elif args[:2] == ["config", "set"]:
     state["config"][key] = [value, "config"]
     state["sets"].append(args[2])
     json.dump(state, open(path, "w"))
+elif args == ["render"]:
+    pass
 else:
     sys.exit("unexpected: " + " ".join(args))
 """
@@ -368,3 +370,25 @@ class TestLmsRootRedirect:
     )
     def test_leaves_the_root_alone(self, tmp_path, enabled, value, source):
         assert self._run(tmp_path, enabled, value, source) == []
+
+
+class TestTenantDisplayName:
+    """`platform create` reuses the tenant role; writing the display name every
+    time renamed the whole deployment after each tenant added."""
+
+    def _run(self, tmp_path, source):
+        task = next(t for t in _tasks("single-server", "ibl_tenant_platform") if t["name"].startswith("Set PLATFORM_NAME"))
+        script = _shell(task).split("set -o pipefail", 1)[1].replace("{{ platform_name | upper }}", "ACME")
+        (tmp_path / "ibl").write_text(_FAKE_IBL)
+        (tmp_path / "ibl").chmod(0o755)
+        state = tmp_path / "state.json"
+        state.write_text(json.dumps({"enabled": [], "config": {"PLATFORM_NAME": ["EXAMPLE", source]}, "sets": []}))
+        env = {"PATH": f"{tmp_path}:{Path(sys.executable).parent}:/usr/bin:/bin", "FAKE_IBL_STATE": str(state)}
+        subprocess.run(["bash", "-c", "set -o pipefail" + script], env=env, check=True)
+        return json.loads(state.read_text())["sets"]
+
+    def test_the_setup_tenant_names_the_deployment(self, tmp_path):
+        assert self._run(tmp_path, "default") == ["PLATFORM_NAME=ACME"]
+
+    def test_a_later_tenant_leaves_it(self, tmp_path):
+        assert self._run(tmp_path, "config") == []

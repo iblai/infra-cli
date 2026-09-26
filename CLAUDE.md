@@ -386,6 +386,7 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - Setup writes the AWS keys to `secrets.yml`; `S3_STATIC_BUCKET` + `S3_MEDIA_BUCKET` (setup-env) switch DM storage to S3, and nothing ever switches it off. With AI on, the Flowise secrets `ibl dm up` requires are filled (`ibl_platform/tasks/flowise_secrets.yml`); `proxy_hosts.yml` maps the meilisearch upstream in `/etc/hosts` so host nginx can load its vhost
 - `data_seeding` gives every mentor a settings row after `seed_flows`, which creates some without one (chat reads it, so those mentors could not be chatted with), and runs `seed_base_mentors` only where the DM still ships it
 - With the skills SPA off and the LMS SPA on (the preset), `ibl_platform` points the LMS root redirect (`IBL_EDX.IBL_EDX_REDIRECTOR.IBL_REDIRECTOR_EXTERNAL_ROOT_URL`, default `https://skills.<domain>`) at `https://lms.<domain>` before the first render; a value an operator set is left alone
+- `PLATFORM_NAME` (the deployment's display name) comes from the tenant named at setup; `ibl_tenant_platform` writes it only while unset, so `iblai infra platform create` adds a tenant without renaming the deployment
 - service-update installs from `--github-org` / `--prod-images-repo` / `--cli-ops-repo` (cli tag from the given prod-images pin unless `--cli-tag`), reads the server's `BASE_DOMAIN` for the spa-sso redirects, and creates the fixed-password Playwright users only with `--test-users`
 
 ### IAM Permission Checks

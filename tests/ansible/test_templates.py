@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from ansible.parsing.splitter import split_args
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "src/iblai_infra/ansible/templates"
 
@@ -409,3 +410,23 @@ class TestSecretRotation:
     @pytest.mark.parametrize("role", ["ibl_platform", "ibl_launch"])
     def test_resetup_and_launch_share_the_rotation(self, role):
         assert _imports(_tasks("single-server", role), "rotate_secrets") >= 0
+
+
+def _walk(tasks):
+    for task in tasks or []:
+        yield task
+        for key in ("block", "rescue", "always"):
+            yield from _walk(task.get(key))
+
+
+class TestAnsibleLoadsEveryTask:
+    @pytest.mark.parametrize(
+        "tasks_file", sorted(TEMPLATES.glob("*/roles/*/tasks/*.yml")), ids=lambda p: str(p.relative_to(TEMPLATES))
+    )
+    def test_free_form_commands_split(self, tasks_file):
+        """Ansible splits a free-form command on its quotes when it loads the
+        playbook; one apostrophe in a script comment failed the whole run."""
+        for task in _walk(yaml.safe_load(tasks_file.read_text())):
+            for module in ("shell", "ansible.builtin.shell", "command", "ansible.builtin.command"):
+                if isinstance(task.get(module), str):
+                    split_args(task[module])

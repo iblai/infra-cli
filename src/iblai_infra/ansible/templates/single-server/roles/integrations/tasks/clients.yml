@@ -1,0 +1,37 @@
+---
+# The OAuth, OIDC and edx-manager clients `ibl launch --ibl-oauth --ibl-oidc
+# --ibl-edx-manager` registers, without its first step: a checked
+# `docker network create` that fails once the network exists, which it
+# always does by now.
+- name: Register the OAuth, OIDC and edx-manager clients
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    python3 - <<'PY'
+    import os
+
+    import click
+
+    from ibl.cli import cli, setup
+    from ibl.tasks.secrets_task import (
+        EdxManagerConfigTaskRunner,
+        OauthConfigTaskRunner,
+        OidcConfigTaskRunner,
+    )
+
+    ctx = click.Context(cli)
+    with ctx:
+        setup(ctx, os.environ["IBL_ROOT"])
+        for runner in (OauthConfigTaskRunner, OidcConfigTaskRunner, EdxManagerConfigTaskRunner):
+            runner(ctx).launch()
+    PY
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"

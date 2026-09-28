@@ -1,9 +1,22 @@
 ---
+# `seed_flows` gives every platform without one a "use main LLM key" setting
+# that defaults to off, which cuts a tenant off from the deployment's keys.
+# Those it just created are switched on; a setting an admin made is kept.
 - name: Seed DM flows
   become: false
   ansible.builtin.shell:
     cmd: |
-      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_flows
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from core.models import Platform
+      from django.core.management import call_command
+      from ibl_ai_mentor.models import UseMainLLMKey
+
+      had_setting = set(UseMainLLMKey.objects.values_list('platform_id', flat=True))
+      without = [p.id for p in Platform.objects.all() if p.id not in had_setting]
+      call_command('seed_flows')
+      enabled = UseMainLLMKey.objects.filter(platform_id__in=without, use_main_key=False).update(use_main_key=True)
+      print('SEED_FLOWS_DONE main key kept on for ' + str(enabled))
+      PY
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"

@@ -162,6 +162,27 @@
 # onto a single stdout line, which is exactly what
 # `_maybe_capture_fixture` in runner.py expects (both BEGIN/END markers
 # on the same line).
+# A new tenant uses the deployment's LLM keys. Seeding leaves the setting
+# alone once it exists.
+- name: Let the new tenant use the deployment's LLM keys
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i ibl_dm_pro_web python manage.py shell <<'PY'
+      from core.models import Platform
+      from ibl_ai_mentor.models import UseMainLLMKey
+
+      platform = Platform.objects.get(key='{{ platform_name }}')
+      UseMainLLMKey.objects.update_or_create(platform=platform, defaults={'use_main_key': True})
+      print('TENANT_MAIN_KEY_ON')
+      PY
+    executable: /bin/bash
+  register: tenant_main_key
+  changed_when: "'TENANT_MAIN_KEY_ON' in (tenant_main_key.stdout | default(''))"
+  when:
+    - (platform_name | default('main')) != 'main'
+    - "'TENANT_PLATFORM_STATUS:ABSENT' in (tenant_check.stdout | default(''))"
+
 - name: Show tenant admin credentials (one-time, save this output)
   ansible.builtin.debug:
     msg: |

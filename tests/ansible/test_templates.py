@@ -430,3 +430,70 @@ class TestAnsibleLoadsEveryTask:
             for module in ("shell", "ansible.builtin.shell", "command", "ansible.builtin.command"):
                 if isinstance(task.get(module), str):
                     split_args(task[module])
+
+
+class TestTenantsKeepTheMainKeys:
+    """The DM's `seed_flows` gives every platform without one a "use main LLM
+    key" setting that defaults to off, so each resetup cut the existing tenants
+    off from the deployment's keys."""
+
+    def _seed(self, settings: dict[str, bool], platforms: list[str]) -> dict[str, bool]:
+        """Run the seed task's script with `seed_flows` doing what the DM does."""
+        import types
+        from unittest.mock import patch
+
+        rows = {k: types.SimpleNamespace(platform_id=k, use_main_key=v) for k, v in settings.items()}
+
+        class Rows(list):
+            def values_list(self, field, flat):
+                return [getattr(r, field) for r in self]
+
+            def filter(self, platform_id__in, use_main_key):
+                return Rows(r for r in self if r.platform_id in platform_id__in and r.use_main_key == use_main_key)
+
+            def update(self, use_main_key):
+                for r in self:
+                    r.use_main_key = use_main_key
+                return len(self)
+
+        use_main_key = types.SimpleNamespace(objects=types.SimpleNamespace(
+            values_list=lambda *a, **k: Rows(rows.values()).values_list(*a, **k),
+            filter=lambda **k: Rows(rows.values()).filter(**k),
+        ))
+        platform = types.SimpleNamespace(objects=types.SimpleNamespace(
+            all=lambda: [types.SimpleNamespace(id=k, key=k) for k in platforms],
+        ))
+
+        def seed_flows(name):
+            for key in platforms:
+                rows.setdefault(key, types.SimpleNamespace(platform_id=key, use_main_key=False))
+
+        modules = {name: types.ModuleType(name) for name in (
+            "core", "core.models", "django", "django.core", "django.core.management",
+            "ibl_ai_mentor", "ibl_ai_mentor.models",
+        )}
+        modules["core.models"].Platform = platform
+        modules["django.core.management"].call_command = seed_flows
+        modules["ibl_ai_mentor.models"].UseMainLLMKey = use_main_key
+        task = next(t for t in _tasks("single-server", "data_seeding") if t["name"] == "Seed DM flows")
+        code = re.search(r"<<'PY'\n(.*?)\nPY\n", _shell(task), re.S).group(1)
+        with patch.dict(sys.modules, modules):
+            exec(code, {})
+        return {k: r.use_main_key for k, r in rows.items()}
+
+    def test_tenants_without_a_setting_keep_the_main_keys(self):
+        assert self._seed({"main": True}, ["main", "acme", "globex"]) == {"main": True, "acme": True, "globex": True}
+
+    def test_an_admin_setting_is_kept(self):
+        assert self._seed({"main": True, "acme": False, "globex": True}, ["main", "acme", "globex"]) == {
+            "main": True, "acme": False, "globex": True,
+        }
+
+    def test_a_new_tenant_is_given_the_main_keys(self):
+        """After its launch, and only when this run created it."""
+        tasks = _tasks("single-server", "ibl_tenant_platform")
+        names = [t["name"] for t in tasks]
+        step = tasks[names.index("Let the new tenant use the deployment's LLM keys")]
+        assert names.index("Launch tenant platform via run_launch_steps") < names.index(step["name"])
+        assert "'use_main_key': True" in _shell(step)
+        assert any("TENANT_PLATFORM_STATUS:ABSENT" in c for c in step["when"])

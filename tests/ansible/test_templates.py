@@ -497,3 +497,23 @@ class TestTenantsKeepTheMainKeys:
         assert names.index("Launch tenant platform via run_launch_steps") < names.index(step["name"])
         assert "'use_main_key': True" in _shell(step)
         assert any("TENANT_PLATFORM_STATUS:ABSENT" in c for c in step["when"])
+
+
+class TestFreshInstallAccess:
+    def test_health_mentors_skip_moderation_once_seeded(self):
+        """Their moderation builds a real model; with only a gateway key the
+        health check, and the readiness gate of `ibl dm update`, failed."""
+        tasks = _tasks("single-server", "data_seeding")
+        names = [t["name"] for t in tasks]
+        i = names.index("Keep the health-check mentors off the moderation model")
+        assert _first(tasks, r"\bseed_flows\b") < i
+        assert "llm_provider='fake-llm'" in _shell(tasks[i])
+
+    def test_the_super_admin_administers_main(self):
+        """The platform reads admin rights from the platform link, not the superuser flag."""
+        tasks = _tasks("single-server", "admin_setup")
+        names = [t["name"] for t in tasks]
+        i = names.index("Make the super admin an admin of the main platform")
+        assert names.index("Create DM super admin") < i
+        script = _shell(tasks[i])
+        assert "'is_admin': True" in script and "key='main'" in script and "{{ admin_username }}" in script

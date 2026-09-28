@@ -78,6 +78,25 @@
   register: fake_llm_provider
   changed_when: "'FAKE_LLM_PROVIDER_CREATED' in fake_llm_provider.stdout"
 
+# The health-check mentors chat with a stand-in model, but their moderation
+# step builds a real one, which needs an OpenAI key. With only a gateway key
+# the check failed, and with it the readiness gate of `ibl dm update`.
+- name: Keep the health-check mentors off the moderation model
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from ibl_ai_mentor.models import Mentor
+
+      switched = Mentor.objects.filter(llm_provider='fake-llm', enable_moderation=True).update(enable_moderation=False)
+      print('HEALTH_MODERATION_OFF ' + str(switched))
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: health_moderation
+  changed_when: "'HEALTH_MODERATION_OFF 0' not in health_moderation.stdout"
+
 - name: Seed LLM registry
   become: false
   ansible.builtin.shell:

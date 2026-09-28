@@ -109,6 +109,27 @@
     HOME: "/home/{{ ansible_user }}"
   no_log: true
 
+# The platform counts a user as a platform admin through their link to it,
+# not the superuser flag, so the super admin is linked to main as an admin.
+- name: Make the super admin an admin of the main platform
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from core.models import Platform
+      from django.apps import apps
+
+      Link = apps.get_model('core', 'UserPlatformLink')
+      user = Link._meta.get_field('user').related_model.objects.get(username='{{ admin_username }}')
+      Link.objects.update_or_create(
+          user=user, platform=Platform.objects.get(key='main'), defaults={'is_admin': True, 'active': True}
+      )
+      print('MAIN_PLATFORM_ADMIN_SET')
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
 # LMS superuser must have first_name + last_name + UserProfile.name set,
 # otherwise skills/enrollment flows that look up the learner's display name
 # render blank and (in some flows) reject the enrollment outright. We

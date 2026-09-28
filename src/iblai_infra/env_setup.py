@@ -33,6 +33,7 @@ from iblai_infra.models import (
     DNSConfig,
     Environment,
     InfraConfig,
+    LLMProvider,
     NetworkConfig,
     ProjectState,
     RESERVED_ADMIN_USERNAMES,
@@ -41,6 +42,7 @@ from iblai_infra.models import (
     SetupConfig,
     SSHConfig,
     SSHKeyMethod,
+    choose_llm_key,
     is_reserved_admin_username,
     is_reserved_platform_name,
 )
@@ -87,6 +89,17 @@ def _get_git_token(env: dict[str, str]) -> str:
         if v:
             return v
     return ""
+
+
+def llm_key_from_env(env: dict[str, str]) -> tuple[LLMProvider, str]:
+    """The LLM key a .env provides: OPENAI_API_KEY or OPENROUTER_API_KEY."""
+    try:
+        return choose_llm_key(env.get("OPENAI_API_KEY", ""), env.get("OPENROUTER_API_KEY", ""))
+    except ValueError:
+        raise _fail(
+            "Set OPENAI_API_KEY or OPENROUTER_API_KEY, not both.",
+            hint="Add the other one later with `iblai infra llm set-key`.",
+        )
 
 
 def build_bootstrap_state_from_env(env: dict[str, str]) -> ProjectState:
@@ -299,6 +312,8 @@ def build_setup_config_from_env(
             raise _fail(f"{key}={bucket!r} is not a valid S3 bucket name.")
     s3_region = (env.get("S3_REGION") or "").strip() or region
 
+    llm_provider, llm_api_key = llm_key_from_env(env)
+
     github_org = (env.get("GITHUB_ORG") or "iblai").strip()
     prod_images_repo_raw = (env.get("PROD_IMAGES_REPO") or "iblai-prod-images").strip()
     prod_images_tag = (env.get("PROD_IMAGES_TAG") or "main").strip()
@@ -350,7 +365,8 @@ def build_setup_config_from_env(
         s3_static_bucket=s3_static_bucket,
         s3_media_bucket=s3_media_bucket,
         s3_region=s3_region if s3_static_bucket else "",
-        llm_api_key=(env.get("OPENAI_API_KEY") or "").strip(),
+        llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
         admin_username=admin_username,
         admin_email=admin_email,
         admin_password=admin_password,

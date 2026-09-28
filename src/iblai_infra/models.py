@@ -49,14 +49,33 @@ class SSHKeyMethod(str, Enum):
 
 
 class LLMProvider(str, Enum):
-    """Name of the credential row the mentor service looks up.
+    """Which provider an LLM key belongs to.
 
-    The value is written verbatim as the credential's name and matched
-    case-sensitively on the server, so these must stay lowercase.
+    The server matches credential names exactly, so these stay lowercase.
     """
 
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    OPENROUTER = "openrouter"
+
+    @property
+    def credential_name(self) -> str:
+        """The credential row the key is stored as.
+
+        An OpenRouter key funds the ibl.ai gateway, which reads its key from
+        the credential named ``iblai``; the others go under their own name.
+        """
+        return "iblai" if self is LLMProvider.OPENROUTER else self.value
+
+
+def choose_llm_key(openai_key: str, openrouter_key: str) -> tuple[LLMProvider, str]:
+    """The provider and key when at most one of the two is given."""
+    openai_key, openrouter_key = (openai_key or "").strip(), (openrouter_key or "").strip()
+    if openai_key and openrouter_key:
+        raise ValueError("give an OpenAI key or an OpenRouter key, not both")
+    if openrouter_key:
+        return LLMProvider.OPENROUTER, openrouter_key
+    return LLMProvider.OPENAI, openai_key
 
 
 class CertMethod(str, Enum):

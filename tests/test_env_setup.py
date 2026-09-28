@@ -22,6 +22,7 @@ from iblai_infra.env_setup import (
 )
 from iblai_infra.models import (
     DeploymentType,
+    LLMProvider,
     ProjectState,
 )
 
@@ -442,5 +443,20 @@ class TestS3Buckets:
 
     def test_invalid_bucket_name_is_rejected(self, project_state):
         env = _required_env(S3_STATIC_BUCKET="Acme_Static", S3_MEDIA_BUCKET="acme-dm-media")
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(env, state=project_state)
+
+
+class TestLLMKey:
+    def test_an_openrouter_key_is_the_gateway_provider(self, project_state):
+        config = build_setup_config_from_env(_required_env(OPENROUTER_API_KEY="sk-or-v1-example"), state=project_state)
+        assert (config.llm_provider, config.llm_api_key) == (LLMProvider.OPENROUTER, "sk-or-v1-example")
+
+    def test_an_openai_key_still_works(self, project_state):
+        config = build_setup_config_from_env(_required_env(OPENAI_API_KEY="sk-example"), state=project_state)
+        assert (config.llm_provider, config.llm_api_key) == (LLMProvider.OPENAI, "sk-example")
+
+    def test_both_keys_are_refused(self, project_state):
+        env = _required_env(OPENAI_API_KEY="sk-example", OPENROUTER_API_KEY="sk-or-v1-example")
         with pytest.raises(typer.Exit):
             build_setup_config_from_env(env, state=project_state)

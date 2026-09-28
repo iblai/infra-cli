@@ -10,6 +10,7 @@ import questionary
 from iblai_infra import ui
 from iblai_infra.env_utils import resolve_pinned_cli_ops_tag
 from iblai_infra.models import (
+    LLMProvider,
     ProjectState,
     RESERVED_ADMIN_USERNAMES,
     RESERVED_PLATFORM_NAMES,
@@ -622,6 +623,46 @@ def _prompt_microsoft_sso_config() -> dict:
     }
 
 
+LLM_KEY_CHOICES = {
+    LLMProvider.OPENAI: "OpenAI",
+    LLMProvider.OPENROUTER: "OpenRouter",
+}
+
+
+def _prompt_llm_key() -> tuple[LLMProvider, str]:
+    """Which LLM key the operator provides, if any, and the key itself."""
+    ui.info(
+        "An LLM key enables the AI mentor features. An OpenRouter key is stored as "
+        "the ibl.ai gateway key. Choose which one to provide, or skip."
+    )
+    choice = questionary.select(
+        "Which LLM key would you like to provide?",
+        choices=[questionary.Choice(label, value=p.value) for p, label in LLM_KEY_CHOICES.items()]
+        + [questionary.Choice("Skip for now", value="")],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if choice is None:
+        ui.abort()
+    if not choice:
+        ui.muted("Skipped - set one later with iblai infra llm set-key")
+        return LLMProvider.OPENAI, ""
+    provider = LLMProvider(choice)
+    key = questionary.password(
+        f"{LLM_KEY_CHOICES[provider]} API key:",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if key is None:
+        ui.abort()
+    key = key.strip()
+    if key:
+        ui.success(f"{provider.value} API key provided")
+    else:
+        ui.muted("Skipped - set one later with iblai infra llm set-key")
+    return provider, key
+
+
 def _prompt_credentials(
     step: int,
     total: int,
@@ -751,20 +792,7 @@ def _prompt_credentials(
             ui.abort()
         aws_region = aws_region.strip()
 
-    openai_api_key = ""
-    ui.info("OpenAI API key enables AI mentor features. Leave blank to skip.")
-    openai_input = questionary.password(
-        "OpenAI API Key (optional):",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if openai_input is None:
-        ui.abort()
-    openai_api_key = openai_input.strip()
-    if openai_api_key:
-        ui.success("OpenAI API key provided")
-    else:
-        ui.muted("Skipped — can be configured later in DM admin")
+    llm_provider, llm_api_key = _prompt_llm_key()
 
     ui.info("Super admin account for the platform (LMS and Data Manager).")
 
@@ -810,7 +838,8 @@ def _prompt_credentials(
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,
-        "llm_api_key": openai_api_key,
+        "llm_provider": llm_provider,
+        "llm_api_key": llm_api_key,
         "admin_username": admin_username,
         "admin_email": admin_email,
         "admin_password": admin_password,

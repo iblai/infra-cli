@@ -22,12 +22,14 @@ from iblai_infra.models import (
     IngressEntry,
     IngressLockConfig,
     IngressRegistry,
+    LLMProvider,
     NetworkConfig,
     ProjectState,
     SSHConfig,
     SSHKeyMethod,
     SetupConfig,
     WAFConfig,
+    choose_llm_key,
     generate_password,
 )
 
@@ -749,3 +751,17 @@ class TestIngressRegistry:
         restored = IngressRegistry.model_validate(data)
         assert restored.entries[0].name == "a"
         assert restored.lock.bucket == "b"
+
+
+class TestChooseLLMKey:
+    def test_an_openrouter_key_selects_the_gateway_provider(self):
+        assert choose_llm_key("", " sk-or-v1-example ") == (LLMProvider.OPENROUTER, "sk-or-v1-example")
+
+    def test_otherwise_the_key_is_an_openai_one(self):
+        assert choose_llm_key("sk-example", "") == (LLMProvider.OPENAI, "sk-example")
+        assert choose_llm_key("", "") == (LLMProvider.OPENAI, "")
+
+    def test_both_keys_are_refused(self):
+        """Only one credential is written per run; the other would be dropped silently."""
+        with pytest.raises(ValueError):
+            choose_llm_key("sk-example", "sk-or-v1-example")

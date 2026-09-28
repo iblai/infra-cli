@@ -678,6 +678,7 @@ class AnsibleRunner:
             "microsoft_sso_tenant_id": self.config.microsoft_sso_tenant_id,
             "microsoft_sso_organization": self.config.microsoft_sso_organization,
             "llm_provider": self.config.llm_provider.value,
+            "llm_credential_name": self.config.llm_provider.credential_name,
             "llm_api_key": self.config.llm_api_key,
             "admin_username": self.config.admin_username,
             "admin_email": self.config.admin_email,

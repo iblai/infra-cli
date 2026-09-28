@@ -126,9 +126,9 @@ iblai infra setup <name>       # a Terraform-provisioned environment (IP/domain/
 iblai infra setup              # any existing server (bare metal / other cloud) — prompts for everything
 ```
 
-Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), OpenAI key (optional), and super admin credentials.
+Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), an LLM key (OpenAI or OpenRouter, optional), and super admin credentials.
 
-**Everything optional can wait.** SMTP, SSO, Stripe and the OpenAI key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add any of them later with [`iblai infra configure <name>`](#7-optional-feature-toggles-post-provision) — no need to re-run setup.
+**Everything optional can wait.** SMTP, SSO, Stripe and the LLM key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add any of them later with [`iblai infra configure <name>`](#7-optional-feature-toggles-post-provision) — no need to re-run setup.
 
 **Installing from your own repos.** Three prompts control where the private packages come from. Press Enter to accept the defaults, or point them at a fork or per-deployment copy:
 
@@ -256,12 +256,14 @@ Prompts for test/live mode, secret and publishable keys, and optional pricing-ta
 
 ```bash
 iblai infra llm set-key <name>
-iblai infra llm set-key <name> --provider anthropic --api-key <key>   # non-interactive
+iblai infra llm set-key <name> --provider openrouter --api-key <key>   # non-interactive
 ```
 
-Sets or rotates the credential the mentor service uses. Supported providers are `openai` (the default) and `anthropic`. Setting a key also makes that provider the preferred one, since the platform picks the preferred credential with no tie-break when several are marked. Live immediately.
+Sets or rotates the credential the mentor service uses. Supported providers are `openai` (the default), `anthropic` and `openrouter`. An OpenAI or Anthropic key becomes the preferred provider, since the platform picks the preferred credential with no tie-break when several are marked. Live immediately.
 
-**Without an ibl.ai gateway key.** The key set here is a global one. The platform's daily model-catalogue sync marks most models, OpenAI's included, as served through the ibl.ai gateway, and a platform then calls a provider directly only with a key of its own. So without an `iblai` gateway key, chat stops working after the first sync, usually within a day of setup. The default agent mentor uses the gateway model (`iblai-pro`) and needs that key from the start. Either set an `iblai` key, or give each platform its own key: in the Data Manager admin (`https://base.manager.<domain>/admin/ibl_ai_mentor/llmcredential/`) add a credential named after the provider (`openai`) for that platform, and point mentors that use `iblai-pro` at one of the provider's models.
+An **OpenRouter** key is stored as the ibl.ai gateway key (the global credential `iblai`), beside any provider key rather than in place of it; it becomes the preferred one only when no other key is. The model catalogue is then synced so chat routes through the gateway straight away. Setup asks which key to provide (OpenAI or OpenRouter); `.env` files take `OPENAI_API_KEY` or `OPENROUTER_API_KEY`, and `launch` takes `--openai-key` or `--openrouter-key`.
+
+**Why an OpenRouter key.** The platform's daily catalogue sync marks most models, OpenAI's included, as served through the gateway, and the default agent mentor uses the gateway model (`iblai-pro`). With only an OpenAI key, chat stops working after the first sync, usually within a day of setup. Add an OpenRouter key to keep it working.
 
 #### Tenant platform
 

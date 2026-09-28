@@ -132,7 +132,7 @@ Before running, `setup <name>` checks that the platform domains resolve and asks
 SMTP, SSO, Stripe, the LLM key and extra tenants are all skippable at setup and added later against a running environment, without re-running the playbook. `iblai infra configure <name>` lists them; each is also a standalone subgroup (see CLI Structure). Modules live in `src/iblai_infra/features/`, one per feature, registered on `infra_app` in `cli.py`.
 
 **How a partial run works:**
-- Playbook roles carry tags — `smtp`, `stripe`, `google_sso`, `microsoft_sso`, `platform`, plus a task-level `llm` tag on the OpenAI task in `admin_setup`. Purely additive: a run without `--tags` executes every role in the same order.
+- Playbook roles carry tags — `smtp`, `stripe`, `google_sso`, `microsoft_sso`, `platform`, plus a task-level `llm` tag on the LLM credential tasks in `admin_setup`. Purely additive: a run without `--tags` executes every role in the same order.
 - `AnsibleRunner.run_partial(tags)` runs `ansible-playbook --tags <...>` against the existing inventory. It deliberately leaves `setup_status` alone — adding a feature is not the environment being set up, and a failure must not make a working environment look un-provisioned.
 - `SetupConfig.for_feature(state, **overrides)` recovers host / SSH key / base domain from `ProjectState` and leaves the credential fields empty. **None of the tagged roles read the GitHub token or AWS keys**, so enabling a feature needs only the SSH key already in state plus that feature's own values.
 
@@ -347,7 +347,7 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - SSH access (private_key_path, ssh_user, target_host)
 - Platform config (base_domain, edx_version, env_config, image tags for DM/edX/SPAs, enable_ai)
 - Credentials (aws_access_key_id, aws_secret_access_key, aws_default_region, git_access_token)
-- Optional: openai_api_key, admin_username, admin_email, admin_password
+- Optional: llm_provider + llm_api_key (OpenAI, Anthropic or OpenRouter; an OpenRouter key is written as the gateway credential `iblai`, like the platform's own), admin_username, admin_email, admin_password
 
 ### Terraform Runner
 
@@ -371,7 +371,7 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
 - The finalization work is split across three roles (it used to live in one `final_steps` role, since removed):
   - `integrations`: render, proxy reload, `ibl dm sso`, the OAuth/OIDC clients and edX's credentials for the DM (`clients.yml`), edx sync-with-manager
-  - `admin_setup`: configure OpenAI credential (if provided), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform
+  - `admin_setup`: configure the LLM credential (if provided; an OpenRouter key becomes the `iblai` gateway credential and triggers `sync_llm_catalog`), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform
   - `data_seeding`: seed flows/llm-registry/base-mentors/tools/rbac-data, demo course, magic-link email templates, name backfill, TimescaleDB + analytics views
 - Django `JSONField` values must be passed as dicts, not `json.dumps()` strings — auto-serialization handles encoding
 - Config writes go through `ibl config set` (multi-pair, all-or-nothing, registry-validated) followed by an explicit `ibl render` — nothing renders implicitly under the 6.x model. "Quoted boolean" SPA values are str-typed registry keys, so `'true'`/`'false'` store exactly; genuinely bool/int-typed keys coerce

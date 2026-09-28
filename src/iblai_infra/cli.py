@@ -645,6 +645,9 @@ def launch(
     prod_images_repo: str = typer.Option("iblai-prod-images", "--prod-images-repo", help="Prod images repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
     admin_username: str = typer.Option("platform_admin", "--admin-username", help="Admin username (cannot be a reserved name like 'ibl_admin')"),
     openai_key: str = typer.Option("", "--openai-key", help="OpenAI API key (optional)"),
+    openrouter_key: str = typer.Option(
+        "", "--openrouter-key", help="OpenRouter API key, stored as the ibl.ai gateway key (optional; instead of --openai-key)"
+    ),
     enable_ai: bool = typer.Option(True, "--enable-ai/--no-ai", help="Enable AI features"),
     create_playwright_platforms: bool = typer.Option(
         False,
@@ -797,7 +800,7 @@ def launch(
         ssh_user=ssh_user, aws_region=aws_region,
         instance_type=instance_type, volume_size=volume_size,
         environment=environment, cli_tag=cli_tag,
-        admin_username=admin_username, openai_key=openai_key,
+        admin_username=admin_username, openai_key=openai_key, openrouter_key=openrouter_key,
         enable_ai=enable_ai,
         github_org=github_org,
         cli_ops_repo=cli_ops_repo,
@@ -918,6 +921,7 @@ def launch_env(
         ui.muted(f"Reserved: {reserved}. Pick a different name (e.g. 'platform_admin').")
         raise typer.Exit(1)
     openai_key = env.get("OPENAI_API_KEY", "")
+    openrouter_key = env.get("OPENROUTER_API_KEY", "")
     enable_ai = env.get("ENABLE_AI", "true").lower() in ("true", "1", "yes")
     create_playwright_platforms = env.get("CREATE_PLAYWRIGHT_PLATFORMS", "false").lower() in ("true", "1", "yes")
     github_org = env.get("GITHUB_ORG", "iblai")
@@ -1023,7 +1027,7 @@ def launch_env(
         ssh_user=ssh_user, aws_region=aws_region,
         instance_type=instance_type, volume_size=volume_size,
         environment=environment, cli_tag=cli_tag,
-        admin_username=admin_username, openai_key=openai_key,
+        admin_username=admin_username, openai_key=openai_key, openrouter_key=openrouter_key,
         enable_ai=enable_ai,
         github_org=github_org,
         cli_ops_repo=cli_ops_repo,
@@ -1330,6 +1334,7 @@ def _run_launch(
     node_id: str = "",
     admin_username: str,
     openai_key: str,
+    openrouter_key: str = "",
     enable_ai: bool,
     github_org: str = "iblai",
     cli_ops_repo: str = "iblai-cli-ops",
@@ -1392,10 +1397,19 @@ def _run_launch(
         SSHConfig,
         SSHKeyMethod,
         WAFConfig,
+        choose_llm_key,
         generate_password,
     )
     from iblai_infra.terraform.runner import TerraformRunner
     from iblai_infra.terraform.state import WORKSPACE_ROOT
+
+    # Checked before anything is provisioned.
+    try:
+        llm_provider, llm_api_key = choose_llm_key(openai_key, openrouter_key)
+    except ValueError:
+        ui.error("Give an OpenAI key or an OpenRouter key, not both.")
+        ui.muted("  Add the other one later with iblai infra llm set-key.")
+        raise typer.Exit(1)
 
     # Derive project name
     project_name = name or domain.replace(".", "-")
@@ -1611,7 +1625,8 @@ def _run_launch(
         github_org=github_org,
         cli_ops_repo=cli_ops_repo,
         prod_images_repo=prod_images_repo,
-        llm_api_key=openai_key,
+        llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
         admin_username=admin_username,
         admin_email=admin_email,
         admin_password=admin_password,

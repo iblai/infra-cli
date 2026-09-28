@@ -26,11 +26,11 @@
   ansible.builtin.assert:
     that:
       - llm_api_key is match('^[A-Za-z0-9_.\-]+$')
-      - llm_provider in ['openai', 'anthropic']
+      - llm_credential_name in ['openai', 'anthropic', 'iblai']
     fail_msg: >-
       Refusing to write the credential: an API key may only contain letters,
-      numbers, dashes, underscores and dots, and the provider must be openai
-      or anthropic.
+      numbers, dashes, underscores and dots, and the provider must be openai,
+      anthropic or openrouter.
     quiet: true
   no_log: true
   when: llm_api_key | length > 0
@@ -41,15 +41,24 @@
   shell: |
     cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
     from ibl_ai_mentor.models import GlobalCredential
+    name = '{{ llm_credential_name }}'
     value = {'key': '{{ llm_api_key }}'}
     columns = {f.name for f in GlobalCredential._meta.get_fields()}
-    defaults = {'is_preferred': True}
+    defaults = {}
     for column in ('value', 'value_encrypted'):
         if column in columns:
             defaults[column] = value
-    GlobalCredential.objects.update_or_create(name='{{ llm_provider }}', defaults=defaults)
-    GlobalCredential.objects.exclude(name='{{ llm_provider }}').update(is_preferred=False)
-    print('LLM credential configured: {{ llm_provider }}')
+    others = GlobalCredential.objects.exclude(name=name)
+    if name == 'iblai':
+        # The gateway key sits beside a provider key rather than replacing it,
+        # and is the preferred one only when nothing else is.
+        defaults['is_preferred'] = not others.filter(is_preferred=True).exists()
+        GlobalCredential.objects.update_or_create(name=name, defaults=defaults)
+    else:
+        defaults['is_preferred'] = True
+        GlobalCredential.objects.update_or_create(name=name, defaults=defaults)
+        others.update(is_preferred=False)
+    print('LLM credential configured: ' + name)
     "
   args:
     executable: /bin/bash
@@ -60,6 +69,21 @@
   # any CI log capturing it.
   no_log: true
   when: llm_api_key | length > 0
+  tags: [llm]
+
+# The platform marks models as served by the gateway on a daily schedule;
+# syncing now lets chat use a new gateway key straight away.
+- name: Sync the model catalogue for the gateway key
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py sync_llm_catalog
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  when:
+    - llm_api_key | length > 0
+    - llm_credential_name == 'iblai'
   tags: [llm]
 
 - name: Create DM super admin

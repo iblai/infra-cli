@@ -1,21 +1,39 @@
 ---
-- name: Save config and reload proxy
+- name: Render config and reload proxy
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && \
-    ibl global-proxy reload && \
-    ibl launch --ibl-oauth --ibl-oidc --ibl-edx-manager && \
-    ibl dm auth-setup
+    ibl render && ibl global-proxy reload
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+# Registers the DM's OIDC client in edX, so it needs edX launched.
+- name: Set up DM single sign-on with edX
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl dm sso 2>&1
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Register OAuth and OIDC clients
+  ansible.builtin.import_tasks: clients.yml
 
 - name: Sync edX with DM
   become: false
@@ -31,3 +49,4 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"

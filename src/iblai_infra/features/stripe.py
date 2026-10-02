@@ -11,6 +11,8 @@ the easy mistake here.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from iblai_infra import ui
@@ -96,7 +98,7 @@ def stripe_enable(
 @stripe_app.command("enable-env")
 def stripe_enable_env(
     name: str = typer.Argument(help="Environment name"),
-    env_file: str = typer.Option(..., "-f", "--file", help="Path to a .env file"),
+    env_file: Path = typer.Option(..., "-f", "--file", help="Path to a .env file"),
 ) -> None:
     """Non-interactive Stripe enable, reading the same keys as `setup-env`."""
     from iblai_infra.env_utils import load_env_file

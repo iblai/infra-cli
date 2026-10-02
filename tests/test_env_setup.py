@@ -14,12 +14,15 @@ from unittest.mock import patch
 import pytest
 import typer
 
+from tests.conftest import CLI_OPS_TEST_TAG
+
 from iblai_infra.env_setup import (
     build_bootstrap_state_from_env,
     build_setup_config_from_env,
 )
 from iblai_infra.models import (
     DeploymentType,
+    LLMProvider,
     ProjectState,
 )
 
@@ -72,7 +75,7 @@ def _pin_resolver():
     prod-images pin over the network. Stub it for determinism/offline."""
     with patch(
         "iblai_infra.env_setup.resolve_pinned_cli_ops_tag",
-        return_value="5.39.0",
+        return_value=CLI_OPS_TEST_TAG,
     ) as m:
         yield m
 
@@ -216,14 +219,20 @@ class TestOptionalDefaults:
         config = build_setup_config_from_env(_required_env(), state=project_state)
         assert config.ssh_user == "ubuntu"
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
         # CLI_OPS_RELEASE_TAG unset -> resolved from the prod-images pin
-        assert config.cli_ops_release_tag == "5.39.0"
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG
         assert config.prod_images_tag == "main"
         assert config.enable_ai is True
         assert config.create_playwright_platforms is False
         assert config.platform_name == "main"
         assert config.github_org == "iblai"
+        # NODE_ID unset -> empty; AnsibleRunner falls back to the project name
+        assert config.node_id == ""
+
+    def test_node_id_from_env(self, project_state):
+        env = _required_env(NODE_ID="custom-node")
+        config = build_setup_config_from_env(env, state=project_state)
+        assert config.node_id == "custom-node"
 
     def test_enable_ai_explicit_false(self, project_state):
         env = _required_env(ENABLE_AI="false")
@@ -396,7 +405,7 @@ class TestCliOpsTagResolution:
         config = build_setup_config_from_env(
             _required_env(PROD_IMAGES_TAG="1.64.0"), state=project_state
         )
-        assert config.cli_ops_release_tag == "5.39.0"
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG
         _pin_resolver.assert_called_once_with(
             "test-pat-value", "iblai", "iblai-prod-images", "1.64.0", subdir=None
         )
@@ -405,3 +414,49 @@ class TestCliOpsTagResolution:
         _pin_resolver.return_value = None
         config = build_setup_config_from_env(_required_env(), state=project_state)
         assert config.cli_ops_release_tag == "main"
+
+
+# ---------------------------------------------------------------------------
+# S3 storage buckets
+# ---------------------------------------------------------------------------
+
+
+class TestS3Buckets:
+    def test_both_buckets_set_storage_with_the_setup_region(self, project_state):
+        env = _required_env(S3_STATIC_BUCKET="acme-dm-static", S3_MEDIA_BUCKET="acme-dm-media")
+        config = build_setup_config_from_env(env, state=project_state)
+        assert (config.s3_static_bucket, config.s3_media_bucket) == ("acme-dm-static", "acme-dm-media")
+        assert config.s3_region == config.aws_default_region
+
+    def test_explicit_region_wins(self, project_state):
+        env = _required_env(S3_STATIC_BUCKET="acme-dm-static", S3_MEDIA_BUCKET="acme-dm-media", S3_REGION="eu-west-1")
+        assert build_setup_config_from_env(env, state=project_state).s3_region == "eu-west-1"
+
+    def test_no_buckets_leaves_storage_alone(self, project_state):
+        config = build_setup_config_from_env(_required_env(S3_REGION="eu-west-1"), state=project_state)
+        assert (config.s3_static_bucket, config.s3_media_bucket, config.s3_region) == ("", "", "")
+
+    @pytest.mark.parametrize("key", ["S3_STATIC_BUCKET", "S3_MEDIA_BUCKET"])
+    def test_one_bucket_alone_is_rejected(self, project_state, key):
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(_required_env(**{key: "acme-bucket"}), state=project_state)
+
+    def test_invalid_bucket_name_is_rejected(self, project_state):
+        env = _required_env(S3_STATIC_BUCKET="Acme_Static", S3_MEDIA_BUCKET="acme-dm-media")
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(env, state=project_state)
+
+
+class TestLLMKey:
+    def test_an_openrouter_key_is_the_gateway_provider(self, project_state):
+        config = build_setup_config_from_env(_required_env(OPENROUTER_API_KEY="sk-or-v1-example"), state=project_state)
+        assert (config.llm_provider, config.llm_api_key) == (LLMProvider.OPENROUTER, "sk-or-v1-example")
+
+    def test_an_openai_key_still_works(self, project_state):
+        config = build_setup_config_from_env(_required_env(OPENAI_API_KEY="sk-example"), state=project_state)
+        assert (config.llm_provider, config.llm_api_key) == (LLMProvider.OPENAI, "sk-example")
+
+    def test_both_keys_are_refused(self, project_state):
+        env = _required_env(OPENAI_API_KEY="sk-example", OPENROUTER_API_KEY="sk-or-v1-example")
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(env, state=project_state)

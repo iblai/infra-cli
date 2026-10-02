@@ -8,11 +8,13 @@ from unittest.mock import patch
 import pytest
 import typer
 from pydantic import ValidationError
+from typer.testing import CliRunner
 
 from iblai_infra.features.llm import LLM_TAGS, llm_set_key
 from iblai_infra.features.platform import PLATFORM_TAGS, platform_create
+from iblai_infra.features.smtp import smtp_app
 from iblai_infra.features.sso import GOOGLE_TAGS, MICROSOFT_TAGS, sso_google, sso_microsoft
-from iblai_infra.features.stripe import STRIPE_TAGS, stripe_enable
+from iblai_infra.features.stripe import STRIPE_TAGS, stripe_app, stripe_enable
 from iblai_infra.models import (
     AWSCredentials,
     AuthMethod,
@@ -73,7 +75,7 @@ class _Captured:
 def applied(monkeypatch):
     """Patch run_feature in every feature module and capture the call."""
     cap = _Captured()
-    for mod in ("llm", "platform", "sso", "stripe"):
+    for mod in ("llm", "platform", "smtp", "sso", "stripe"):
         monkeypatch.setattr(f"iblai_infra.features.{mod}.run_feature", cap)
     monkeypatch.setattr(
         "iblai_infra.terraform.state.load_state", lambda name: _state()
@@ -149,6 +151,22 @@ class TestLLM:
         built = AnsibleRunner(state, config)._build_extra_vars()
         assert built["llm_provider"] == "anthropic"
         assert built["llm_api_key"] == "k"
+
+    def test_openrouter_is_a_provider(self, applied):
+        llm_set_key(name="acme", api_key="sk-or-v1-example", provider="openrouter")
+        assert applied.config.llm_provider == LLMProvider.OPENROUTER
+
+    @pytest.mark.parametrize(
+        "provider, name",
+        [(LLMProvider.OPENAI, "openai"), (LLMProvider.ANTHROPIC, "anthropic"), (LLMProvider.OPENROUTER, "iblai")],
+    )
+    def test_the_credential_name_reaches_ansible(self, provider, name):
+        """An OpenRouter key funds the gateway, which reads the credential named iblai."""
+        from iblai_infra.ansible.runner import AnsibleRunner
+
+        state = _state()
+        config = SetupConfig.for_feature(state, llm_provider=provider, llm_api_key="k")
+        assert AnsibleRunner(state, config)._build_extra_vars()["llm_credential_name"] == name
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +304,25 @@ class TestStripe:
         assert applied.config.restart_services is False
 
 
+class TestEnableEnvFiles:
+    """The `-f` file is read from the path given on the command line; a plain
+    string there crashed both commands before anything was applied."""
+
+    def test_smtp(self, applied, tmp_path):
+        env_file = tmp_path / "smtp.env"
+        env_file.write_text("SMTP_HOST=smtp.example.com\nSMTP_PORT=2525\nSMTP_PASSWORD=pw\n")
+        result = CliRunner().invoke(smtp_app, ["enable-env", "acme", "-f", str(env_file)])
+        assert result.exit_code == 0, result.output
+        assert (applied.config.smtp_host, applied.config.smtp_port) == ("smtp.example.com", 2525)
+
+    def test_stripe(self, applied, tmp_path):
+        env_file = tmp_path / "stripe.env"
+        env_file.write_text("STRIPE_SECRET_KEY=sk_test_x\nSTRIPE_MODE=live\n")
+        result = CliRunner().invoke(stripe_app, ["enable-env", "acme", "-f", str(env_file)])
+        assert result.exit_code == 0, result.output
+        assert (applied.config.stripe_secret_key, applied.config.stripe_mode) == ("sk_test_x", "live")
+
+
 # ---------------------------------------------------------------------------
 # configure menu
 # ---------------------------------------------------------------------------
@@ -405,8 +442,7 @@ class TestLLMCredentialRow:
                 / "roles/admin_setup/tasks/main.yml"
             ).read_text()
         )
-        # two tasks carry the tag now - the guard and the write itself
-        return next(t for t in tasks if "llm" in (t.get("tags") or []) and "shell" in t)
+        return next(t for t in tasks if t.get("name") == "Configure the LLM credential")
 
     def test_writes_both_the_plaintext_and_encrypted_columns(self):
         """Newer platforms read the encrypted column and never fall back."""
@@ -424,14 +460,85 @@ class TestLLMCredentialRow:
         script = self._task()["shell"]
         assert "_meta.get_fields()" in script
 
-    def test_name_comes_from_the_provider_verbatim(self):
-        script = self._task()["shell"]
-        assert "name='{{ llm_provider }}'" in script
+    def _write(self, existing: dict[str, bool], credential_name: str) -> dict[str, bool]:
+        """Run the task's Python against an in-memory credential table.
 
-    def test_other_providers_lose_preferred(self):
-        """The server takes the first preferred row with no tie-break."""
+        `existing` maps credential name to its preferred flag; returns the same
+        after the task ran.
+        """
+        import sys
+        import types
+
+        rows = [types.SimpleNamespace(name=n, is_preferred=p) for n, p in existing.items()]
+
+        class Rows(list):
+            def exclude(self, name):
+                return Rows(r for r in self if r.name != name)
+
+            def filter(self, **kw):
+                return Rows(r for r in self if all(getattr(r, k) == v for k, v in kw.items()))
+
+            def exists(self):
+                return bool(self)
+
+            def update(self, **kw):
+                for r in self:
+                    r.__dict__.update(kw)
+
+        class Manager:
+            def exclude(self, name):
+                return Rows(rows).exclude(name)
+
+            def update_or_create(self, name, defaults):
+                row = next((r for r in rows if r.name == name), None)
+                if row is None:
+                    row = types.SimpleNamespace(name=name)
+                    rows.append(row)
+                row.__dict__.update(defaults)
+
+        model = types.SimpleNamespace(
+            objects=Manager(),
+            _meta=types.SimpleNamespace(get_fields=lambda: [types.SimpleNamespace(name="value")]),
+        )
         script = self._task()["shell"]
-        assert "exclude(name='{{ llm_provider }}').update(is_preferred=False)" in script
+        code = script[script.index('-c "') + 4:script.rindex('"')]
+        code = code.replace("{{ llm_credential_name }}", credential_name).replace("{{ llm_api_key }}", "k")
+        module = types.ModuleType("ibl_ai_mentor.models")
+        module.GlobalCredential = model
+        with patch.dict(sys.modules, {"ibl_ai_mentor": types.ModuleType("ibl_ai_mentor"), "ibl_ai_mentor.models": module}):
+            exec(code, {})
+        return {r.name: r.is_preferred for r in rows}
+
+    def test_a_provider_key_becomes_the_preferred_one(self):
+        """The server takes the first preferred row with no tie-break."""
+        assert self._write({"anthropic": True, "iblai": False}, "openai") == {
+            "anthropic": False, "iblai": False, "openai": True,
+        }
+
+    def test_the_gateway_key_sits_beside_a_preferred_provider(self):
+        """As on a platform that has both: the provider key stays preferred."""
+        assert self._write({"openai": True}, "iblai") == {"openai": True, "iblai": False}
+
+    def test_the_gateway_key_is_preferred_when_it_is_the_only_one(self):
+        """The server resolves the default provider from the preferred row."""
+        assert self._write({}, "iblai") == {"iblai": True}
+
+    def test_the_gateway_key_syncs_the_catalogue_after_the_write(self):
+        """Models reach the gateway once the catalogue marks them."""
+        import yaml
+
+        tasks = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[2]
+                / "src/iblai_infra/ansible/templates/single-server"
+                / "roles/admin_setup/tasks/main.yml"
+            ).read_text()
+        )
+        names = [t.get("name") for t in tasks]
+        sync = tasks[next(i for i, t in enumerate(tasks) if "sync_llm_catalog" in (t.get("shell") or ""))]
+        assert names.index("Configure the LLM credential") < tasks.index(sync)
+        assert "llm_credential_name == 'iblai'" in sync["when"]
+        assert "llm" in sync["tags"]
 
     def test_the_key_is_not_echoed_on_failure(self):
         assert self._task()["no_log"] is True
@@ -503,4 +610,4 @@ class TestLLMKeyIsNotCode:
         assert guards, "no guard assertion on the LLM task"
         assertions = " ".join(guards[0]["ansible.builtin.assert"]["that"])
         assert "llm_api_key is match" in assertions
-        assert "llm_provider in" in assertions
+        assert "llm_credential_name in" in assertions

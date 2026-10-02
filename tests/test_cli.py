@@ -732,6 +732,41 @@ class TestServiceUpdateCommand:
         assert result.exit_code != 0
 
 
+class TestServiceUpdatePackages:
+    """Which repos and cli-ops tag service-update installs."""
+
+    def test_cli_tag_comes_from_the_given_prod_images_tag(self):
+        from iblai_infra.cli import _service_update_packages
+
+        with patch("iblai_infra.env_utils.resolve_pinned_cli_ops_tag", return_value="7.21.0") as pin:
+            packages = _service_update_packages(
+                git_token="t", prod_images_tag="1.255.0", github_org="acme",
+                cli_ops_repo="acme-cli-ops", prod_images_repo="acme-prod-images",
+            )
+        pin.assert_called_once_with("t", "acme", "acme-prod-images", "1.255.0", subdir=None)
+        assert packages == {
+            "github_org": "acme",
+            "cli_ops_repo": "acme-cli-ops",
+            "prod_images_repo": "acme-prod-images",
+            "cli_ops_release_tag": "7.21.0",
+        }
+
+    def test_unreadable_pin_falls_back_to_main(self):
+        from iblai_infra.cli import _service_update_packages
+
+        with patch("iblai_infra.env_utils.resolve_pinned_cli_ops_tag", return_value=None):
+            packages = _service_update_packages(git_token="t", prod_images_tag="1.255.0")
+        assert packages["cli_ops_release_tag"] == "main"
+
+    def test_explicit_cli_tag_skips_the_lookup(self):
+        from iblai_infra.cli import _service_update_packages
+
+        with patch("iblai_infra.env_utils.resolve_pinned_cli_ops_tag") as pin:
+            packages = _service_update_packages(git_token="t", prod_images_tag="1.255.0", cli_tag="7.20.0")
+        pin.assert_not_called()
+        assert packages["cli_ops_release_tag"] == "7.20.0"
+
+
 # ---------------------------------------------------------------------------
 # permissions command
 # ---------------------------------------------------------------------------

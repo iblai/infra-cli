@@ -58,38 +58,84 @@
     var: timescaledb_result.stdout_lines
   when: timescaledb_result.stdout_lines is defined
 
-- name: Launch IBL Manager (ibl dm launch)
+# `ibl dm launch` can't bootstrap this server on cli-ops >= 7.13, where a
+# failing sub-step fails the command: it execs into `web` before anything
+# starts it, runs `ibl dm sso` before edX exists, runs Kafka and web
+# analytics steps this preset has no services for, and its createsuperuser
+# can't re-run. Its steps follow in a working order, each safe to repeat;
+# `ibl dm sso` runs from the integrations role, after edX.
+- name: Migrate the DM database
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl dm launch 2>&1
+    ibl dm migrate
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Ensure the DM admin user exists
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    DM_ADMIN_USER=$(ibl config get IBL_AUTH_USER) || exit 1
+    DM_ADMIN_EMAIL=$(ibl config get IBL_AUTH_EMAIL) || exit 1
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro
+    docker compose run --rm -T -e DM_ADMIN_USER="$DM_ADMIN_USER" -e DM_ADMIN_EMAIL="$DM_ADMIN_EMAIL" \
+      cli python manage.py shell <<'PY'
+    import os
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    if not User.objects.filter(username=os.environ["DM_ADMIN_USER"]).exists():
+        User.objects.create_superuser(os.environ["DM_ADMIN_USER"], os.environ["DM_ADMIN_EMAIL"], None)
+        print("DM_ADMIN_CREATED")
+    PY
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: dm_admin
+  changed_when: "'DM_ADMIN_CREATED' in dm_admin.stdout"
+
+# Before anything starts: with notifications on, the web container loads
+# fixtures that reference the main platform this creates.
+- name: Initialize the DM manager
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro && docker compose run --rm cli python manage.py initialize_manager --local
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
+- name: Start the DM services
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl dm up -d 2>&1
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 3600
-  register: dm_launch_result
-  ignore_errors: true
-
-- name: Show ibl dm launch output
-  debug:
-    var: dm_launch_result.stdout_lines
-  when: dm_launch_result.stdout_lines is defined
-
-- name: Fail if ibl dm launch timed out
-  fail:
-    msg: "ibl dm launch timed out after 3600s. SSH in and run 'ibl dm launch' manually."
-  when: dm_launch_result is mapping and dm_launch_result.timedout is defined
-
-- name: Fail if ibl dm launch failed
-  fail:
-    msg: "ibl dm launch failed with exit code {{ dm_launch_result.rc }}"
-  when: dm_launch_result.rc is defined and dm_launch_result.rc != 0
 
 - name: Verify DM containers are running
   become: false
@@ -106,7 +152,7 @@
   fail:
     msg: >-
       No ibl-dm-pro containers found after launch.
-      Check 'ibl dm launch' output above for errors
+      Check the 'Start the DM services' output above for errors
       (common cause: missing ibl_local_default docker network).
   when: dm_containers.stdout | trim | length == 0
 
@@ -121,18 +167,27 @@
   retries: 40
   delay: 15
 
+# Restarts during the last minute, not the lifetime count: a re-run after a
+# failed attempt would otherwise fail on restarts that have since stopped.
 - name: Check DM web container is not crash-looping
   become: false
   shell: |
-    docker inspect --format '{{ '{{' }}.RestartCount{{ '}}' }}' ibl_dm_pro_web
+    BEFORE=$(docker inspect --format '{{ '{{' }}.RestartCount{{ '}}' }}' ibl_dm_pro_web)
+    sleep 60
+    AFTER=$(docker inspect --format '{{ '{{' }}.RestartCount{{ '}}' }}' ibl_dm_pro_web)
+    echo "$((AFTER - BEFORE))"
   args:
     executable: /bin/bash
   register: dm_restart_count
+  changed_when: false
 
 - name: Fail if DM web is crash-looping
   fail:
     msg: >-
-      ibl_dm_pro_web has restarted {{ dm_restart_count.stdout | trim }} times.
+      ibl_dm_pro_web restarted {{ dm_restart_count.stdout | trim }} times in the last minute.
       Run 'docker logs ibl_dm_pro_web' on the server to diagnose.
       Common cause: missing database migrations — try 'ibl dm migrate'.
-  when: dm_restart_count.stdout | trim | int > 3
+  when: dm_restart_count.stdout | trim | int > 0
+
+- name: Register the DM OAuth credentials
+  ansible.builtin.import_tasks: credentials.yml

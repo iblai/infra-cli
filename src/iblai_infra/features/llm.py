@@ -38,7 +38,7 @@ def llm_set_key(
         None, "--api-key", help="Read the key from a flag instead of prompting (CI)"
     ),
     provider: str = typer.Option(
-        None, "--provider", help="Which provider the key belongs to (openai or anthropic)"
+        None, "--provider", help="Which provider the key belongs to (openai, anthropic or openrouter)"
     ),
 ) -> None:
     """Set or rotate the LLM API key used by the mentor service."""
@@ -100,5 +100,8 @@ def llm_set_key(
         name=name, what=f"{llm_provider.value} API key", action="set",
     )
     ui.muted("  The mentor service reads it per request — no restart needed.")
-    ui.muted(f"  [highlight]{llm_provider.value}[/highlight] is now the preferred provider.")
+    if llm_provider is LLMProvider.OPENROUTER:
+        ui.muted("  Stored as the ibl.ai gateway key (iblai), and the model catalogue was synced so chat uses it now.")
+    else:
+        ui.muted(f"  [highlight]{llm_provider.value}[/highlight] is now the preferred provider.")
     ui.newline()

@@ -26,11 +26,11 @@
   ansible.builtin.assert:
     that:
       - llm_api_key is match('^[A-Za-z0-9_.\-]+$')
-      - llm_provider in ['openai', 'anthropic']
+      - llm_credential_name in ['openai', 'anthropic', 'iblai']
     fail_msg: >-
       Refusing to write the credential: an API key may only contain letters,
-      numbers, dashes, underscores and dots, and the provider must be openai
-      or anthropic.
+      numbers, dashes, underscores and dots, and the provider must be openai,
+      anthropic or openrouter.
     quiet: true
   no_log: true
   when: llm_api_key | length > 0
@@ -41,15 +41,24 @@
   shell: |
     cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell -c "
     from ibl_ai_mentor.models import GlobalCredential
+    name = '{{ llm_credential_name }}'
     value = {'key': '{{ llm_api_key }}'}
     columns = {f.name for f in GlobalCredential._meta.get_fields()}
-    defaults = {'is_preferred': True}
+    defaults = {}
     for column in ('value', 'value_encrypted'):
         if column in columns:
             defaults[column] = value
-    GlobalCredential.objects.update_or_create(name='{{ llm_provider }}', defaults=defaults)
-    GlobalCredential.objects.exclude(name='{{ llm_provider }}').update(is_preferred=False)
-    print('LLM credential configured: {{ llm_provider }}')
+    others = GlobalCredential.objects.exclude(name=name)
+    if name == 'iblai':
+        # The gateway key sits beside a provider key rather than replacing it,
+        # and is the preferred one only when nothing else is.
+        defaults['is_preferred'] = not others.filter(is_preferred=True).exists()
+        GlobalCredential.objects.update_or_create(name=name, defaults=defaults)
+    else:
+        defaults['is_preferred'] = True
+        GlobalCredential.objects.update_or_create(name=name, defaults=defaults)
+        others.update(is_preferred=False)
+    print('LLM credential configured: ' + name)
     "
   args:
     executable: /bin/bash
@@ -60,6 +69,21 @@
   # any CI log capturing it.
   no_log: true
   when: llm_api_key | length > 0
+  tags: [llm]
+
+# The platform marks models as served by the gateway on a daily schedule;
+# syncing now lets chat use a new gateway key straight away.
+- name: Sync the model catalogue for the gateway key
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py sync_llm_catalog
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  when:
+    - llm_api_key | length > 0
+    - llm_credential_name == 'iblai'
   tags: [llm]
 
 - name: Create DM super admin
@@ -133,6 +157,45 @@
     executable: /bin/bash
   no_log: true
 
+# The DM links platform admins to its mirror of LMS users, which only has the
+# super admin once the LMS user has been synced across.
+- name: Sync the super admin to the DM
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl edx sync-with-manager --users
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+# The platform counts a user as a platform admin through their link to it,
+# not the superuser flag, so the super admin is linked to main as an admin.
+- name: Make the super admin an admin of the main platform
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from core.models import Platform
+      from django.apps import apps
+
+      Link = apps.get_model('core', 'UserPlatformLink')
+      user = Link._meta.get_field('user').related_model.objects.get(username='{{ admin_username }}')
+      Link.objects.update_or_create(
+          user=user, platform=Platform.objects.get(key='main'), defaults={'is_admin': True, 'active': True}
+      )
+      print('MAIN_PLATFORM_ADMIN_SET')
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+
 - name: Seed CSRF exempt domains for CORS
   become: false
   shell: |
@@ -162,11 +225,15 @@
         'mfe.{{ base_domain }}',
         'status.{{ base_domain }}',
     ]
+    # The model stores each domain as https://<host>, so a lookup by the bare
+    # host never matches and get_or_create failed on every re-run.
+    existing = {x.lower() for x in CsrfExemptDomain.objects.values_list('domain', flat=True)}
     created = 0
     for d in domains:
-        _, was_created = CsrfExemptDomain.objects.get_or_create(domain=d)
-        if was_created:
-            created += 1
+        if d.lower() in existing or f'https://{d}'.lower() in existing:
+            continue
+        CsrfExemptDomain.objects.create(domain=d)
+        created += 1
     print(f'CSRF exempt domains: {created} created, {len(domains) - created} already existed')
     "
   args:

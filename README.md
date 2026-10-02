@@ -126,9 +126,9 @@ iblai infra setup <name>       # a Terraform-provisioned environment (IP/domain/
 iblai infra setup              # any existing server (bare metal / other cloud) — prompts for everything
 ```
 
-Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), OpenAI key (optional), and super admin credentials.
+Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), an LLM key (OpenAI or OpenRouter, optional), and super admin credentials.
 
-**Everything optional can wait.** SMTP, SSO, Stripe and the OpenAI key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add any of them later with [`iblai infra configure <name>`](#7-optional-feature-toggles-post-provision) — no need to re-run setup.
+**Everything optional can wait.** SMTP, SSO, Stripe and the LLM key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add any of them later with [`iblai infra configure <name>`](#7-optional-feature-toggles-post-provision) — no need to re-run setup.
 
 **Installing from your own repos.** Three prompts control where the private packages come from. Press Enter to accept the defaults, or point them at a fork or per-deployment copy:
 
@@ -146,9 +146,11 @@ The playbook runs 16 roles in phases:
 |---|---|---|
 | Host setup | `docker`, `awscli`, `python` | Docker + compose, AWS CLI v2, pyenv + Python 3.11.8 |
 | Platform install | `ibl_cli_ops`, `ibl_platform` | Installs the pinned platform packages; configures domain, gateway, defaults |
-| Core services | `ibl_dm`, `ibl_edx`, `ibl_spa` | Data Manager (Django/Postgres/Redis/Celery), Open edX (LMS/CMS/MySQL/Mongo/ES), and the Auth/Mentor/Skills SPAs |
+| Core services | `ibl_dm`, `ibl_edx`, `ibl_spa` | Data Manager (Django/Postgres/Redis/Celery), Open edX (LMS/CMS/MySQL/Mongo/ES), and the SPAs the preset enables (Auth/LMS/OS on a fresh server) |
 | Finalization | `integrations`, `admin_setup`, `data_seeding`, `ibl_tenant_platform` | OAuth/OIDC, edX↔DM sync, super admin, data seeding, optional tenant launch |
 | Optional | `smtp_config`, `stripe_config`, `google_sso_config`, `microsoft_sso_config` | Each no-ops unless its trigger key is set |
+
+**Monitoring.** The single-server preset enables Grafana, but setup does not start the monitoring stack (Prometheus, Alertmanager, Grafana and a health monitor). Start it on the server with `ibl utility prometheus start`.
 
 ### 4. Non-interactive provision + setup (`.env` file)
 
@@ -254,10 +256,19 @@ Prompts for test/live mode, secret and publishable keys, and optional pricing-ta
 
 ```bash
 iblai infra llm set-key <name>
-iblai infra llm set-key <name> --provider anthropic --api-key <key>   # non-interactive
+iblai infra llm set-key <name> --provider openrouter --api-key <key>   # non-interactive
 ```
 
-Sets or rotates the credential the mentor service uses. Supported providers are `openai` (the default) and `anthropic`. Setting a key also makes that provider the preferred one, since the platform picks the preferred credential with no tie-break when several are marked. Live immediately.
+Sets or rotates the credential the mentor service uses. Supported providers are `openai` (the default), `anthropic` and `openrouter`. An OpenAI or Anthropic key becomes the preferred provider, since the platform picks the preferred credential with no tie-break when several are marked. Live immediately.
+
+An **OpenRouter** key is stored as the ibl.ai gateway key (the global credential `iblai`), beside any provider key rather than in place of it; it becomes the preferred one only when no other key is. The model catalogue is then synced so chat routes through the gateway straight away. Setup asks which key to provide (OpenAI or OpenRouter); `.env` files take `OPENAI_API_KEY` or `OPENROUTER_API_KEY`, and `launch` takes `--openai-key` or `--openrouter-key`.
+
+**Why an OpenRouter key.** Mentors created by the platform, the default agent mentor among them, use the gateway models (`iblai-pro` / `iblai-fast`), which only an OpenRouter key serves. With an OpenRouter key chat works with no further setup.
+
+With only an OpenAI key:
+
+- **DM 4.412 and later** serve OpenAI's models with that key, but mentors on a gateway model need a default model to stand in for it. Set one with `ibl config set IBL_DM.DEFAULT_MENTOR_LLM_PROVIDER=openai IBL_DM.DEFAULT_MENTOR_LLM_MODEL=<model>` (ibl-cli-ops 7.24+), then `ibl render` and restart the DM.
+- **Earlier DMs** mark most models, OpenAI's included, as served through the gateway at the daily catalogue sync, so chat stops working within a day of setup. Add an OpenRouter key.
 
 #### Tenant platform
 
@@ -398,7 +409,7 @@ Terraform state, generated SSH keys, and project configuration live at `~/.iblai
 
 ```bash
 uv sync --extra dev --extra gcp
-uv run pytest tests/ -v                                          # 749 tests, ~2s
+uv run pytest tests/ -v                                          # 1,084 tests
 uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing
 ```
 
@@ -420,7 +431,7 @@ iblai-infra-ops/
 │   │       └── gcp/            # single-server
 │   └── ansible/                # Runner + playbooks + 16 roles
 ├── docs/                       # GCP guide, development notes
-├── tests/                      # 749 tests
+├── tests/                      # 1,084 tests
 └── pyproject.toml
 ```
 

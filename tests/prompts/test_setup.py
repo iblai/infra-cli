@@ -9,7 +9,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests.conftest import CLI_OPS_TEST_TAG
+
 from iblai_infra.models import (
+    LLMProvider,
     AWSCredentials,
     AuthMethod,
     CertificateConfig,
@@ -36,7 +39,7 @@ def _pin_resolver():
     test; tests can assert on / override the resolved value via this mock."""
     with mock.patch(
         "iblai_infra.prompts.setup.resolve_pinned_cli_ops_tag",
-        return_value="5.39.0",
+        return_value=CLI_OPS_TEST_TAG,
     ) as m:
         yield m
 
@@ -204,14 +207,14 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
+        assert config.node_id == "test-node"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.enable_ai is True
         assert config.smtp_enabled is False
         assert config.aws_access_key_id == "AKIA"
@@ -222,6 +225,25 @@ class TestPromptSetup:
         assert config.admin_username == "platform_admin"
         assert config.admin_email == "admin@example.com"
         assert config.admin_password == "Admin1234"
+
+    def test_openrouter_key_reaches_the_config(self, tmp_path, llm_key_picker):
+        """The picker's choice decides which credential the key is written as."""
+        from iblai_infra.prompts.setup import prompt_setup
+
+        state = self._make_state(tmp_path)
+        llm_key_picker.return_value.ask.return_value = "openrouter"
+        with (
+            patch("questionary.password") as mock_password,
+            patch("questionary.confirm") as mock_confirm,
+            patch("questionary.text") as mock_text,
+        ):
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "sk-or-v1-example", "Admin1234"]
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+
+            config = prompt_setup(state)
+
+        assert (config.llm_provider, config.llm_api_key) == (LLMProvider.OPENROUTER, "sk-or-v1-example")
 
     def test_full_flow_new_credentials(self, tmp_path):
         """Test the flow where user declines reusing credentials."""
@@ -237,14 +259,13 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "NEW_SECRET", "sk-test-key", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, don't reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, False]
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "NEW_ACCESS_KEY", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "NEW_ACCESS_KEY", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.enable_ai is True
         assert config.aws_access_key_id == "NEW_ACCESS_KEY"
         assert config.aws_secret_access_key == "NEW_SECRET"
@@ -264,14 +285,13 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "SECRET", "", "Admin1234"]
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled (no reuse prompt when no access keys)
             mock_confirm.return_value.ask.side_effect = [True, True, False, False, False, False]
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ACCESS_KEY", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "ACCESS_KEY", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
         assert config.edx_version == "sumac"
-        assert config.env_config == "single-server"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.git_access_token == "ghp_testtoken"
 
     def test_ssh_key_not_found_prompts(self, tmp_path):
@@ -295,7 +315,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(new_key)
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -321,7 +341,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -347,7 +367,7 @@ class TestPromptSetup:
             # confirms: enable_ai, create_playwright_platforms, smtp_enabled, stripe_enabled, google_sso_enabled, microsoft_sso_enabled, reuse credentials
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_path.return_value.ask.return_value = str(key)
-            mock_text.return_value.ask.side_effect = ["main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
+            mock_text.return_value.ask.side_effect = ["test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images", "platform_admin", "admin@example.com"]
 
             config = prompt_setup(state)
 
@@ -377,11 +397,12 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, True, True, False, False, False, False, True,
             ]
-            # texts: platform_name, cli_ops_tag, smtp_host, smtp_port, smtp_username,
+            # texts: node_id, platform_name, cli_ops_tag, smtp_host, smtp_port, smtp_username,
             #        smtp_sender_email,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "main",
                 "3.19.0",
                 "email-smtp.us-east-1.amazonaws.com",
@@ -435,12 +456,13 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, False, True, False, False, True,
             ]
-            # selects: stripe_mode
-            mock_select.return_value.ask.return_value = "test"
-            # texts: platform_name, cli_ops_tag, pricing_table_id, pricing_table_id_returning,
+            # selects: stripe_mode, LLM key picker
+            mock_select.return_value.ask.side_effect = ["test", "openai"]
+            # texts: node_id, platform_name, cli_ops_tag, pricing_table_id, pricing_table_id_returning,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "main",
                 "3.19.0",
                 "prctbl_abcdef",
@@ -491,10 +513,11 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, False, False, True, False, True,
             ]
-            # texts: platform_name, cli_ops_tag, google_sso_client_id, google_sso_organization,
+            # texts: node_id, platform_name, cli_ops_tag, google_sso_client_id, google_sso_organization,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "main",
                 "3.19.0",
                 "client-id.apps.googleusercontent.com",
@@ -541,11 +564,12 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, False, False, False, True, True,
             ]
-            # texts: platform_name, cli_ops_tag,
+            # texts: node_id, platform_name, cli_ops_tag,
             #        microsoft_sso_client_id, microsoft_sso_tenant_id, microsoft_sso_organization,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "tenant-platform",
                 "3.19.0",
                 "11111111-2222-3333-4444-555555555555",
@@ -585,6 +609,7 @@ class TestPromptSetup:
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, True]
             mock_text.return_value.ask.side_effect = [
+                "test-node",
                 "  TenantPlatform  ",  # mixed case + whitespace
                 "3.19.0",
                 "iblai",
@@ -659,7 +684,7 @@ class TestPromptResetup:
         assert config.is_resetup is True
         assert config.base_domain == "new.example.com"
         assert config.prod_images_tag == "3.19.0"  # the typed release tag
-        assert config.cli_ops_release_tag == "5.39.0"  # resolved from the pin
+        assert config.cli_ops_release_tag == CLI_OPS_TEST_TAG  # resolved from the pin
         assert config.target_host == "54.1.2.3"
         assert config.aws_access_key_id == "AKIA"
         assert config.aws_secret_access_key == "SECRET"
@@ -752,8 +777,8 @@ class TestPromptResetup:
                 IngressEntry(name="stg1", domain="stg1.example.com"),
                 IngressEntry(name="stg2", domain="stg2.example.com"),
             ]
-            # First select call is the ingress picker
-            mock_select.return_value.ask.return_value = "stg2.example.com"
+            # selects: ingress picker, LLM key picker
+            mock_select.return_value.ask.side_effect = ["stg2.example.com", "openai"]
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
             # text prompts: cli_ops_release_tag, admin_username, admin_email
@@ -781,7 +806,7 @@ class TestPromptResetup:
             mock_load.return_value = [
                 IngressEntry(name="stg1", domain="stg1.example.com"),
             ]
-            mock_select.return_value.ask.return_value = "__custom__"
+            mock_select.return_value.ask.side_effect = ["__custom__", "openai"]
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
             # text prompts: custom domain, cli_ops_release_tag,
@@ -810,7 +835,7 @@ class TestResolveCliOpsReleaseTag:
         from iblai_infra.prompts.setup import _resolve_cli_ops_release_tag
 
         tag = _resolve_cli_ops_release_tag(self.CRED, "1.64.0")
-        assert tag == "5.39.0"
+        assert tag == CLI_OPS_TEST_TAG
         _pin_resolver.assert_called_once_with(
             "ghp_x", "iblai", "iblai-prod-images", "1.64.0", subdir=None
         )
@@ -843,3 +868,30 @@ class TestResolveCliOpsReleaseTag:
             mtext.return_value.ask.return_value = "  "
             tag = _resolve_cli_ops_release_tag(self.CRED, "main")
         assert tag == "main"
+
+
+class TestPromptLLMKey:
+    def test_offers_openai_openrouter_and_skipping(self, llm_key_picker):
+        from iblai_infra.prompts.setup import _prompt_llm_key
+
+        llm_key_picker.return_value.ask.return_value = ""
+        _prompt_llm_key()
+        values = {c.value for c in llm_key_picker.call_args.kwargs["choices"]}
+        assert {"openai", "openrouter", ""} <= values
+
+    def test_an_openrouter_choice_asks_for_that_key(self, llm_key_picker):
+        from iblai_infra.prompts.setup import _prompt_llm_key
+
+        llm_key_picker.return_value.ask.return_value = "openrouter"
+        with patch("questionary.password") as password:
+            password.return_value.ask.return_value = " sk-or-v1-example "
+            assert _prompt_llm_key() == (LLMProvider.OPENROUTER, "sk-or-v1-example")
+        assert password.call_args.args[0] == "OpenRouter API key:"
+
+    def test_skipping_asks_for_no_key(self, llm_key_picker):
+        from iblai_infra.prompts.setup import _prompt_llm_key
+
+        llm_key_picker.return_value.ask.return_value = ""
+        with patch("questionary.password") as password:
+            assert _prompt_llm_key() == (LLMProvider.OPENAI, "")
+        password.assert_not_called()

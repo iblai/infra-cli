@@ -633,6 +633,7 @@ def launch(
     admin_password: str = typer.Option("", "--admin-password", help="Admin password (required for single/multi-server, ignored for call-server)"),
     vpn_ip: str = typer.Option(..., "--vpn-ip", help="IP address allowed SSH access"),
     name: str | None = typer.Option(None, "--name", help="Project name (auto-generated from domain if omitted)"),
+    node_id: str = typer.Option("", "--node-id", help="Node ID for CloudWatch log-group names (default: project name)"),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH user"),
     aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region"),
     instance_type: str = typer.Option("t3.2xlarge", "--instance-type", help="EC2 instance type"),
@@ -644,6 +645,9 @@ def launch(
     prod_images_repo: str = typer.Option("iblai-prod-images", "--prod-images-repo", help="Prod images repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
     admin_username: str = typer.Option("platform_admin", "--admin-username", help="Admin username (cannot be a reserved name like 'ibl_admin')"),
     openai_key: str = typer.Option("", "--openai-key", help="OpenAI API key (optional)"),
+    openrouter_key: str = typer.Option(
+        "", "--openrouter-key", help="OpenRouter API key, stored as the ibl.ai gateway key (optional; instead of --openai-key)"
+    ),
     enable_ai: bool = typer.Option(True, "--enable-ai/--no-ai", help="Enable AI features"),
     create_playwright_platforms: bool = typer.Option(
         False,
@@ -792,10 +796,11 @@ def launch(
         ssh_public_key=ssh_public_key, ssh_key=ssh_key,
         git_token=git_token, admin_email=admin_email,
         admin_password=admin_password, vpn_ip=vpn_ip, name=name,
+        node_id=node_id,
         ssh_user=ssh_user, aws_region=aws_region,
         instance_type=instance_type, volume_size=volume_size,
         environment=environment, cli_tag=cli_tag,
-        admin_username=admin_username, openai_key=openai_key,
+        admin_username=admin_username, openai_key=openai_key, openrouter_key=openrouter_key,
         enable_ai=enable_ai,
         github_org=github_org,
         cli_ops_repo=cli_ops_repo,
@@ -896,6 +901,7 @@ def launch_env(
 
     # Optional with defaults
     name = env.get("NAME") or None
+    node_id = env.get("NODE_ID", "")  # empty = project name
     ssh_user = env.get("SSH_USER", "ubuntu")
     aws_region = env.get("AWS_DEFAULT_REGION", "us-east-1")
     instance_type = env.get("INSTANCE_TYPE", "t3.2xlarge")
@@ -915,6 +921,7 @@ def launch_env(
         ui.muted(f"Reserved: {reserved}. Pick a different name (e.g. 'platform_admin').")
         raise typer.Exit(1)
     openai_key = env.get("OPENAI_API_KEY", "")
+    openrouter_key = env.get("OPENROUTER_API_KEY", "")
     enable_ai = env.get("ENABLE_AI", "true").lower() in ("true", "1", "yes")
     create_playwright_platforms = env.get("CREATE_PLAYWRIGHT_PLATFORMS", "false").lower() in ("true", "1", "yes")
     github_org = env.get("GITHUB_ORG", "iblai")
@@ -1016,10 +1023,11 @@ def launch_env(
         ssh_public_key=ssh_public_key, ssh_key=ssh_key,
         git_token=git_token, admin_email=admin_email,
         admin_password=admin_password, vpn_ip=vpn_ip, name=name,
+        node_id=node_id,
         ssh_user=ssh_user, aws_region=aws_region,
         instance_type=instance_type, volume_size=volume_size,
         environment=environment, cli_tag=cli_tag,
-        admin_username=admin_username, openai_key=openai_key,
+        admin_username=admin_username, openai_key=openai_key, openrouter_key=openrouter_key,
         enable_ai=enable_ai,
         github_org=github_org,
         cli_ops_repo=cli_ops_repo,
@@ -1262,6 +1270,11 @@ def setup_env(
     if setup_config.microsoft_sso_enabled:
         integrations.append("Microsoft SSO")
     rows.append(("Integrations", ", ".join(integrations) if integrations else "(none)"))
+    if setup_config.s3_static_bucket:
+        rows.append((
+            "S3 storage",
+            f"{setup_config.s3_static_bucket}, {setup_config.s3_media_bucket} ({setup_config.s3_region})",
+        ))
     ui.summary_panel("Setup Configuration", rows)
 
     ui.newline()
@@ -1318,8 +1331,10 @@ def _run_launch(
     volume_size: int,
     environment: str,
     cli_tag: str,
+    node_id: str = "",
     admin_username: str,
     openai_key: str,
+    openrouter_key: str = "",
     enable_ai: bool,
     github_org: str = "iblai",
     cli_ops_repo: str = "iblai-cli-ops",
@@ -1382,10 +1397,19 @@ def _run_launch(
         SSHConfig,
         SSHKeyMethod,
         WAFConfig,
+        choose_llm_key,
         generate_password,
     )
     from iblai_infra.terraform.runner import TerraformRunner
     from iblai_infra.terraform.state import WORKSPACE_ROOT
+
+    # Checked before anything is provisioned.
+    try:
+        llm_provider, llm_api_key = choose_llm_key(openai_key, openrouter_key)
+    except ValueError:
+        ui.error("Give an OpenAI key or an OpenRouter key, not both.")
+        ui.muted("  Add the other one later with iblai infra llm set-key.")
+        raise typer.Exit(1)
 
     # Derive project name
     project_name = name or domain.replace(".", "-")
@@ -1564,7 +1588,7 @@ def _run_launch(
         ssh_user=ssh_user,
         target_host=instance_ip,
         base_domain=domain,
-        env_config=("call-only" if deploy_type == DeploymentType.CALL else "single-server"),
+        node_id=node_id,
         cli_ops_release_tag=cli_tag,
         enable_ai=enable_ai,
         create_playwright_platforms=create_playwright_platforms,
@@ -1601,7 +1625,8 @@ def _run_launch(
         github_org=github_org,
         cli_ops_repo=cli_ops_repo,
         prod_images_repo=prod_images_repo,
-        llm_api_key=openai_key,
+        llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
         admin_username=admin_username,
         admin_email=admin_email,
         admin_password=admin_password,
@@ -1654,6 +1679,7 @@ def service_update(
     git_token: str = typer.Option(..., "--git-token", help="GitHub Personal Access Token"),
     ssh_user: str = typer.Option("ubuntu", "--ssh-user", help="SSH user"),
     name: str | None = typer.Option(None, "--name", help="Project name (auto-generated if omitted)"),
+    node_id: str = typer.Option("", "--node-id", help="Node ID for CloudWatch log-group names (default: project name)"),
     ami_id: str | None = typer.Option(None, "--ami-id", help="Launch EC2 from this AMI before updating"),
     subnet_id: str | None = typer.Option(None, "--subnet-id", help="Subnet to launch into (with --ami-id)"),
     security_group_id: str | None = typer.Option(None, "--security-group-id", help="Security group for EC2 (with --ami-id)"),
@@ -1665,6 +1691,11 @@ def service_update(
     aws_secret_key: str | None = typer.Option(None, "--aws-secret-key", help="AWS secret access key (with --ami-id)"),
     aws_region: str = typer.Option("us-east-1", "--aws-region", help="AWS region (with --ami-id)"),
     prod_images_tag: str = typer.Option("main", "--prod-images-tag", help="iblai-prod-images git tag or branch"),
+    github_org: str = typer.Option("iblai", "--github-org", help="GitHub org owning the private CLI ops + prod images repos"),
+    cli_ops_repo: str = typer.Option("iblai-cli-ops", "--cli-ops-repo", help="CLI ops repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
+    prod_images_repo: str = typer.Option("iblai-prod-images", "--prod-images-repo", help="Prod images repo, or 'repo/subdir' to install from a subdirectory of a monorepo"),
+    cli_tag: str = typer.Option("", "--cli-tag", help="iblai-cli-ops tag (default: the one --prod-images-tag pins)"),
+    test_users: bool = typer.Option(False, "--test-users/--no-test-users", help="Create the Playwright test users (they get a fixed password)"),
 ) -> None:
     """Update container images and restart services.
 
@@ -1672,6 +1703,13 @@ def service_update(
       --host: update an existing server directly
       --ami-id: launch EC2 from AMI, update services, register in target group
     """
+    packages = {
+        "github_org": github_org,
+        "cli_ops_repo": cli_ops_repo,
+        "prod_images_repo": prod_images_repo,
+        "cli_tag": cli_tag,
+    }
+
     if ami_id:
         missing = []
         if not subnet_id:
@@ -1696,16 +1734,58 @@ def service_update(
             instance_type=instance_type, volume_size=volume_size,
             aws_key_id=aws_key_id, aws_secret_key=aws_secret_key,
             aws_region=aws_region, ssh_key=ssh_key, git_token=git_token,
-            ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
+            ssh_user=ssh_user, name=name, node_id=node_id,
+            prod_images_tag=prod_images_tag,
+            packages=packages, create_test_users=test_users,
         )
     elif host:
         _run_service_update(
             host=host, ssh_key=ssh_key, git_token=git_token,
-            ssh_user=ssh_user, name=name, prod_images_tag=prod_images_tag,
+            ssh_user=ssh_user, name=name, node_id=node_id,
+            prod_images_tag=prod_images_tag,
+            packages=packages, create_test_users=test_users,
         )
     else:
         ui.error("Either --host or --ami-id is required.")
         raise typer.Exit(1)
+
+
+def _service_update_packages(
+    *,
+    git_token: str,
+    prod_images_tag: str,
+    github_org: str = "iblai",
+    cli_ops_repo: str = "iblai-cli-ops",
+    prod_images_repo: str = "iblai-prod-images",
+    cli_tag: str = "",
+) -> dict:
+    """Which repos and cli-ops tag service-update installs.
+
+    Without --cli-tag the tag comes from the pin in --prod-images-tag, so
+    the CLI matches the images it is installed with.
+    """
+    if not cli_tag:
+        from iblai_infra.env_utils import resolve_pinned_cli_ops_tag
+        from iblai_infra.models import parse_repo_path
+
+        pi_repo, pi_subdir = parse_repo_path(prod_images_repo)
+        cli_tag = resolve_pinned_cli_ops_tag(
+            git_token, github_org, pi_repo, prod_images_tag, subdir=pi_subdir
+        ) or ""
+        if cli_tag:
+            ui.info(f"iblai-cli-ops [highlight]{cli_tag}[/highlight] (pinned by {pi_repo}@{prod_images_tag})")
+        else:
+            cli_tag = "main"
+            ui.warning(
+                f"Could not read the iblai-cli-ops pin from {pi_repo}@{prod_images_tag}; "
+                "falling back to 'main'. Pass --cli-tag to override."
+            )
+    return {
+        "github_org": github_org,
+        "cli_ops_repo": cli_ops_repo,
+        "prod_images_repo": prod_images_repo,
+        "cli_ops_release_tag": cli_tag,
+    }
 
 
 def _run_service_update(
@@ -1715,7 +1795,10 @@ def _run_service_update(
     git_token: str,
     ssh_user: str,
     name: str | None,
+    node_id: str = "",
     prod_images_tag: str = "main",
+    packages: dict | None = None,
+    create_test_users: bool = False,
 ) -> None:
     """Install latest images and restart all services."""
     import os
@@ -1759,17 +1842,24 @@ def _run_service_update(
         ui.error("ansible-playbook not found. Install with: pip install ansible-core")
         raise typer.Exit(1)
 
+    packages = _service_update_packages(
+        git_token=git_token, prod_images_tag=prod_images_tag, **(packages or {})
+    )
+
     # Build SetupConfig with minimal values (only SSH + git needed)
     setup_config = SetupConfig(
         ssh_private_key_path=ssh_key,
         ssh_user=ssh_user,
         target_host=host,
         base_domain="service-update",
+        node_id=node_id,
         prod_images_tag=prod_images_tag,
         aws_access_key_id="",
         aws_secret_access_key="",
         aws_default_region="us-east-1",
         git_access_token=git_token,
+        create_test_users=create_test_users,
+        **(packages or {}),
     )
 
     # Create or update state
@@ -1855,7 +1945,10 @@ def _run_service_update_from_ami(
     git_token: str,
     ssh_user: str,
     name: str | None,
+    node_id: str = "",
     prod_images_tag: str = "main",
+    packages: dict | None = None,
+    create_test_users: bool = False,
 ) -> None:
     """Launch EC2 from AMI, run service update, register in target group."""
     import os
@@ -1905,6 +1998,10 @@ def _run_service_update_from_ami(
         ui.error("ansible-playbook not found. Install with: pip install ansible-core")
         raise typer.Exit(1)
 
+    packages = _service_update_packages(
+        git_token=git_token, prod_images_tag=prod_images_tag, **(packages or {})
+    )
+
     # Create boto3 session
     import boto3
     session = boto3.Session(
@@ -1947,11 +2044,14 @@ def _run_service_update_from_ami(
         ssh_user=ssh_user,
         target_host=host,
         base_domain="service-update",
+        node_id=node_id,
         prod_images_tag=prod_images_tag,
         aws_access_key_id="",
         aws_secret_access_key="",
         aws_default_region=aws_region,
         git_access_token=git_token,
+        create_test_users=create_test_users,
+        **(packages or {}),
     )
 
     workspace_path = str(WORKSPACE_ROOT / f"{project_name}-service-update")
@@ -2379,10 +2479,7 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
     ])
     if not is_call:
         rows.append(("edX version", setup_config.edx_version))
-    rows.extend([
-        ("Env config", setup_config.env_config),
-        ("AWS region", setup_config.aws_default_region),
-    ])
+    rows.append(("AWS region", setup_config.aws_default_region))
     ui.summary_panel("Setup Summary", rows)
 
     import questionary
@@ -2407,9 +2504,6 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
         save_state(state)
 
     if is_call:
-        # ibl_call role uses env_config; make sure it's set even if the prompt defaulted
-        if not setup_config.env_config or setup_config.env_config == "single-server":
-            setup_config.env_config = "call-only"
         runner = AnsibleRunner(
             state, setup_config,
             playbook="call_playbook.yml",

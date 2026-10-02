@@ -10,6 +10,7 @@ import questionary
 from iblai_infra import ui
 from iblai_infra.env_utils import resolve_pinned_cli_ops_tag
 from iblai_infra.models import (
+    LLMProvider,
     ProjectState,
     RESERVED_ADMIN_USERNAMES,
     RESERVED_PLATFORM_NAMES,
@@ -115,6 +116,7 @@ def _prompt_platform_config(
     step: int,
     total: int,
     base_domain: str | None = None,
+    default_node_id: str = "",
 ) -> dict:
     """Collect platform configuration. Returns a dict of config values.
 
@@ -135,6 +137,20 @@ def _prompt_platform_config(
         base_domain = base_domain.strip()
 
     ui.success(f"Domain: [highlight]{base_domain}[/highlight]")
+
+    # Node ID — the 6.x config system requires NODE_ID in the env for
+    # `ibl render`. It only names CloudWatch log groups and the Sentry env
+    # prefix, so the project name is the right default.
+    node_id = questionary.text(
+        "Node ID (names CloudWatch log groups):",
+        default=default_node_id,
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if node_id is None:
+        ui.abort()
+    node_id = node_id.strip() or default_node_id
+    ui.success(f"Node ID: [highlight]{node_id}[/highlight]")
 
     # Platform name — drives the SSO ansible roles (backend_name =
     # `<platform_name>-oauth2`, other_settings.platform_key) AND the
@@ -159,9 +175,6 @@ def _prompt_platform_config(
 
     edx_version = "sumac"
     ui.success(f"Open edX version: [highlight]Sumac[/highlight]")
-
-    env_config = "single-server"
-    ui.success(f"Server type: [highlight]Single Server[/highlight]")
 
     # One version question: the prod-images release. iblai-cli-ops is
     # resolved from prod-images' [tool.uv.sources] pin after the GitHub
@@ -210,9 +223,9 @@ def _prompt_platform_config(
 
     return {
         "base_domain": base_domain,
+        "node_id": node_id,
         "platform_name": platform_name,
         "edx_version": edx_version,
-        "env_config": env_config,
         "prod_images_tag": prod_images_tag,
         "enable_ai": enable_ai,
         "create_playwright_platforms": create_playwright_platforms,
@@ -543,8 +556,8 @@ def _prompt_microsoft_sso_config() -> dict:
     short_name. The role then writes a Django `OAuth2ProviderConfig` row
     on the LMS for the `azuread-oauth2` slug (with `backend_name` derived
     from the operator's `platform_name`) AND patches
-    `IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND` in `/ibl/config.yml`. After
-    config save the role restarts edX so the new Django settings take
+    the `IBL_EDX.IBL_EDX_BASE_OAUTH_SSO_BACKEND` config keys. After
+    rendering, the role restarts edX so the new Django settings take
     effect. Client secret is collected via `questionary.password` (no
     echo); none of these values are persisted locally — they ride
     extra_vars to ansible at run time only.
@@ -608,6 +621,46 @@ def _prompt_microsoft_sso_config() -> dict:
         "microsoft_sso_tenant_id": tenant_id,
         "microsoft_sso_organization": organization,
     }
+
+
+LLM_KEY_CHOICES = {
+    LLMProvider.OPENAI: "OpenAI",
+    LLMProvider.OPENROUTER: "OpenRouter",
+}
+
+
+def _prompt_llm_key() -> tuple[LLMProvider, str]:
+    """Which LLM key the operator provides, if any, and the key itself."""
+    ui.info(
+        "An LLM key enables the AI mentor features. An OpenRouter key is stored as "
+        "the ibl.ai gateway key. Choose which one to provide, or skip."
+    )
+    choice = questionary.select(
+        "Which LLM key would you like to provide?",
+        choices=[questionary.Choice(label, value=p.value) for p, label in LLM_KEY_CHOICES.items()]
+        + [questionary.Choice("Skip for now", value="")],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if choice is None:
+        ui.abort()
+    if not choice:
+        ui.muted("Skipped - set one later with iblai infra llm set-key")
+        return LLMProvider.OPENAI, ""
+    provider = LLMProvider(choice)
+    key = questionary.password(
+        f"{LLM_KEY_CHOICES[provider]} API key:",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if key is None:
+        ui.abort()
+    key = key.strip()
+    if key:
+        ui.success(f"{provider.value} API key provided")
+    else:
+        ui.muted("Skipped - set one later with iblai infra llm set-key")
+    return provider, key
 
 
 def _prompt_credentials(
@@ -739,20 +792,7 @@ def _prompt_credentials(
             ui.abort()
         aws_region = aws_region.strip()
 
-    openai_api_key = ""
-    ui.info("OpenAI API key enables AI mentor features. Leave blank to skip.")
-    openai_input = questionary.password(
-        "OpenAI API Key (optional):",
-        style=ui.PROMPT_STYLE,
-        qmark=ui.QMARK,
-    ).ask()
-    if openai_input is None:
-        ui.abort()
-    openai_api_key = openai_input.strip()
-    if openai_api_key:
-        ui.success("OpenAI API key provided")
-    else:
-        ui.muted("Skipped — can be configured later in DM admin")
+    llm_provider, llm_api_key = _prompt_llm_key()
 
     ui.info("Super admin account for the platform (LMS and Data Manager).")
 
@@ -798,7 +838,8 @@ def _prompt_credentials(
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,
-        "llm_api_key": openai_api_key,
+        "llm_provider": llm_provider,
+        "llm_api_key": llm_api_key,
         "admin_username": admin_username,
         "admin_email": admin_email,
         "admin_password": admin_password,
@@ -847,6 +888,7 @@ def prompt_setup(state: ProjectState) -> SetupConfig:
         step=2,
         total=SETUP_STEPS,
         base_domain=state.config.dns.base_domain,
+        default_node_id=state.name,
     )
 
     # ----- Step 3: Credentials -----
@@ -1053,7 +1095,9 @@ def prompt_bootstrap() -> tuple[SetupConfig, dict]:
     ssh_user = ssh_user.strip()
 
     # ----- Step 3: Platform Configuration -----
-    platform = _prompt_platform_config(step=3, total=BOOTSTRAP_STEPS)
+    platform = _prompt_platform_config(
+        step=3, total=BOOTSTRAP_STEPS, default_node_id=project_name
+    )
 
     # ----- Step 4: Credentials -----
     cred = _prompt_credentials(step=4, total=BOOTSTRAP_STEPS)

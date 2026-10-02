@@ -33,13 +33,16 @@ from iblai_infra.models import (
     DNSConfig,
     Environment,
     InfraConfig,
+    LLMProvider,
     NetworkConfig,
     ProjectState,
     RESERVED_ADMIN_USERNAMES,
     RESERVED_PLATFORM_NAMES,
+    S3_BUCKET_NAME_RE,
     SetupConfig,
     SSHConfig,
     SSHKeyMethod,
+    choose_llm_key,
     is_reserved_admin_username,
     is_reserved_platform_name,
 )
@@ -86,6 +89,17 @@ def _get_git_token(env: dict[str, str]) -> str:
         if v:
             return v
     return ""
+
+
+def llm_key_from_env(env: dict[str, str]) -> tuple[LLMProvider, str]:
+    """The LLM key a .env provides: OPENAI_API_KEY or OPENROUTER_API_KEY."""
+    try:
+        return choose_llm_key(env.get("OPENAI_API_KEY", ""), env.get("OPENROUTER_API_KEY", ""))
+    except ValueError:
+        raise _fail(
+            "Set OPENAI_API_KEY or OPENROUTER_API_KEY, not both.",
+            hint="Add the other one later with `iblai infra llm set-key`.",
+        )
 
 
 def build_bootstrap_state_from_env(env: dict[str, str]) -> ProjectState:
@@ -285,6 +299,21 @@ def build_setup_config_from_env(
     microsoft_sso_client_id = (env.get("MICROSOFT_SSO_CLIENT_ID") or "").strip()
     microsoft_sso_enabled = bool(microsoft_sso_client_id)
 
+    # S3 storage for DM media/static — both buckets or neither.
+    s3_static_bucket = (env.get("S3_STATIC_BUCKET") or "").strip()
+    s3_media_bucket = (env.get("S3_MEDIA_BUCKET") or "").strip()
+    if bool(s3_static_bucket) != bool(s3_media_bucket):
+        raise _fail(
+            "Set both S3_STATIC_BUCKET and S3_MEDIA_BUCKET, or neither.",
+            hint="The DM stores static files and uploaded media in separate buckets.",
+        )
+    for key, bucket in (("S3_STATIC_BUCKET", s3_static_bucket), ("S3_MEDIA_BUCKET", s3_media_bucket)):
+        if bucket and not S3_BUCKET_NAME_RE.fullmatch(bucket):
+            raise _fail(f"{key}={bucket!r} is not a valid S3 bucket name.")
+    s3_region = (env.get("S3_REGION") or "").strip() or region
+
+    llm_provider, llm_api_key = llm_key_from_env(env)
+
     github_org = (env.get("GITHUB_ORG") or "iblai").strip()
     prod_images_repo_raw = (env.get("PROD_IMAGES_REPO") or "iblai-prod-images").strip()
     prod_images_tag = (env.get("PROD_IMAGES_TAG") or "main").strip()
@@ -318,7 +347,8 @@ def build_setup_config_from_env(
         target_host=target_host,
         base_domain=base_domain,
         edx_version=(env.get("EDX_VERSION") or "sumac").strip(),
-        env_config=(env.get("ENV_CONFIG") or "single-server").strip(),
+        # Empty = fall back to the project name (resolved by AnsibleRunner).
+        node_id=(env.get("NODE_ID") or "").strip(),
         cli_ops_release_tag=cli_ops_tag,
         prod_images_tag=prod_images_tag,
         enable_ai=parse_bool(env.get("ENABLE_AI"), default=True),
@@ -332,7 +362,11 @@ def build_setup_config_from_env(
         github_org=github_org,
         cli_ops_repo=(env.get("CLI_OPS_REPO") or "iblai-cli-ops").strip(),
         prod_images_repo=prod_images_repo_raw,
-        llm_api_key=(env.get("OPENAI_API_KEY") or "").strip(),
+        s3_static_bucket=s3_static_bucket,
+        s3_media_bucket=s3_media_bucket,
+        s3_region=s3_region if s3_static_bucket else "",
+        llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
         admin_username=admin_username,
         admin_email=admin_email,
         admin_password=admin_password,

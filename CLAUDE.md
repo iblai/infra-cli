@@ -132,7 +132,7 @@ Before running, `setup <name>` checks that the platform domains resolve and asks
 SMTP, SSO, Stripe, the LLM key and extra tenants are all skippable at setup and added later against a running environment, without re-running the playbook. `iblai infra configure <name>` lists them; each is also a standalone subgroup (see CLI Structure). Modules live in `src/iblai_infra/features/`, one per feature, registered on `infra_app` in `cli.py`.
 
 **How a partial run works:**
-- Playbook roles carry tags — `smtp`, `stripe`, `google_sso`, `microsoft_sso`, `platform`, plus a task-level `llm` tag on the OpenAI task in `admin_setup`. Purely additive: a run without `--tags` executes every role in the same order.
+- Playbook roles carry tags — `smtp`, `stripe`, `google_sso`, `microsoft_sso`, `platform`, plus a task-level `llm` tag on the LLM credential tasks in `admin_setup`. Purely additive: a run without `--tags` executes every role in the same order.
 - `AnsibleRunner.run_partial(tags)` runs `ansible-playbook --tags <...>` against the existing inventory. It deliberately leaves `setup_status` alone — adding a feature is not the environment being set up, and a failure must not make a working environment look un-provisioned.
 - `SetupConfig.for_feature(state, **overrides)` recovers host / SSH key / base domain from `ProjectState` and leaves the credential fields empty. **None of the tagged roles read the GitHub token or AWS keys**, so enabling a feature needs only the SSH key already in state plus that feature's own values.
 
@@ -151,7 +151,7 @@ SMTP, SSO, Stripe, the LLM key and extra tenants are all skippable at setup and 
 - It reads server state first via `AnsibleRunner.run_remote_script()` to build the source picker and allocate a free port from 5060; the stock SPAs hold 5000-5009.
 The clone copies the source's *rendered* `.env` rather than re-rendering from config, then rewrites `PORT` — written, not substituted, since older deployments have no `PORT` line, and a missing one leaves the clone listening on the source's port while compose publishes another. Its nginx block goes in `/etc/nginx/conf.d/custom_domains/`, which `reverse_proxy_task.py` excludes from the proxy sync, so it survives `ibl global-proxy`; the stock `nginx.conf` include isn't recursive, so that subdirectory's include is added idempotently.
 
-`status` currently exists only for `smtp`; it reads values back off the server via `AnsibleRunner.read_config_values()` (`ibl config printvalue` over SSH), because `SetupConfig` carries secrets and is never persisted, so there is no local source of truth.
+`status` currently exists only for `smtp`; it reads values back off the server via `AnsibleRunner.read_config_values()` (`ibl config get --json` per key over SSH, parsed as JSONL), because `SetupConfig` carries secrets and is never persisted, so there is no local source of truth. A value whose `source` is `default` reads back as empty — registry defaults are not operator configuration, and `status` must not present them as such.
 
 ### DNS Verification
 
@@ -183,16 +183,15 @@ Returns `SetupConfig` with `is_resetup=True`. Does **not** prompt for image tags
 **What `is_resetup=True` triggers in Ansible** (`ibl_platform/tasks/main.yml`):
 1. Restore postgres data dir ownership (uid 999) → restart postgres → wait for ready
 2. Capture current MySQL root password
-3. `ibl config rotate-secrets -f --include-auth` — regenerate all secrets
-4. Sync new postgres password (`ALTER USER` from config.yml)
+3. `ibl_platform/tasks/rotate_secrets.yml` (shared with `launch`) — rotate every gate-active generator-backed secret except the keys that encrypt stored data (`IBL_DM.FIELD_ENCRYPTION_KEY`, `IBL_DM.LANGFUSE_ENCRYPTION_KEY`, the SSO backend's `IBL_FERNET_KEY`, `IBL_BACKUPS.ENCRYPTION.CRYPT_PASSWORD`): `--all-generated` rotates those too, and nothing re-encrypts, so the DM could no longer read its own credential rows
+4. Sync new postgres password (`ALTER USER` from `ibl config get`)
 5. Sync new MySQL passwords (root + openedx users, using old→new password)
 
 All other tasks (domain config, proxy, ECR login, edX settings) run unconditionally.
 
 **Domain update flow** — when `resetup` changes the base domain:
-- `config.yml`: `BASE_DOMAIN` updated via `ibl config save`
-- `auth.yml`: OAuth/OIDC redirect URIs rewritten by the `integrations` role
-- Nginx proxy: `ibl global-proxy launch-without-security` regenerates all server_name directives
+- `config.yml`: `BASE_DOMAIN` updated via `ibl config set` + explicit `ibl render`
+- Nginx proxy: `ibl global-proxy launch-without-security` regenerates all server_name directives (reads rendered output — the render must precede it)
 - DB registrations: `integrations` re-creates oauth/oidc clients with new domain URLs
 
 ### Launch Command
@@ -348,7 +347,7 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - SSH access (private_key_path, ssh_user, target_host)
 - Platform config (base_domain, edx_version, env_config, image tags for DM/edX/SPAs, enable_ai)
 - Credentials (aws_access_key_id, aws_secret_access_key, aws_default_region, git_access_token)
-- Optional: openai_api_key, admin_username, admin_email, admin_password
+- Optional: llm_provider + llm_api_key (OpenAI, Anthropic or OpenRouter; an OpenRouter key is written as the gateway credential `iblai`, like the platform's own), admin_username, admin_email, admin_password
 
 ### Terraform Runner
 
@@ -371,12 +370,28 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - DM postgres tasks read `$POSTGRES_USER` and `$POSTGRES_DB` from container env (not hardcoded)
 - DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
 - The finalization work is split across three roles (it used to live in one `final_steps` role, since removed):
-  - `integrations`: config save, proxy reload, launch oauth/oidc/edx-manager, dm auth-setup, edx sync-with-manager
-  - `admin_setup`: configure OpenAI credential (if provided), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform
+  - `integrations`: render, proxy reload, `ibl dm sso`, the OAuth/OIDC clients and edX's credentials for the DM (`clients.yml`), edx sync-with-manager
+  - `admin_setup`: configure the LLM credential (if provided; an OpenRouter key becomes the `iblai` gateway credential and triggers `sync_llm_catalog`), create super admin (DM + LMS), sync users to the DM, make the super admin an admin of main, seed CSRF exempt domains, enable UseMainLLMKey for main platform
   - `data_seeding`: seed flows/llm-registry/base-mentors/tools/rbac-data, demo course, magic-link email templates, name backfill, TimescaleDB + analytics views
 - Django `JSONField` values must be passed as dicts, not `json.dumps()` strings — auto-serialization handles encoding
-- SPA boolean config values (`ENABLE_RBAC`, `STRIPE_ENABLED`, etc.) must be written as quoted strings (`'true'`/`'false'`) via Python yaml — `ibl config save --set` cannot handle quoted string values
-- `ibl-edx-uwsgi` plugin and other list-type config values must be manipulated via Python yaml, not `ibl config save --set` — the CLI's `printvalue` returns Python list repr that can't be round-tripped
+- Config writes go through `ibl config set` (multi-pair, all-or-nothing, registry-validated) followed by an explicit `ibl render` — nothing renders implicitly under the 6.x model. "Quoted boolean" SPA values are str-typed registry keys, so `'true'`/`'false'` store exactly; genuinely bool/int-typed keys coerce
+- List/dict-typed keys (`IBL_EDX.PLUGINS`, CSRF-exempt URLs) take JSON values; appends are read-modify-write via `ibl config get K --json` piped to python3, never PyYAML file surgery
+- Secret writes go through `ibl secrets set` (prefer `--from-env` — argv is visible in `ps`); writing a secret key via `config set`, or any unregistered key, is a hard error
+- Shell-form `ibl config get` captures must be rc-guarded (`VAL=$(ibl config get K) || exit 1`): an unset secret resolves to its enforced `""` default with rc 0, while a nonzero rc means registry drift — and the not-found notice prints to stdout, so never consume stdout from a failed get
+- `ibl_cli_ops` runs `ibl secrets generate` before the `ibl secrets check --json` preflight: a secret that defaults to another one (e.g. `IBL_DM.DB_READ_REPLICA_PASSWORD`) reads as operator-supplied until that one is generated
+- The single-server preset runs the DM's AI call service, which needs a call server's LiveKit key and secret (`IBL_DM.LIVEKIT_API_KEY`/`_SECRET`, no generator on the app node). With AI on and neither set, every render fails, so `ibl_platform` turns `IBL_DM.RUN_AI_CALL` off unless the key is already configured
+- SPA restarts follow the enabled `IBL_SPA.RUN_*_SPA` toggles, never a fixed list: fresh servers run auth/lms/os, migrated ones may still run mentor/skills. `ibl_spa/tasks/discover.yml` (reused by service-update and launch) yields `enabled_spas`; feature roles use `ibl spa restart`, which skips disabled SPAs and pairs mentor with os
+- `ibl_dm` doesn't run `ibl dm launch` (on cli-ops >= 7.13 it can neither bootstrap a single server nor re-run): `ibl dm migrate` → admin user → `initialize_manager` (web's start-up fixtures need the main platform) → `ibl dm up -d` → `ibl_dm/tasks/credentials.yml`; `ibl dm sso` runs in `integrations`, after edX. The OAuth/OIDC clients are registered through the task runners `ibl launch` wraps (its checked `docker network create` fails once the network exists) — `integrations/tasks/clients.yml`, shared with service-update
+- Upstream's credential helpers (`ibl dm auth-setup`, `add_new_credentials`, `ibl launch --ibl-edx-manager`) only create: once a row exists they fail (DOT 2.x hashes the DM's client secret, so `get_or_create` never matches) or skip, and resetup's `ibl secrets rotate --all-generated` rotates both `IBL_OAUTH` clients and the DM read-only password. `ibl_dm/tasks/credentials.yml` (shared with service-update) and the edX `manager` row in `clients.yml` update the rows in place to the current config; the values reach the containers through the environment, never argv
+- Setup writes the AWS keys to `secrets.yml`; `S3_STATIC_BUCKET` + `S3_MEDIA_BUCKET` (setup-env) switch DM storage to S3, and nothing ever switches it off. With AI on, the Flowise secrets `ibl dm up` requires are filled (`ibl_platform/tasks/flowise_secrets.yml`); `proxy_hosts.yml` maps the meilisearch upstream in `/etc/hosts` so host nginx can load its vhost
+- `data_seeding` gives every mentor a settings row after `seed_flows`, which creates some without one (chat reads it, so those mentors could not be chatted with); creates the legacy `fake-llm` provider row the health-check mentors are seeded with when it's missing (only long-lived installs have it, and without it the mentor health check and `ibl dm update`'s readiness gate fail on every fresh install); and runs `seed_base_mentors` only where the DM still ships it
+- With the skills SPA off and the LMS SPA on (the preset), `ibl_platform` points the LMS root redirect (`IBL_EDX.IBL_EDX_REDIRECTOR.IBL_REDIRECTOR_EXTERNAL_ROOT_URL`, default `https://skills.<domain>`) at `https://lms.<domain>` before the first render; a value an operator set is left alone
+- `PLATFORM_NAME` (the deployment's display name) comes from the tenant named at setup; `ibl_tenant_platform` writes it only while unset, so `iblai infra platform create` adds a tenant without renaming the deployment
+- The DM's `seed_flows` gives every platform without one a "use main LLM key" setting (`UseMainLLMKey`) that defaults to off, which cuts a tenant off from the deployment's keys. The `Seed DM flows` task switches on exactly the settings that run created (an admin's own setting is kept), and `ibl_tenant_platform` turns it on for each tenant it creates
+- On a fresh install with only a gateway (OpenRouter) key: `data_seeding` turns moderation off for the health-check mentors (provider `fake-llm`), whose moderation step otherwise builds a real model that needs an OpenAI key and fails the mentor health check and `ibl dm update`'s readiness gate
+- DM 4.412+ seeds the health-check mentors with the registry's `fake` provider, gives them settings rows and skips their moderation, and creates new `UseMainLLMKey` rows from `ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS` (which `ibl_platform` sets to true). The workarounds above are no-ops there and stay for older DMs
+- `admin_setup` makes the super admin an admin of main through its `UserPlatformLink` (`is_admin`), which is what the platform reads for admin rights. The link points at the DM's copy of the LMS user, so it runs after the LMS admin is created and `ibl edx sync-with-manager --users` has copied it across
+- service-update installs from `--github-org` / `--prod-images-repo` / `--cli-ops-repo` (cli tag from the given prod-images pin unless `--cli-tag`), reads the server's `BASE_DOMAIN` for the spa-sso redirects, and creates the fixed-password Playwright users only with `--test-users`
 
 ### IAM Permission Checks
 
@@ -436,7 +451,7 @@ Three Terraform topologies selected via `DeploymentType` enum:
   - Always open: TCP 22 (SSH, `vpn_ip/32`), TCP 80/443, TCP 7880 (API/WS), TCP 7881 (ICE-TCP), UDP 7882 (ICE mux), UDP 50000-60000 (ICE host), TCP 5349 (TURN/TLS), UDP 3478 (TURN/STUN)
   - SIP stack (opened only when `enable_sip=true`): TCP+UDP 5060, TCP 5061, UDP 10000-20000 (RTP)
 - Ansible: `docker` + `awscli` + `python` + `ibl_cli_ops` + `ibl_call` (5 roles). Skips `ibl_platform`, `ibl_dm`, `ibl_edx`, `ibl_spa`, `integrations`, `admin_setup`, `data_seeding` — LiveKit is standalone.
-- `ibl_call` role runs: persist `IBL_ROOT=/ibl/` in `~/.bashrc` → `ibl config save --set BASE_DOMAIN=…` → `ibl config environment call-only` → ECR login → `ibl call up` → wait for `:7880` → `ibl call show-call-secrets` (printed to operator terminal, never persisted locally). **Use `ibl call up`, not `ibl call start`** — `start` in `iblai-cli-ops ≤ 5.8.1` passes `--remove-orphans` to a `docker compose` subcommand that Docker Compose v5 rejects.
+- `ibl_call` role runs: persist `IBL_ROOT`/`NODE_ID` in `~/.bashrc` → `ibl config set BASE_DOMAIN=…` → `ibl services enable IBL_CALL.RUN_LIVEKIT` → `ibl secrets generate` + `ibl render` (the LiveKit key/secret are generator-backed, gated on the toggle — enable must precede generate) → ECR login → `ibl call up -d` (attached, it never returns) → wait for `:7880` → `ibl call show-call-secrets` (printed to operator terminal, never persisted locally; under 6.x the values exist in `secrets.yml` pre-boot). **Use `ibl call up`, not `ibl call start`** — `start` in `iblai-cli-ops ≤ 5.8.1` passes `--remove-orphans` to a `docker compose` subcommand that Docker Compose v5 rejects.
 - **BASE_DOMAIN convention:** pass the **parent** domain (e.g. `stg1.iblai.org`), NOT `call.stg1.iblai.org`. `ibl call` auto-prepends `call.` when generating `LIVEKIT_WS_URL`, so the doubled form produces `wss://call.call.stg1.iblai.org`. Provision prompt asks for "Call server base domain" and shows the WS URL that will be generated.
 
 **Open source safety:** Templates contain zero hardcoded IPs, SSH keys, account IDs, or secrets. DB passwords and Redis auth tokens are generated at runtime via `generate_password()`, passed through `terraform.tfvars` (in `~/.iblai-infra/` workspace, not in the repo), and excluded from `state.json` serialization via `Field(exclude=True)`. LiveKit API key + secret are generated by `ibl call start` on the server and printed to the operator via Ansible `debug` — they never hit the local machine.
@@ -451,7 +466,7 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 
 **What it provisions** (`terraform/templates/gcp/single-server/`): VPC + one regional subnet; two firewall rules (SSH from `vpn_ip/32`; tcp:80 from the LB health/GFE ranges `130.211.0.0/22`+`35.191.0.0/16`); an external-IP VM (metadata SSH keys, `startup-script.sh`); an **unmanaged instance group** backend behind a **global external ALB** (`EXTERNAL_MANAGED`); a **classic Google-managed SSL cert** covering all 19 subdomains (validates asynchronously — `apply` returns before HTTPS is live); Cloud DNS (detect-or-create zone via `create_dns_zone`, + A records → the LB's static IP). Cert methods: `managed` / `upload` / `none`.
 
-**Storage stays on AWS.** GCP provisions no object storage; the platform keeps using AWS S3, reached with static keys supplied at the setup step (mirrors AWS today — the VM has no instance profile). Bucket *names* are never plumbed through Ansible: `iblai-cli-ops` derives them from `BASE_DOMAIN` by the `{project}-{env}-{domain-dashes}-{backups|dm-media|dm-static}` convention, so operators pre-create the three S3 buckets with those names (dm-static public-read) and supply AWS creds at `iblai infra setup`.
+**Storage stays on AWS.** GCP provisions no object storage; the platform keeps using AWS S3, reached with static keys supplied at the setup step (mirrors AWS today — the VM has no instance profile). Bucket names are set at setup (`S3_STATIC_BUCKET` / `S3_MEDIA_BUCKET` with setup-env); operators pre-create the buckets (static public-read) and supply AWS keys with access to them.
 
 **Credentials & helpers:** `GCPCredentials` (ADC via `gcloud auth application-default login`, or a service-account key JSON). `providers/gcp.py` mirrors `providers/aws.py` (validate creds, discover Cloud DNS zones, find/delete conflicting records, `check_permissions`, `REQUIRED_GCP_ROLES` = `roles/compute.admin` + `roles/dns.admin` + `roles/iam.serviceAccountUser`; APIs `compute` + `dns`). Google SDKs live in the optional `[gcp]` extra (`uv sync --extra gcp`).
 
@@ -482,7 +497,7 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 
 ## Testing
 
-- **839 tests**, all via pytest: `uv run pytest tests/ -v`
+- **1,084 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

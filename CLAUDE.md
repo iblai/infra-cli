@@ -371,7 +371,7 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
 - The finalization work is split across three roles (it used to live in one `final_steps` role, since removed):
   - `integrations`: render, proxy reload, `ibl dm sso`, the OAuth/OIDC clients and edX's credentials for the DM (`clients.yml`), edx sync-with-manager
-  - `admin_setup`: configure the LLM credential (if provided; an OpenRouter key becomes the `iblai` gateway credential and triggers `sync_llm_catalog`), create super admin (DM + LMS), seed CSRF exempt domains, enable UseMainLLMKey for main platform
+  - `admin_setup`: configure the LLM credential (if provided; an OpenRouter key becomes the `iblai` gateway credential and triggers `sync_llm_catalog`), create super admin (DM + LMS), sync users to the DM, make the super admin an admin of main, seed CSRF exempt domains, enable UseMainLLMKey for main platform
   - `data_seeding`: seed flows/llm-registry/base-mentors/tools/rbac-data, demo course, magic-link email templates, name backfill, TimescaleDB + analytics views
 - Django `JSONField` values must be passed as dicts, not `json.dumps()` strings — auto-serialization handles encoding
 - Config writes go through `ibl config set` (multi-pair, all-or-nothing, registry-validated) followed by an explicit `ibl render` — nothing renders implicitly under the 6.x model. "Quoted boolean" SPA values are str-typed registry keys, so `'true'`/`'false'` store exactly; genuinely bool/int-typed keys coerce
@@ -388,7 +388,9 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - With the skills SPA off and the LMS SPA on (the preset), `ibl_platform` points the LMS root redirect (`IBL_EDX.IBL_EDX_REDIRECTOR.IBL_REDIRECTOR_EXTERNAL_ROOT_URL`, default `https://skills.<domain>`) at `https://lms.<domain>` before the first render; a value an operator set is left alone
 - `PLATFORM_NAME` (the deployment's display name) comes from the tenant named at setup; `ibl_tenant_platform` writes it only while unset, so `iblai infra platform create` adds a tenant without renaming the deployment
 - The DM's `seed_flows` gives every platform without one a "use main LLM key" setting (`UseMainLLMKey`) that defaults to off, which cuts a tenant off from the deployment's keys. The `Seed DM flows` task switches on exactly the settings that run created (an admin's own setting is kept), and `ibl_tenant_platform` turns it on for each tenant it creates
-- On a fresh install with only a gateway (OpenRouter) key: `data_seeding` turns moderation off for the health-check mentors (provider `fake-llm`), whose moderation step otherwise builds a real model that needs an OpenAI key and fails the mentor health check and `ibl dm update`'s readiness gate; and `admin_setup` makes the super admin an admin of main through its `UserPlatformLink` (`is_admin`), which is what the platform reads for admin rights
+- On a fresh install with only a gateway (OpenRouter) key: `data_seeding` turns moderation off for the health-check mentors (provider `fake-llm`), whose moderation step otherwise builds a real model that needs an OpenAI key and fails the mentor health check and `ibl dm update`'s readiness gate
+- DM 4.412+ seeds the health-check mentors with the registry's `fake` provider, gives them settings rows and skips their moderation, and creates new `UseMainLLMKey` rows from `ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS` (which `ibl_platform` sets to true). The workarounds above are no-ops there and stay for older DMs
+- `admin_setup` makes the super admin an admin of main through its `UserPlatformLink` (`is_admin`), which is what the platform reads for admin rights. The link points at the DM's copy of the LMS user, so it runs after the LMS admin is created and `ibl edx sync-with-manager --users` has copied it across
 - service-update installs from `--github-org` / `--prod-images-repo` / `--cli-ops-repo` (cli tag from the given prod-images pin unless `--cli-tag`), reads the server's `BASE_DOMAIN` for the spa-sso redirects, and creates the fixed-password Playwright users only with `--test-users`
 
 ### IAM Permission Checks
@@ -495,7 +497,7 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 
 ## Testing
 
-- **839 tests**, all via pytest: `uv run pytest tests/ -v`
+- **1,084 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

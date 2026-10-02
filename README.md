@@ -263,7 +263,12 @@ Sets or rotates the credential the mentor service uses. Supported providers are 
 
 An **OpenRouter** key is stored as the ibl.ai gateway key (the global credential `iblai`), beside any provider key rather than in place of it; it becomes the preferred one only when no other key is. The model catalogue is then synced so chat routes through the gateway straight away. Setup asks which key to provide (OpenAI or OpenRouter); `.env` files take `OPENAI_API_KEY` or `OPENROUTER_API_KEY`, and `launch` takes `--openai-key` or `--openrouter-key`.
 
-**Why an OpenRouter key.** The platform's daily catalogue sync marks most models, OpenAI's included, as served through the gateway, and the default agent mentor uses the gateway model (`iblai-pro`). With only an OpenAI key, chat stops working after the first sync, usually within a day of setup. Add an OpenRouter key to keep it working.
+**Why an OpenRouter key.** Mentors created by the platform, the default agent mentor among them, use the gateway models (`iblai-pro` / `iblai-fast`), which only an OpenRouter key serves. With an OpenRouter key chat works with no further setup.
+
+With only an OpenAI key:
+
+- **DM 4.412 and later** serve OpenAI's models with that key, but mentors on a gateway model need a default model to stand in for it. Set one with `ibl config set IBL_DM.DEFAULT_MENTOR_LLM_PROVIDER=openai IBL_DM.DEFAULT_MENTOR_LLM_MODEL=<model>` (ibl-cli-ops 7.24+), then `ibl render` and restart the DM.
+- **Earlier DMs** mark most models, OpenAI's included, as served through the gateway at the daily catalogue sync, so chat stops working within a day of setup. Add an OpenRouter key.
 
 #### Tenant platform
 
@@ -404,7 +409,7 @@ Terraform state, generated SSH keys, and project configuration live at `~/.iblai
 
 ```bash
 uv sync --extra dev --extra gcp
-uv run pytest tests/ -v                                          # 749 tests, ~2s
+uv run pytest tests/ -v                                          # 1,084 tests
 uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing
 ```
 
@@ -426,7 +431,7 @@ iblai-infra-ops/
 │   │       └── gcp/            # single-server
 │   └── ansible/                # Runner + playbooks + 16 roles
 ├── docs/                       # GCP guide, development notes
-├── tests/                      # 749 tests
+├── tests/                      # 1,084 tests
 └── pyproject.toml
 ```
 

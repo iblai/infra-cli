@@ -144,6 +144,12 @@ services list.) (Local-env note for anyone re-validating:
 Manifest (`deployment_manifest.json`): non-issue for this tool —
 CI-generated deploy marker; fresh setups never have one.
 
+**Validated end to end** on prod-images 1.277.0 (ibl-cli-ops 7.24.0, DM 4.412.0): `provision-env` →
+`setup-env` → `service-update` on a throwaway single-server AWS project, installing from forks of both
+repos (`GITHUB_ORG` / `*_REPO` overrides) with a token scoped to them and only an OpenRouter key; chat
+works on `main` and a tenant. Earlier rounds on prod-images 1.255.0 (7.21.0) also covered the post-setup
+features, three resetups and a second service-update.
+
 **Checked against released 7.9.0 and 7.21.0** (the playbooks' config steps run on a scratch root):
 a secret defaulting to another one (`IBL_DM.DB_READ_REPLICA_PASSWORD`, `IBL_DM.OIDC_RP_CLIENT_ID`/`_SECRET`)
 reports as `user_supplied` until `ibl secrets generate` has run, so the preflight follows a generate.

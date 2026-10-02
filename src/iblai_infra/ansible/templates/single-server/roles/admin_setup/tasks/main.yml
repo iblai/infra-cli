@@ -109,27 +109,6 @@
     HOME: "/home/{{ ansible_user }}"
   no_log: true
 
-# The platform counts a user as a platform admin through their link to it,
-# not the superuser flag, so the super admin is linked to main as an admin.
-- name: Make the super admin an admin of the main platform
-  become: false
-  ansible.builtin.shell:
-    cmd: |
-      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
-      from core.models import Platform
-      from django.apps import apps
-
-      Link = apps.get_model('core', 'UserPlatformLink')
-      user = Link._meta.get_field('user').related_model.objects.get(username='{{ admin_username }}')
-      Link.objects.update_or_create(
-          user=user, platform=Platform.objects.get(key='main'), defaults={'is_admin': True, 'active': True}
-      )
-      print('MAIN_PLATFORM_ADMIN_SET')
-      PY
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-
 # LMS superuser must have first_name + last_name + UserProfile.name set,
 # otherwise skills/enrollment flows that look up the learner's display name
 # render blank and (in some flows) reject the enrollment outright. We
@@ -177,6 +156,45 @@
   args:
     executable: /bin/bash
   no_log: true
+
+# The DM links platform admins to its mirror of LMS users, which only has the
+# super admin once the LMS user has been synced across.
+- name: Sync the super admin to the DM
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    ibl edx sync-with-manager --users
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+# The platform counts a user as a platform admin through their link to it,
+# not the superuser flag, so the super admin is linked to main as an admin.
+- name: Make the super admin an admin of the main platform
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from core.models import Platform
+      from django.apps import apps
+
+      Link = apps.get_model('core', 'UserPlatformLink')
+      user = Link._meta.get_field('user').related_model.objects.get(username='{{ admin_username }}')
+      Link.objects.update_or_create(
+          user=user, platform=Platform.objects.get(key='main'), defaults={'is_admin': True, 'active': True}
+      )
+      print('MAIN_PLATFORM_ADMIN_SET')
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
 
 - name: Seed CSRF exempt domains for CORS
   become: false

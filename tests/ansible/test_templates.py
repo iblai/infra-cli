@@ -510,10 +510,15 @@ class TestFreshInstallAccess:
         assert "llm_provider='fake-llm'" in _shell(tasks[i])
 
     def test_the_super_admin_administers_main(self):
-        """The platform reads admin rights from the platform link, not the superuser flag."""
+        """The platform reads admin rights from the platform link, not the superuser flag.
+
+        The link points at the DM's copy of the LMS user, which exists only once
+        the LMS user is synced; on a fresh install the lookup failed before that.
+        """
         tasks = _tasks("single-server", "admin_setup")
         names = [t["name"] for t in tasks]
         i = names.index("Make the super admin an admin of the main platform")
-        assert names.index("Create DM super admin") < i
+        lms_admin = names.index("Create LMS super admin (with first_name / last_name / UserProfile.name)")
+        assert lms_admin < _first(tasks, r"ibl edx sync-with-manager --users") < i
         script = _shell(tasks[i])
         assert "'is_admin': True" in script and "key='main'" in script and "{{ admin_username }}" in script

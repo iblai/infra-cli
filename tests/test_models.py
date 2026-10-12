@@ -22,12 +22,14 @@ from iblai_infra.models import (
     IngressEntry,
     IngressLockConfig,
     IngressRegistry,
+    LLMProvider,
     NetworkConfig,
     ProjectState,
     SSHConfig,
     SSHKeyMethod,
     SetupConfig,
     WAFConfig,
+    choose_llm_key,
     generate_password,
 )
 
@@ -295,7 +297,6 @@ class TestSetupConfig:
     def test_valid(self, setup_config):
         assert setup_config.ssh_user == "ubuntu"
         assert setup_config.edx_version == "sumac"
-        assert setup_config.env_config == "single-server"
 
     def test_defaults(self, tmp_path):
         key = tmp_path / "k.pem"
@@ -311,8 +312,41 @@ class TestSetupConfig:
         )
         assert sc.ssh_user == "ubuntu"
         assert sc.edx_version == "sumac"
-        assert sc.env_config == "single-server"
         assert sc.enable_ai is True
+        assert (sc.s3_access_key_id, sc.s3_secret_access_key) == ("", "")
+
+
+class TestSetupConfigS3Key:
+    def _config(self, setup_config, **changes) -> SetupConfig:
+        return SetupConfig(**{**setup_config.model_dump(), **changes})
+
+    def test_a_separate_key(self, setup_config):
+        sc = self._config(setup_config, s3_access_key_id="AKIAS3", s3_secret_access_key="s3-secret")
+        assert (sc.s3_access_key_id, sc.aws_access_key_id) == ("AKIAS3", "AKIAIOSFODNN7EXAMPLE")
+
+    @pytest.mark.parametrize("half", [
+        {"s3_access_key_id": "AKIAS3"},
+        {"s3_secret_access_key": "s3-secret"},
+    ])
+    def test_half_a_key_is_refused(self, setup_config, half):
+        with pytest.raises(ValidationError, match="both halves of the S3 key"):
+            self._config(setup_config, **half)
+
+    def test_buckets_need_the_s3_key(self, setup_config):
+        """The ECR key never reaches the platform, so it can't stand in."""
+        with pytest.raises(ValidationError, match="S3 buckets need the S3 key"):
+            self._config(setup_config, s3_static_bucket="acme-static", s3_media_bucket="acme-media")
+
+    def test_buckets_with_the_s3_key(self, setup_config):
+        sc = self._config(
+            setup_config, s3_static_bucket="acme-static", s3_media_bucket="acme-media",
+            s3_access_key_id="AKIAS3", s3_secret_access_key="s3-secret",
+        )
+        assert sc.s3_static_bucket == "acme-static"
+
+    def test_the_secret_is_never_serialized(self, setup_config):
+        sc = self._config(setup_config, s3_access_key_id="AKIAS3", s3_secret_access_key="s3-secret")
+        assert "s3_secret_access_key" not in sc.model_dump()
 
 
 # ---------------------------------------------------------------------------
@@ -751,3 +785,17 @@ class TestIngressRegistry:
         restored = IngressRegistry.model_validate(data)
         assert restored.entries[0].name == "a"
         assert restored.lock.bucket == "b"
+
+
+class TestChooseLLMKey:
+    def test_an_openrouter_key_selects_the_gateway_provider(self):
+        assert choose_llm_key("", " sk-or-v1-example ") == (LLMProvider.OPENROUTER, "sk-or-v1-example")
+
+    def test_otherwise_the_key_is_an_openai_one(self):
+        assert choose_llm_key("sk-example", "") == (LLMProvider.OPENAI, "sk-example")
+        assert choose_llm_key("", "") == (LLMProvider.OPENAI, "")
+
+    def test_both_keys_are_refused(self):
+        """Only one credential is written per run; the other would be dropped silently."""
+        with pytest.raises(ValueError):
+            choose_llm_key("sk-example", "sk-or-v1-example")

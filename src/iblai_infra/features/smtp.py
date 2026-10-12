@@ -11,6 +11,8 @@ have to be recreated.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from iblai_infra import ui
@@ -34,7 +36,9 @@ SMTP_TAGS = ["smtp"]
 SMTP_LABELS = {"smtp_config": "SMTP Config"}
 AFFECTED_SERVICES = "Data Manager and Open edX"
 
-STATUS_KEYS = ["IBL_SMTP_HOST", "IBL_SMTP_PORT", "IBL_SMTP_USER", "IBL_SMTP_SENDER_MAIL"]
+# The role writes IBL_SMTP_SYSTEM_PORT (the legacy IBL_SMTP_PORT is never
+# written and would read back as its registry default).
+STATUS_KEYS = ["IBL_SMTP_HOST", "IBL_SMTP_SYSTEM_PORT", "IBL_SMTP_USER", "IBL_SMTP_SENDER_MAIL"]
 
 
 @smtp_app.command("enable")
@@ -105,7 +109,7 @@ def smtp_enable(
 @smtp_app.command("enable-env")
 def smtp_enable_env(
     name: str = typer.Argument(help="Environment name"),
-    env_file: str = typer.Option(..., "-f", "--file", help="Path to a .env file"),
+    env_file: Path = typer.Option(..., "-f", "--file", help="Path to a .env file"),
     no_restart: bool = typer.Option(False, "--no-restart", help="Skip the service restart"),
 ) -> None:
     """Non-interactive SMTP enable, reading the same keys as `setup-env`."""

@@ -74,6 +74,16 @@
     - 'eval "$(pyenv init -)"'
     - 'eval "$(pyenv virtualenv-init -)"'
 
+# NODE_ID is required in the process env by `ibl render` (6.x config system).
+# Own task with a regexp (not a loop item above) so a re-run with a different
+# node_id overwrites the line instead of appending a second export.
+- name: Persist NODE_ID export in ~/.bashrc
+  become: false
+  lineinfile:
+    path: "{{ bashrc_path }}"
+    line: "export NODE_ID={{ node_id }}"
+    regexp: '^export NODE_ID='
+
 - name: Install Python {{ python_version }} via pyenv
   become: false
   shell: |

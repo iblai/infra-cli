@@ -505,8 +505,6 @@ def _offer_setup(config: InfraConfig, state) -> None:
 
     # Call-server has its own (smaller) role set + dedicated playbook
     if config.deployment_type == DeploymentType.CALL:
-        # Override env_config so ibl_call role runs `ibl config environment call-only`
-        setup_config.env_config = "call-only"
         runner = AnsibleRunner(
             state, setup_config,
             playbook="call_playbook.yml",

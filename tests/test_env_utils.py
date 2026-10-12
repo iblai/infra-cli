@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 from unittest import mock
 
+from tests.conftest import CLI_OPS_TEST_TAG
 from iblai_infra.env_utils import (
     load_env_file,
     mask,
@@ -109,14 +110,14 @@ class TestParseBool:
 # resolve_pinned_cli_ops_tag
 # ---------------------------------------------------------------------------
 
-PYPROJECT_WITH_PIN = b"""
+PYPROJECT_WITH_PIN = ("""
 [project]
 name = "iblai-images"
 dependencies = ["ibl-cli"]
 
 [tool.uv.sources]
-ibl-cli = { git = "https://github.com/iblai/ibl-cli-ops", rev = "5.39.0" }
-"""
+ibl-cli = { git = "https://github.com/iblai/ibl-cli-ops", rev = "%s" }
+""" % CLI_OPS_TEST_TAG).encode()
 
 PYPROJECT_NO_PIN = b"""
 [project]
@@ -154,7 +155,7 @@ class TestResolvePinnedCliOpsTag:
 
     def test_resolves_rev(self):
         tag, murl = self._resolve(PYPROJECT_WITH_PIN)
-        assert tag == "5.39.0"
+        assert tag == CLI_OPS_TEST_TAG
         req = murl.call_args[0][0]
         assert (
             "repos/iblai/iblai-prod-images/contents/pyproject.toml?ref=main"
@@ -164,7 +165,7 @@ class TestResolvePinnedCliOpsTag:
 
     def test_subdir_path_in_url(self):
         tag, murl = self._resolve(PYPROJECT_WITH_PIN, subdir="iblai-prod-images")
-        assert tag == "5.39.0"
+        assert tag == CLI_OPS_TEST_TAG
         req = murl.call_args[0][0]
         assert "/contents/iblai-prod-images/pyproject.toml?ref=main" in req.full_url
 

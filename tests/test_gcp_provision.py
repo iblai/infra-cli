@@ -23,6 +23,7 @@ from iblai_infra.models import (
     gcp_machine_ram_gb,
 )
 from iblai_infra.terraform.runner import RESOURCE_LABELS, TerraformRunner, _friendly_label
+from tests.prompts.conftest import answer_s3_picker
 
 
 class TestCloudValidator:
@@ -494,14 +495,17 @@ class TestSetupPromptsGcpState:
         state = self._gcp_state(gcp_infra_config, tmp_path)
         with mock.patch("questionary.text") as mtext, \
              mock.patch("questionary.password") as mpass, \
-             mock.patch("questionary.confirm") as mconf:
+             mock.patch("questionary.confirm") as mconf, \
+             mock.patch("questionary.select") as mselect:
+            mselect.return_value.ask.return_value = "openai"  # LLM key picker
+            answer_s3_picker(mselect, "")                      # skip the S3 key
             mtext.return_value.ask.side_effect = [
                 "iblai", "iblai-cli-ops", "iblai-prod-images",  # org + repos
                 "AKIAEXAMPLE", "us-east-1",                      # aws key id + region
                 "platform_admin", "admin@example.com",           # admin user + email
             ]
             mpass.return_value.ask.side_effect = [
-                "ghp_token", "aws-secret", "", "adminpass123",   # git, aws secret, openai, admin pw
+                "ghp_token", "aws-secret", "", "adminpass123",   # git, aws secret, LLM key, admin pw
             ]
             cred = setup_mod._prompt_credentials(step=3, total=3, state=state)
 
@@ -516,7 +520,10 @@ class TestSetupPromptsGcpState:
 
         with mock.patch("questionary.text") as mtext, \
              mock.patch("questionary.password") as mpass, \
-             mock.patch("questionary.confirm") as mconf:
+             mock.patch("questionary.confirm") as mconf, \
+             mock.patch("questionary.select") as mselect:
+            mselect.return_value.ask.return_value = "openai"  # LLM key picker
+            answer_s3_picker(mselect, "")                      # skip the S3 key
             mtext.return_value.ask.side_effect = [
                 "iblai", "iblai-cli-ops", "iblai-prod-images",
                 "platform_admin", "admin@example.com",

@@ -1,12 +1,101 @@
 ---
+# `seed_flows` gives every platform without one a "use main LLM key" setting
+# that defaults to off, which cuts a tenant off from the deployment's keys.
+# Those it just created are switched on; a setting an admin made is kept.
 - name: Seed DM flows
   become: false
   ansible.builtin.shell:
     cmd: |
-      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_flows
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from core.models import Platform
+      from django.core.management import call_command
+      from ibl_ai_mentor.models import UseMainLLMKey
+
+      had_setting = set(UseMainLLMKey.objects.values_list('platform_id', flat=True))
+      without = [p.id for p in Platform.objects.all() if p.id not in had_setting]
+      call_command('seed_flows')
+      enabled = UseMainLLMKey.objects.filter(platform_id__in=without, use_main_key=False).update(use_main_key=True)
+      print('SEED_FLOWS_DONE main key kept on for ' + str(enabled))
+      PY
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+
+# Some of the mentors `seed_flows` creates, the health check's among them, get
+# no settings row, and chat with them fails reading it.
+- name: Give every mentor a settings row
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from ibl_ai_mentor.models import Mentor
+      from ibl_ai_mentor.utils.mentor_utils import get_or_create_mentor_settings
+
+      missing = Mentor.objects.filter(mentorsettings__isnull=True)
+      created = [m.name for m in missing if get_or_create_mentor_settings(m)[1]]
+      print("MENTOR_SETTINGS_CREATED " + ", ".join(created) if created else "MENTOR_SETTINGS_PRESENT")
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: mentor_settings
+  changed_when: "'MENTOR_SETTINGS_CREATED' in mentor_settings.stdout"
+
+# The health-check mentors are seeded with the legacy `fake-llm` provider,
+# which only long-lived installs still have a row for; on a fresh one the
+# mentor health check, and the readiness gate of `ibl dm update`, fail.
+- name: Register the provider the health-check mentors use
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from django.apps import apps
+
+      try:
+          LLM = apps.get_model("ibl_ai_mentor", "LLM")
+      except LookupError:
+          LLM = None
+      if LLM is None:
+          print("FAKE_LLM_PROVIDER_NOT_NEEDED")
+      else:
+          description = "Fake llm used for testing purposes"
+          chat_models = [{"llm_name": "fake-llm-model", "description": "", "is_multimodal": False,
+                          "training_data": "", "context_window": "infinite"}]
+          _, created = LLM.objects.get_or_create(
+              name="fake-llm",
+              defaults={
+                  "description": description,
+                  "chat_models": chat_models,
+                  "flow": {"name": "fake-llm", "display_name": "Fake LLM", "description": description,
+                           "chat_models": chat_models},
+              },
+          )
+          print("FAKE_LLM_PROVIDER_CREATED" if created else "FAKE_LLM_PROVIDER_PRESENT")
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: fake_llm_provider
+  changed_when: "'FAKE_LLM_PROVIDER_CREATED' in fake_llm_provider.stdout"
+
+# The health-check mentors chat with a stand-in model, but their moderation
+# step builds a real one, which needs an OpenAI key. With only a gateway key
+# the check failed, and with it the readiness gate of `ibl dm update`.
+- name: Keep the health-check mentors off the moderation model
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py shell <<'PY'
+      from ibl_ai_mentor.models import Mentor
+
+      switched = Mentor.objects.filter(llm_provider='fake-llm', enable_moderation=True).update(enable_moderation=False)
+      print('HEALTH_MODERATION_OFF ' + str(switched))
+      PY
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: health_moderation
+  changed_when: "'HEALTH_MODERATION_OFF 0' not in health_moderation.stdout"
 
 - name: Seed LLM registry
   become: false
@@ -17,14 +106,23 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
 
+# Current DM releases no longer ship this command.
 - name: Seed base mentors
   become: false
   ansible.builtin.shell:
     cmd: |
-      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/ && docker compose exec -T web ./manage.py seed_base_mentors
+      cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/
+      COMMANDS=$(docker compose exec -T web ./manage.py help --commands) || exit 1
+      if ! grep -qx seed_base_mentors <<< "$COMMANDS"; then
+        echo "SEED_BASE_MENTORS_UNAVAILABLE"
+        exit 0
+      fi
+      docker compose exec -T web ./manage.py seed_base_mentors
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+  register: seed_base_mentors
+  changed_when: "'SEED_BASE_MENTORS_UNAVAILABLE' not in seed_base_mentors.stdout"
 
 - name: Seed tools
   become: false
@@ -54,6 +152,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 # Skills enrollment + several other edX flows look up the learner's display
 # name from `auth_user.first_name` / `last_name` and `student.UserProfile.name`.

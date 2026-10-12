@@ -49,14 +49,33 @@ class SSHKeyMethod(str, Enum):
 
 
 class LLMProvider(str, Enum):
-    """Name of the credential row the mentor service looks up.
+    """Which provider an LLM key belongs to.
 
-    The value is written verbatim as the credential's name and matched
-    case-sensitively on the server, so these must stay lowercase.
+    The server matches credential names exactly, so these stay lowercase.
     """
 
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    OPENROUTER = "openrouter"
+
+    @property
+    def credential_name(self) -> str:
+        """The credential row the key is stored as.
+
+        An OpenRouter key funds the ibl.ai gateway, which reads its key from
+        the credential named ``iblai``; the others go under their own name.
+        """
+        return "iblai" if self is LLMProvider.OPENROUTER else self.value
+
+
+def choose_llm_key(openai_key: str, openrouter_key: str) -> tuple[LLMProvider, str]:
+    """The provider and key when at most one of the two is given."""
+    openai_key, openrouter_key = (openai_key or "").strip(), (openrouter_key or "").strip()
+    if openai_key and openrouter_key:
+        raise ValueError("give an OpenAI key or an OpenRouter key, not both")
+    if openrouter_key:
+        return LLMProvider.OPENROUTER, openrouter_key
+    return LLMProvider.OPENAI, openai_key
 
 
 class CertMethod(str, Enum):
@@ -551,6 +570,9 @@ def is_reserved_platform_name(value: str) -> bool:
     return (value or "").strip().lower() in RESERVED_PLATFORM_NAMES
 
 
+S3_BUCKET_NAME_RE = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+
+
 class SetupConfig(BaseModel):
     """Variables needed to bootstrap a provisioned VM. Never persisted to disk."""
     ssh_private_key_path: Path
@@ -558,7 +580,11 @@ class SetupConfig(BaseModel):
     target_host: str
     base_domain: str
     edx_version: str = "sumac"
-    env_config: str = "single-server"
+    # Node identity for the 6.x config system: `ibl render` requires NODE_ID
+    # in the process env. It only feeds CloudWatch log-group names and the
+    # Sentry env prefix, so the project name is the right default — empty
+    # means "use the project name" (AnsibleRunner resolves it from state.name).
+    node_id: str = ""
     # iblai-cli-ops install tag. Empty = "resolve from the prod-images pin":
     # iblai-prod-images' pyproject.toml pins ibl-cli via [tool.uv.sources]
     # (rev = "<tag>"), and the interactive/env flows resolve that pin via
@@ -574,6 +600,9 @@ class SetupConfig(BaseModel):
     # commands set it when adding an integration to a running environment,
     # where the containers would otherwise keep their old environment.
     restart_services: bool = False
+    # The ECR pull key. It goes into the server's default AWS CLI profile,
+    # which every ECR login uses (setup, service-update and `ibl` itself), and
+    # never into the platform's secrets - S3 has its own key, below.
     aws_access_key_id: str
     aws_secret_access_key: str
     aws_default_region: str
@@ -589,6 +618,21 @@ class SetupConfig(BaseModel):
     # install URL is built.
     cli_ops_repo: str = "iblai-cli-ops"
     prod_images_repo: str = "iblai-prod-images"
+    # S3 buckets for DM media and static files, both or neither. Empty leaves
+    # the server's storage settings as they are; the region defaults to
+    # aws_default_region.
+    s3_static_bucket: str = ""
+    s3_media_bucket: str = ""
+    s3_region: str = ""
+    # The platform's AWS key: the root-level AWS_ACCESS_KEY_ID /
+    # AWS_SECRET_ACCESS_KEY in secrets.yml, read by DM S3 storage, SCORM
+    # uploads and SNS alerts (backups, monitoring). Kept apart from the ECR pull key so
+    # each can be scoped to its own job. Both or neither; empty leaves the
+    # server's current key alone, so a resetup that skips it keeps working.
+    s3_access_key_id: str = ""
+    s3_secret_access_key: str = Field(default="", exclude=True)
+    # service-update: create the Playwright test users, whose password is fixed.
+    create_test_users: bool = False
     # Excluded from serialization like every other secret on this model. Nothing
     # currently dumps a SetupConfig, so this is defensive - but these two were
     # the only credentials without the guard, and that asymmetry is the kind
@@ -677,6 +721,30 @@ class SetupConfig(BaseModel):
     microsoft_sso_client_secret: str = Field(default="", exclude=True)
     microsoft_sso_tenant_id: str = ""
     microsoft_sso_organization: str = ""
+
+    @field_validator("s3_static_bucket", "s3_media_bucket")
+    @classmethod
+    def _validate_bucket_name(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v and not S3_BUCKET_NAME_RE.fullmatch(v):
+            raise ValueError(f"{v!r} is not a valid S3 bucket name")
+        return v
+
+    @model_validator(mode="after")
+    def _s3_buckets_together(self) -> "SetupConfig":
+        if bool(self.s3_static_bucket) != bool(self.s3_media_bucket):
+            raise ValueError("set both S3 buckets (static and media) or neither")
+        return self
+
+    @model_validator(mode="after")
+    def _s3_key_complete(self) -> "SetupConfig":
+        if bool(self.s3_access_key_id) != bool(self.s3_secret_access_key):
+            raise ValueError("set both halves of the S3 key (access key ID and secret) or neither")
+        # The ECR key never reaches the platform, so buckets without an S3 key
+        # would leave the DM writing to S3 with no credentials at all.
+        if self.s3_static_bucket and not self.s3_access_key_id:
+            raise ValueError("S3 buckets need the S3 key to reach them")
+        return self
 
     @field_validator("admin_username")
     @classmethod

@@ -26,13 +26,14 @@
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl dm update
+    ibl render && ibl dm update
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 3600
 
 - name: Wait for DM web to be ready
@@ -64,6 +65,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 600
   ignore_errors: true
 
@@ -75,20 +77,21 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
 
-- name: Save config and tutor config for edX
+- name: Render config for edX
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl tutor config save
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 - name: Start edX services
   become: false
@@ -104,6 +107,7 @@
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
   timeout: 3600
 
 - name: Wait for LMS to be ready
@@ -120,143 +124,95 @@
 # ---------------------------------------------------------------------------
 # SPA config — flip stripe / advertising off by default (override the
 # values baked into the AMI's config.yml). Matches the fresh-install
-# defaults set in `ibl_spa`. Direct yaml patch because `ibl config save
-# --set` cannot round-trip quoted-string booleans.
+# defaults set in `ibl_spa`; both keys are str-typed in the registry, so
+# `ibl config set` stores the exact 'false' strings.
 # ---------------------------------------------------------------------------
 
-- name: Set SPA quoted boolean defaults in config.yml
+- name: Set SPA boolean defaults
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    python3 -c "
-    import yaml
-    config_path = '{{ ibl_root }}/config.yml'
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f) or {}
-    spa = cfg.setdefault('IBL_SPA', {})
-    mentor = spa.setdefault('MENTOR', {})
-    mentor['STRIPE_ENABLED'] = 'false'
-    mentor['ENABLE_ADVERTISING'] = 'false'
-    with open(config_path, 'w') as f:
-        yaml.dump(cfg, f, default_flow_style=False)
-    print('SPA boolean config values set')
-    "
+    ibl config set \
+      'IBL_SPA.MENTOR.STRIPE_ENABLED=false' \
+      'IBL_SPA.MENTOR.ENABLE_ADVERTISING=false'
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
-- name: Re-render templates with SPA config defaults
+- name: Render templates with SPA config defaults
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save
+    ibl render
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
 
 # ---------------------------------------------------------------------------
 # SPA restart
 # ---------------------------------------------------------------------------
 
-- name: Restart Auth SPA
+- name: Discover enabled SPAs
+  ansible.builtin.import_role:
+    name: ibl_spa
+    tasks_from: discover
+
+- name: Restart enabled SPAs
   become: false
   shell: |
-    cd {{ ibl_root }}/app/ibl-spa/auth/ && docker compose pull && docker compose down && docker compose up -d
+    cd {{ ibl_root }}/app/ibl-spa/{{ item.name }}/ && docker compose pull && docker compose down && docker compose up -d
   args:
     executable: /bin/bash
   environment:
     HOME: "/home/{{ ansible_user }}"
+  loop: "{{ enabled_spas }}"
   retries: 2
   delay: 5
 
-- name: Wait for Auth SPA to be ready
-  # 30 × 15s = 450s. The SPA image runs `pnpm install` on first boot
-  # before Next.js starts, which can push cold-start past the older
-  # 150s budget on slower hosts. See ibl_spa role for the long-form
-  # comment.
+# 30 x 15s per SPA - the SPA image runs `pnpm install` on first boot before
+# Next.js starts (see ibl_spa). All were restarted above, so the waits overlap.
+- name: Wait for enabled SPAs to be ready
   become: false
   shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5000/ 2>/dev/null | grep -qE '^(200|301|302)$'
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:{{ item.port }}/ 2>/dev/null | grep -qE '^(200|301|302)$'
   args:
     executable: /bin/bash
-  register: auth_health
-  until: auth_health.rc == 0
+  register: spa_health
+  until: spa_health.rc == 0
   retries: 30
   delay: 15
-
-- name: Restart Mentor SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/mentor/ && docker compose pull && docker compose down && docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-  retries: 2
-  delay: 5
-
-- name: Wait for Mentor SPA to be ready
-  # 450s cold-start budget — same rationale as the Auth SPA wait above.
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5001/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: mentor_health
-  until: mentor_health.rc == 0
-  retries: 30
-  delay: 15
-
-- name: Restart Skills SPA
-  become: false
-  shell: |
-    cd {{ ibl_root }}/app/ibl-spa/skills/ && docker compose pull && docker compose down && docker compose up -d
-  args:
-    executable: /bin/bash
-  environment:
-    HOME: "/home/{{ ansible_user }}"
-  retries: 2
-  delay: 5
-
-- name: Wait for Skills SPA to be ready
-  # 450s cold-start budget — same rationale as the Auth SPA wait above.
-  become: false
-  shell: |
-    curl -s -o /dev/null -w '%{http_code}' http://localhost:5002/ 2>/dev/null | grep -qE '^(200|301|302)$'
-  args:
-    executable: /bin/bash
-  register: skills_health
-  until: skills_health.rc == 0
-  retries: 30
-  delay: 15
+  loop: "{{ enabled_spas }}"
 
 # ---------------------------------------------------------------------------
 # Proxy reload
 # ---------------------------------------------------------------------------
 
-- name: Save config and reload proxy
+- name: Render config and reload proxy
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
     export PATH="$PYENV_ROOT/bin:$PATH"
     eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
     pyenv activate "{{ venv_name }}"
-    ibl config save && ibl global-proxy reload
+    ibl render && ibl global-proxy reload
   args:
     executable: /bin/bash
     chdir: "{{ repo_dir }}"
   environment:
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"

@@ -55,10 +55,12 @@ Prefer no prompts? Steps 3–4 also run from a `.env` file — see [Non-interact
 | **GCP** | A project with billing; `compute` + `dns` APIs enabled; roles `compute.admin`, `dns.admin`, `iam.serviceAccountUser`; auth via `gcloud auth application-default login` or a service-account key. AWS S3 is still used for object storage — see the [GCP guide](docs/GCP.md) |
 | **Existing server** (bare metal / other cloud) | SSH access to the machine (Ubuntu 22.04, min 100 GB disk) and DNS you can point at it. No Terraform runs; only `iblai infra setup` is used. AWS credentials are still required — see below |
 
-**AWS credentials are required on every deployment, including bare metal and GCP.** They are not for hosting; they cover two things:
+**AWS credentials are required on every deployment, including bare metal and GCP.** They are not for hosting. Setup takes two keys, one per job, so each can be scoped to only what it needs (give the same key twice if one does both):
 
-- **ECR** — pulling the platform container images.
-- **S3** — the platform keeps media, static assets, and backups in three buckets. Provisioning on AWS creates them for you. On any other target, create them yourself before setup, named:
+- **ECR key** (required) — pulls the platform container images. It becomes the server's default AWS CLI profile, which every ECR login uses, and never reaches the platform's own settings.
+- **S3 key** (optional) — the platform's AWS key, stored as the root-level `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `/ibl/secrets.yml`. DM S3 storage and SCORM uploads use it, and so do backup and monitoring alerts when an SNS topic is configured (it then needs `sns:Publish` too). Backup *uploads* go through the AWS CLI on the server — its default profile (the ECR key) unless `IBL_BACKUPS.EXTERNAL_STORAGE.S3_PROFILE` names another. Skipping the S3 key leaves whatever the server already has.
+
+The platform keeps media, static assets, and backups in three S3 buckets. Provisioning on AWS creates them for you. On any other target, create them yourself before setup, named:
 
   ```
   <project>-<environment>-<domain-with-dots-as-dashes>-backups
@@ -126,9 +128,9 @@ iblai infra setup <name>       # a Terraform-provisioned environment (IP/domain/
 iblai infra setup              # any existing server (bare metal / other cloud) — prompts for everything
 ```
 
-Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (ECR + S3), an LLM key (OpenAI or OpenRouter, optional), and super admin credentials.
+Prompts for: release tag of [iblai-prod-images](https://github.com/iblai/iblai-prod-images) (the one version knob — the matching `iblai-cli-ops` version is resolved automatically from its pin), tenant platform name (blank = default), enable-AI toggle, optional integrations (SMTP / Stripe / Google SSO / Microsoft SSO — each off unless configured), GitHub PAT, AWS credentials (an ECR key, then an S3 key — separate, the same, or skipped), an LLM key (OpenAI or OpenRouter, optional), and super admin credentials.
 
-**Everything optional can wait.** SMTP, SSO, Stripe and the LLM key are each skippable here — the platform comes up without them. Only the GitHub PAT, AWS credentials and admin credentials are needed on the first run. Add any of them later with [`iblai infra configure <name>`](#7-optional-feature-toggles-post-provision) — no need to re-run setup.
+**Everything optional can wait.** SMTP, SSO, Stripe and the LLM key are each skippable here — the platform comes up without them. Only the GitHub PAT, the ECR key and admin credentials are needed on the first run. Add any of them later with [`iblai infra configure <name>`](#7-optional-feature-toggles-post-provision) — no need to re-run setup.
 
 **Installing from your own repos.** Three prompts control where the private packages come from. Press Enter to accept the defaults, or point them at a fork or per-deployment copy:
 

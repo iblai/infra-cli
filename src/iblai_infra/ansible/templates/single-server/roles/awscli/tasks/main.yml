@@ -27,6 +27,8 @@
   changed_when: false
   ignore_errors: true
 
+# The ECR pull key, as the default profile every ECR login on the server
+# uses. The platform's S3 key goes to secrets.yml instead (ibl_platform).
 - name: Configure AWS credentials
   when: aws_access_key_id | length > 0 and aws_secret_access_key | length > 0
   become: false

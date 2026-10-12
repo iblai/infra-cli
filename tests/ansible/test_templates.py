@@ -122,17 +122,59 @@ def _imports(tasks: list[dict], target: str) -> int:
     )
 
 
+def _flat(tasks):
+    """Tasks with every block's tasks inlined - the ECR key is set inside one."""
+    for task in tasks or []:
+        yield task
+        for part in ("block", "rescue", "always"):
+            yield from _flat(task.get(part))
+
+
+def _env_values(task: dict) -> str:
+    return " ".join(str(v) for v in (task.get("environment") or {}).values())
+
+
 class TestPlatformKeysAndStorage:
-    def test_aws_keys_reach_secrets_before_the_first_render(self):
-        """The rendered services read the AWS keys from secrets.yml; `aws configure`
-        alone never reaches them."""
+    def test_the_s3_key_reaches_secrets_before_the_first_render(self):
+        """The rendered services read the platform's AWS keys from secrets.yml;
+        `aws configure` alone never reaches them."""
         tasks = _tasks("single-server", "ibl_platform")
         i = _first(tasks, r"--from-env AWS_ACCESS_KEY_ID=")
         task = tasks[i]
         assert i < _first(tasks, r"\bibl render\b")
         assert task.get("no_log") is True
-        assert "aws_" not in _shell(task)  # values arrive through the task env
-        assert any("aws_secret_access_key" in c for c in task["when"])
+        assert "_key" not in _shell(task)  # values arrive through the task env
+        assert "s3_access_key_id" in _env_values(task) and "s3_secret_access_key" in _env_values(task)
+        assert all("s3_" in c for c in task["when"])  # unset, the server keeps its key
+
+    def test_the_ecr_key_never_reaches_the_platform(self):
+        """The ECR key belongs to the AWS CLI profile alone; no task may store it
+        among the platform's secrets or settings."""
+        for tasks_file, top in _all_tasks():
+            for task in _flat([top]):
+                if re.search(r"\bibl (secrets|config) set\b", _shell(task)):
+                    for var in ("aws_access_key_id", "aws_secret_access_key"):
+                        assert var not in _env_values(task) + _shell(task), tasks_file
+
+    def test_the_cli_profile_gets_the_ecr_key(self):
+        tasks = list(_flat(_tasks("single-server", "awscli")))
+        configure = [t for t in tasks if "aws configure set aws_" in str(t.get("command", ""))]
+        assert len(configure) == 2
+        assert all("{{ aws_" in t["command"] and "s3_" not in t["command"] for t in configure)
+
+    def test_ecr_logins_use_the_ecr_key(self):
+        """Each login passes the ECR key, or none and falls back to the CLI
+        profile that holds it - never the S3 key."""
+        logins = [
+            (f, t) for f, top in _all_tasks() for t in _flat([top])
+            if "ecr get-login-password" in _shell(t)
+        ]
+        assert len(logins) >= 4
+        for tasks_file, task in logins:
+            env = _env_values(task)
+            assert "s3_" not in env, tasks_file
+            if "AWS_ACCESS_KEY_ID" in (task.get("environment") or {}):
+                assert task["environment"]["AWS_ACCESS_KEY_ID"] == "{{ aws_access_key_id }}", tasks_file
 
     def test_s3_storage_needs_both_buckets_and_precedes_the_render(self):
         tasks = _tasks("single-server", "ibl_platform")

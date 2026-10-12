@@ -178,8 +178,9 @@ mydeploy-prod-platform-example-com-dm-media
 mydeploy-prod-platform-example-com-dm-static   (public-read)
 ```
 
-You provide the **AWS access key + secret** at the `setup` step (below); the app on
-the GCP box uses them to reach S3 — exactly as the AWS deployment does today.
+You provide AWS keys at the `setup` step (below): an **ECR key** that pulls the
+images, and an **S3 key** the app on the GCP box uses to reach the buckets — the same
+key twice if one does both, exactly as the AWS deployment does.
 
 ---
 
@@ -193,7 +194,7 @@ iblai infra setup <PROJECT_NAME>
 ```
 
 It reads the VM's IP and SSH key from the saved state and prompts for the AWS
-credentials (for S3), a GitHub token, and admin details. This step is identical to
+keys (ECR, then S3), a GitHub token, and admin details. This step is identical to
 the AWS flow.
 
 ---

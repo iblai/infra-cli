@@ -312,6 +312,20 @@ def build_setup_config_from_env(
             raise _fail(f"{key}={bucket!r} is not a valid S3 bucket name.")
     s3_region = (env.get("S3_REGION") or "").strip() or region
 
+    # The platform's S3 key, kept apart from AWS_*, which only pulls images.
+    s3_access_key_id = (env.get("S3_ACCESS_KEY_ID") or "").strip()
+    s3_secret_access_key = (env.get("S3_SECRET_ACCESS_KEY") or "").strip()
+    if bool(s3_access_key_id) != bool(s3_secret_access_key):
+        raise _fail("Set both S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, or neither.")
+    if s3_static_bucket and not s3_access_key_id:
+        raise _fail(
+            "S3_STATIC_BUCKET and S3_MEDIA_BUCKET need S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.",
+            hint=(
+                "AWS_ACCESS_KEY_ID only pulls images from ECR; the platform reaches S3 "
+                "with the S3_* key. If one key does both, repeat it there."
+            ),
+        )
+
     llm_provider, llm_api_key = llm_key_from_env(env)
 
     github_org = (env.get("GITHUB_ORG") or "iblai").strip()
@@ -365,6 +379,8 @@ def build_setup_config_from_env(
         s3_static_bucket=s3_static_bucket,
         s3_media_bucket=s3_media_bucket,
         s3_region=s3_region if s3_static_bucket else "",
+        s3_access_key_id=s3_access_key_id,
+        s3_secret_access_key=s3_secret_access_key,
         llm_provider=llm_provider,
         llm_api_key=llm_api_key,
         admin_username=admin_username,

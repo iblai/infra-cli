@@ -361,6 +361,8 @@ class TestBuildExtraVars:
             "s3_static_bucket": "acme-dm-static",
             "s3_media_bucket": "acme-dm-media",
             "s3_region": "us-east-1",
+            "s3_access_key_id": "AKIAS3EXAMPLE",
+            "s3_secret_access_key": "s3-secret-example",
             "create_test_users": True,
         })
         runner.role_labels = ROLE_LABELS
@@ -370,6 +372,19 @@ class TestBuildExtraVars:
         assert extra["s3_media_bucket"] == "acme-dm-media"
         assert extra["s3_region"] == "us-east-1"
         assert extra["create_test_users"] is True
+        # The two keys travel separately: ECR to the CLI profile, S3 to secrets.yml
+        assert (extra["s3_access_key_id"], extra["s3_secret_access_key"]) == ("AKIAS3EXAMPLE", "s3-secret-example")
+        assert extra["aws_access_key_id"] == "AKIAIOSFODNN7EXAMPLE"
+
+    def test_no_s3_key_by_default(self, project_state, setup_config):
+        """The ECR key is never offered to the platform in its place."""
+        runner = AnsibleRunner.__new__(AnsibleRunner)
+        runner.state = project_state
+        runner.config = setup_config
+        runner.role_labels = ROLE_LABELS
+
+        extra = runner._build_extra_vars()
+        assert (extra["s3_access_key_id"], extra["s3_secret_access_key"]) == ("", "")
 
     def test_test_users_off_by_default(self, project_state, setup_config):
         runner = AnsibleRunner.__new__(AnsibleRunner)

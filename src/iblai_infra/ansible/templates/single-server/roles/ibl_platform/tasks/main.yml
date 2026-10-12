@@ -294,10 +294,12 @@
   register: lms_root_redirect
   changed_when: "'LMS_ROOT_REDIRECT_SET' in lms_root_redirect.stdout"
 
-# The platform reads the AWS keys from secrets.yml (S3 storage, SCORM
-# uploads and backups default to them); `aws configure` alone never
-# reaches the rendered services.
-- name: Store the platform AWS keys
+# The platform reads its AWS keys from the root of secrets.yml (S3 storage,
+# SCORM uploads and SNS alerts default to them). They come from
+# the S3 key, never the ECR pull key, which stays in the default AWS CLI
+# profile (awscli role). Without an S3 key nothing is written, so a resetup
+# that skips it keeps the key the server already has.
+- name: Store the S3 key as the platform AWS keys
   become: false
   shell: |
     export PYENV_ROOT="{{ pyenv_root }}"
@@ -314,11 +316,11 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
-    PLATFORM_AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
-    PLATFORM_AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+    PLATFORM_AWS_ACCESS_KEY_ID: "{{ s3_access_key_id }}"
+    PLATFORM_AWS_SECRET_ACCESS_KEY: "{{ s3_secret_access_key }}"
   when:
-    - aws_access_key_id | default('') | length > 0
-    - aws_secret_access_key | default('') | length > 0
+    - s3_access_key_id | default('') | length > 0
+    - s3_secret_access_key | default('') | length > 0
   no_log: true
 
 # The DM can't start without its notifications app (other apps import it),

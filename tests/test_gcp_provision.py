@@ -23,6 +23,7 @@ from iblai_infra.models import (
     gcp_machine_ram_gb,
 )
 from iblai_infra.terraform.runner import RESOURCE_LABELS, TerraformRunner, _friendly_label
+from tests.prompts.conftest import answer_s3_picker
 
 
 class TestCloudValidator:
@@ -497,6 +498,7 @@ class TestSetupPromptsGcpState:
              mock.patch("questionary.confirm") as mconf, \
              mock.patch("questionary.select") as mselect:
             mselect.return_value.ask.return_value = "openai"  # LLM key picker
+            answer_s3_picker(mselect, "")                      # skip the S3 key
             mtext.return_value.ask.side_effect = [
                 "iblai", "iblai-cli-ops", "iblai-prod-images",  # org + repos
                 "AKIAEXAMPLE", "us-east-1",                      # aws key id + region
@@ -521,6 +523,7 @@ class TestSetupPromptsGcpState:
              mock.patch("questionary.confirm") as mconf, \
              mock.patch("questionary.select") as mselect:
             mselect.return_value.ask.return_value = "openai"  # LLM key picker
+            answer_s3_picker(mselect, "")                      # skip the S3 key
             mtext.return_value.ask.side_effect = [
                 "iblai", "iblai-cli-ops", "iblai-prod-images",
                 "platform_admin", "admin@example.com",

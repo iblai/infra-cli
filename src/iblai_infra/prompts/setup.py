@@ -663,6 +663,54 @@ def _prompt_llm_key() -> tuple[LLMProvider, str]:
     return provider, key
 
 
+S3_KEY_PROMPT = "AWS key for S3:"
+
+
+def _prompt_s3_key(ecr_key_id: str, ecr_secret: str) -> tuple[str, str]:
+    """The platform's S3 key, which may differ from the ECR pull key."""
+    ui.info(
+        "The platform reaches S3 (DM storage, SCORM uploads) and sends SNS alerts with its "
+        "own AWS key, stored in the server's secrets apart from the ECR key."
+    )
+    choice = questionary.select(
+        S3_KEY_PROMPT,
+        choices=[
+            questionary.Choice("A separate key for S3", value="separate"),
+            questionary.Choice("The same key as for ECR", value="same"),
+            questionary.Choice("Skip for now", value=""),
+        ],
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if choice is None:
+        ui.abort()
+    if choice == "same":
+        ui.success("S3 uses the ECR key")
+        return ecr_key_id, ecr_secret
+    if not choice:
+        ui.muted("Skipped - the server keeps any S3 key it already has")
+        return "", ""
+
+    key_id = questionary.text(
+        "S3 Access Key ID:",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if key_id is None:
+        ui.abort()
+    secret = questionary.password(
+        "S3 Secret Access Key:",
+        validate=lambda v: len(v.strip()) > 0 or "Required",
+        style=ui.PROMPT_STYLE,
+        qmark=ui.QMARK,
+    ).ask()
+    if secret is None:
+        ui.abort()
+    ui.success("Separate S3 key provided")
+    return key_id.strip(), secret.strip()
+
+
 def _prompt_credentials(
     step: int,
     total: int,
@@ -732,8 +780,8 @@ def _prompt_credentials(
     )
 
     ui.info(
-        "AWS credentials for the VM. "
-        "Must have access to ECR (iblai-dm-pro and iblai-edx-pro images) and S3 buckets."
+        "AWS key for pulling the platform images from ECR. It is set as the "
+        "server's default AWS CLI profile; S3 gets its own key next."
     )
 
     aws_key_id = ""
@@ -792,6 +840,8 @@ def _prompt_credentials(
             ui.abort()
         aws_region = aws_region.strip()
 
+    s3_key_id, s3_secret = _prompt_s3_key(aws_key_id, aws_secret)
+
     llm_provider, llm_api_key = _prompt_llm_key()
 
     ui.info("Super admin account for the platform (LMS and Data Manager).")
@@ -838,6 +888,8 @@ def _prompt_credentials(
         "aws_access_key_id": aws_key_id,
         "aws_secret_access_key": aws_secret,
         "aws_default_region": aws_region,
+        "s3_access_key_id": s3_key_id,
+        "s3_secret_access_key": s3_secret,
         "llm_provider": llm_provider,
         "llm_api_key": llm_api_key,
         "admin_username": admin_username,

@@ -637,6 +637,8 @@ class AnsibleRunner:
             "s3_static_bucket": self.config.s3_static_bucket,
             "s3_media_bucket": self.config.s3_media_bucket,
             "s3_region": self.config.s3_region,
+            "s3_access_key_id": self.config.s3_access_key_id,
+            "s3_secret_access_key": self.config.s3_secret_access_key,
             "create_test_users": self.config.create_test_users,
             "base_domain": self.config.base_domain,
             "edx_version": self.config.edx_version,

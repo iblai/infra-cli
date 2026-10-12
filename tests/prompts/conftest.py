@@ -14,8 +14,8 @@ def answer_s3_picker(select: MagicMock, choice: str) -> MagicMock:
     with `select.return_value`, so existing LLM-picker answers still apply."""
     s3_picker = MagicMock()
     s3_picker.ask.return_value = choice
-    select.side_effect = lambda message, *a, **kw: (
-        s3_picker if message == S3_KEY_PROMPT else select.return_value
+    select.side_effect = lambda *a, **kw: (
+        s3_picker if (a[0] if a else kw.get("message")) == S3_KEY_PROMPT else select.return_value
     )
     return s3_picker
 

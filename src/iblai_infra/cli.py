@@ -1173,7 +1173,7 @@ def provision_env(
 def _s3_key_label(setup_config) -> str:
     """How the review panels show the platform's S3 key."""
     if not setup_config.s3_access_key_id:
-        return "not set (the server keeps its current one)"
+        return "not set (nothing written; an existing key stays)"
     if setup_config.s3_access_key_id == setup_config.aws_access_key_id:
         return f"{mask(setup_config.s3_access_key_id)} (same as ECR)"
     return mask(setup_config.s3_access_key_id)

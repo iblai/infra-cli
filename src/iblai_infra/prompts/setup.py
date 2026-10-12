@@ -669,8 +669,8 @@ S3_KEY_PROMPT = "AWS key for S3:"
 def _prompt_s3_key(ecr_key_id: str, ecr_secret: str) -> tuple[str, str]:
     """The platform's S3 key, which may differ from the ECR pull key."""
     ui.info(
-        "The platform reaches S3 (DM storage, SCORM uploads, backup notifications) with its own "
-        "AWS key, stored in the server's secrets apart from the ECR key."
+        "The platform reaches S3 (DM storage, SCORM uploads) and sends SNS alerts with its "
+        "own AWS key, stored in the server's secrets apart from the ECR key."
     )
     choice = questionary.select(
         S3_KEY_PROMPT,

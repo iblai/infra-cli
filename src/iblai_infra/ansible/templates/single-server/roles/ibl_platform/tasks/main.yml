@@ -295,7 +295,7 @@
   changed_when: "'LMS_ROOT_REDIRECT_SET' in lms_root_redirect.stdout"
 
 # The platform reads its AWS keys from the root of secrets.yml (S3 storage,
-# SCORM uploads and backup notifications default to them). They come from
+# SCORM uploads and SNS alerts default to them). They come from
 # the S3 key, never the ECR pull key, which stays in the default AWS CLI
 # profile (awscli role). Without an S3 key nothing is written, so a resetup
 # that skips it keeps the key the server already has.

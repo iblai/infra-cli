@@ -626,7 +626,7 @@ class SetupConfig(BaseModel):
     s3_region: str = ""
     # The platform's AWS key: the root-level AWS_ACCESS_KEY_ID /
     # AWS_SECRET_ACCESS_KEY in secrets.yml, read by DM S3 storage, SCORM
-    # uploads and backup notifications. Kept apart from the ECR pull key so
+    # uploads and SNS alerts (backups, monitoring). Kept apart from the ECR pull key so
     # each can be scoped to its own job. Both or neither; empty leaves the
     # server's current key alone, so a resetup that skips it keeps working.
     s3_access_key_id: str = ""

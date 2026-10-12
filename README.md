@@ -58,7 +58,7 @@ Prefer no prompts? Steps 3–4 also run from a `.env` file — see [Non-interact
 **AWS credentials are required on every deployment, including bare metal and GCP.** They are not for hosting. Setup takes two keys, one per job, so each can be scoped to only what it needs (give the same key twice if one does both):
 
 - **ECR key** (required) — pulls the platform container images. It becomes the server's default AWS CLI profile, which every ECR login uses, and never reaches the platform's own settings.
-- **S3 key** (optional) — the platform's AWS key, stored as the root-level `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `/ibl/secrets.yml`. DM S3 storage, SCORM uploads and backup notifications use it. Backup *uploads* go through the AWS CLI on the server — its default profile (the ECR key) unless `IBL_BACKUPS.EXTERNAL_STORAGE.S3_PROFILE` names another. Skipping the S3 key leaves whatever the server already has.
+- **S3 key** (optional) — the platform's AWS key, stored as the root-level `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in `/ibl/secrets.yml`. DM S3 storage and SCORM uploads use it, and so do backup and monitoring alerts when an SNS topic is configured (it then needs `sns:Publish` too). Backup *uploads* go through the AWS CLI on the server — its default profile (the ECR key) unless `IBL_BACKUPS.EXTERNAL_STORAGE.S3_PROFILE` names another. Skipping the S3 key leaves whatever the server already has.
 
 The platform keeps media, static assets, and backups in three S3 buckets. Provisioning on AWS creates them for you. On any other target, create them yourself before setup, named:
 

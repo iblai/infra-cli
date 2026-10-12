@@ -313,6 +313,40 @@ class TestSetupConfig:
         assert sc.ssh_user == "ubuntu"
         assert sc.edx_version == "sumac"
         assert sc.enable_ai is True
+        assert (sc.s3_access_key_id, sc.s3_secret_access_key) == ("", "")
+
+
+class TestSetupConfigS3Key:
+    def _config(self, setup_config, **changes) -> SetupConfig:
+        return SetupConfig(**{**setup_config.model_dump(), **changes})
+
+    def test_a_separate_key(self, setup_config):
+        sc = self._config(setup_config, s3_access_key_id="AKIAS3", s3_secret_access_key="s3-secret")
+        assert (sc.s3_access_key_id, sc.aws_access_key_id) == ("AKIAS3", "AKIAIOSFODNN7EXAMPLE")
+
+    @pytest.mark.parametrize("half", [
+        {"s3_access_key_id": "AKIAS3"},
+        {"s3_secret_access_key": "s3-secret"},
+    ])
+    def test_half_a_key_is_refused(self, setup_config, half):
+        with pytest.raises(ValidationError, match="both halves of the S3 key"):
+            self._config(setup_config, **half)
+
+    def test_buckets_need_the_s3_key(self, setup_config):
+        """The ECR key never reaches the platform, so it can't stand in."""
+        with pytest.raises(ValidationError, match="S3 buckets need the S3 key"):
+            self._config(setup_config, s3_static_bucket="acme-static", s3_media_bucket="acme-media")
+
+    def test_buckets_with_the_s3_key(self, setup_config):
+        sc = self._config(
+            setup_config, s3_static_bucket="acme-static", s3_media_bucket="acme-media",
+            s3_access_key_id="AKIAS3", s3_secret_access_key="s3-secret",
+        )
+        assert sc.s3_static_bucket == "acme-static"
+
+    def test_the_secret_is_never_serialized(self, setup_config):
+        sc = self._config(setup_config, s3_access_key_id="AKIAS3", s3_secret_access_key="s3-secret")
+        assert "s3_secret_access_key" not in sc.model_dump()
 
 
 # ---------------------------------------------------------------------------

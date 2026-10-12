@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Setup takes two AWS keys: one to pull images, one for S3.** The single key used to do both: it became the server's default AWS CLI profile (ECR logins) *and* the platform's own AWS key in `secrets.yml` (DM S3 storage, SCORM uploads, backup notifications), so a deployment whose ECR access and S3 access live in different accounts or IAM users had no way to say so, and an ECR-only key was handed to the platform as its S3 key.
+  - The **ECR key** (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, or the first credentials prompt) goes only into the default AWS CLI profile.
+  - The **S3 key** (`S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`, or the new "AWS key for S3" prompt: separate, same as ECR, or skip) goes only into the root-level platform keys in `secrets.yml`.
+  - The S3 key is optional, both or neither, and required with `S3_STATIC_BUCKET` / `S3_MEDIA_BUCKET`. Unset, nothing is written: a fresh server renders with empty platform keys, and a resetup keeps the key the server already has.
+- **`.env` files that relied on the AWS key reaching S3** must now repeat it as `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`. With buckets set and no S3 key, `setup-env` stops before touching the server and says so.
+
 ## [1.19.1] — 2026-08-14
 
 ### Fixed

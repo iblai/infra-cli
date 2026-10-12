@@ -1170,6 +1170,15 @@ def provision_env(
     ui.newline()
 
 
+def _s3_key_label(setup_config) -> str:
+    """How the review panels show the platform's S3 key."""
+    if not setup_config.s3_access_key_id:
+        return "not set (the server keeps its current one)"
+    if setup_config.s3_access_key_id == setup_config.aws_access_key_id:
+        return f"{mask(setup_config.s3_access_key_id)} (same as ECR)"
+    return mask(setup_config.s3_access_key_id)
+
+
 @infra_app.command(name="setup-env")
 def setup_env(
     name: str = typer.Argument(
@@ -1257,7 +1266,8 @@ def setup_env(
         ("CLI ops tag", setup_config.cli_ops_release_tag),
         ("edX version", setup_config.edx_version),
         ("Admin", f"{setup_config.admin_username} ({setup_config.admin_email})"),
-        ("AWS key", mask(setup_config.aws_access_key_id)),
+        ("ECR key", mask(setup_config.aws_access_key_id)),
+        ("S3 key", _s3_key_label(setup_config)),
         ("Git token", mask(setup_config.git_access_token)),
     ]
     integrations = []
@@ -2480,6 +2490,8 @@ def _confirm_and_run(state, setup_config, rerun_hint: str) -> None:
     if not is_call:
         rows.append(("edX version", setup_config.edx_version))
     rows.append(("AWS region", setup_config.aws_default_region))
+    if not is_call:
+        rows.append(("S3 key", _s3_key_label(setup_config)))
     ui.summary_panel("Setup Summary", rows)
 
     import questionary

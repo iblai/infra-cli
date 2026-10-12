@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import CLI_OPS_TEST_TAG
+from tests.prompts.conftest import answer_s3_picker
 
 from iblai_infra.models import (
     LLMProvider,
@@ -456,8 +457,8 @@ class TestPromptSetup:
             mock_confirm.return_value.ask.side_effect = [
                 True, False, False, True, False, False, True,
             ]
-            # selects: stripe_mode, LLM key picker
-            mock_select.return_value.ask.side_effect = ["test", "openai"]
+            # selects: stripe_mode, S3 key picker (skip), LLM key picker
+            mock_select.return_value.ask.side_effect = ["test", "", "openai"]
             # texts: node_id, platform_name, cli_ops_tag, pricing_table_id, pricing_table_id_returning,
             #        github_org, cli_ops_repo, prod_images_repo,
             #        admin_username, admin_email
@@ -777,8 +778,8 @@ class TestPromptResetup:
                 IngressEntry(name="stg1", domain="stg1.example.com"),
                 IngressEntry(name="stg2", domain="stg2.example.com"),
             ]
-            # selects: ingress picker, LLM key picker
-            mock_select.return_value.ask.side_effect = ["stg2.example.com", "openai"]
+            # selects: ingress picker, S3 key picker (skip), LLM key picker
+            mock_select.return_value.ask.side_effect = ["stg2.example.com", "", "openai"]
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
             # text prompts: cli_ops_release_tag, admin_username, admin_email
@@ -806,7 +807,7 @@ class TestPromptResetup:
             mock_load.return_value = [
                 IngressEntry(name="stg1", domain="stg1.example.com"),
             ]
-            mock_select.return_value.ask.side_effect = ["__custom__", "openai"]
+            mock_select.return_value.ask.side_effect = ["__custom__", "", "openai"]  # ingress, S3 key (skip), LLM
             mock_password.return_value.ask.side_effect = ["ghp_testtoken", "", "Admin1234"]
             mock_confirm.return_value.ask.return_value = True
             # text prompts: custom domain, cli_ops_release_tag,
@@ -895,3 +896,73 @@ class TestPromptLLMKey:
         with patch("questionary.password") as password:
             assert _prompt_llm_key() == (LLMProvider.OPENAI, "")
         password.assert_not_called()
+
+
+class TestPromptS3Key:
+    def test_offers_a_separate_key_the_same_key_and_skipping(self, llm_key_picker):
+        from iblai_infra.prompts.setup import S3_KEY_PROMPT, _prompt_s3_key
+
+        s3_picker = answer_s3_picker(llm_key_picker, "")
+        _prompt_s3_key("AKIAECR", "ecr-secret")
+        call = next(c for c in llm_key_picker.call_args_list if c.args[0] == S3_KEY_PROMPT)
+        assert {c.value for c in call.kwargs["choices"]} == {"separate", "same", ""}
+        s3_picker.ask.assert_called_once()
+
+    def test_a_separate_key_is_asked_for(self, llm_key_picker):
+        from iblai_infra.prompts.setup import _prompt_s3_key
+
+        answer_s3_picker(llm_key_picker, "separate")
+        with patch("questionary.text") as text, patch("questionary.password") as password:
+            text.return_value.ask.return_value = " AKIAS3 "
+            password.return_value.ask.return_value = " s3-secret "
+            assert _prompt_s3_key("AKIAECR", "ecr-secret") == ("AKIAS3", "s3-secret")
+
+    def test_the_same_key_reuses_the_ecr_key_without_asking(self, llm_key_picker):
+        from iblai_infra.prompts.setup import _prompt_s3_key
+
+        answer_s3_picker(llm_key_picker, "same")
+        with patch("questionary.text") as text, patch("questionary.password") as password:
+            assert _prompt_s3_key("AKIAECR", "ecr-secret") == ("AKIAECR", "ecr-secret")
+        text.assert_not_called()
+        password.assert_not_called()
+
+    def test_skipping_gives_no_key(self, llm_key_picker):
+        """Nothing is written then, so the server keeps the S3 key it has."""
+        from iblai_infra.prompts.setup import _prompt_s3_key
+
+        answer_s3_picker(llm_key_picker, "")
+        with patch("questionary.text") as text, patch("questionary.password") as password:
+            assert _prompt_s3_key("AKIAECR", "ecr-secret") == ("", "")
+        text.assert_not_called()
+        password.assert_not_called()
+
+    def test_cancelling_aborts(self, llm_key_picker):
+        from iblai_infra.prompts.setup import _prompt_s3_key
+
+        answer_s3_picker(llm_key_picker, None)
+        with pytest.raises(SystemExit):
+            _prompt_s3_key("AKIAECR", "ecr-secret")
+
+    def test_a_separate_key_reaches_the_config_apart_from_the_ecr_key(self, tmp_path, llm_key_picker):
+        """Full setup flow: ECR key typed, then a separate S3 key."""
+        from iblai_infra.prompts.setup import prompt_setup
+
+        state = TestPromptSetup()._make_state(tmp_path)
+        answer_s3_picker(llm_key_picker, "separate")
+        with (
+            patch("questionary.password") as mock_password,
+            patch("questionary.confirm") as mock_confirm,
+            patch("questionary.text") as mock_text,
+        ):
+            # passwords: git, ECR secret, S3 secret, skip LLM, admin
+            mock_password.return_value.ask.side_effect = ["ghp_testtoken", "ECR_SECRET", "S3_SECRET", "", "Admin1234"]
+            # confirms: enable_ai, playwright, smtp, stripe, google, microsoft, don't reuse provisioning creds
+            mock_confirm.return_value.ask.side_effect = [True, False, False, False, False, False, False]
+            mock_text.return_value.ask.side_effect = [
+                "test-node", "main", "3.19.0", "iblai", "iblai-cli-ops", "iblai-prod-images",
+                "ECR_KEY", "S3_KEY", "platform_admin", "admin@example.com",
+            ]
+            config = prompt_setup(state)
+
+        assert (config.aws_access_key_id, config.aws_secret_access_key) == ("ECR_KEY", "ECR_SECRET")
+        assert (config.s3_access_key_id, config.s3_secret_access_key) == ("S3_KEY", "S3_SECRET")

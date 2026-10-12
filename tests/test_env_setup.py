@@ -421,16 +421,26 @@ class TestCliOpsTagResolution:
 # ---------------------------------------------------------------------------
 
 
+S3_KEY = {"S3_ACCESS_KEY_ID": "AKIAS3EXAMPLE", "S3_SECRET_ACCESS_KEY": "s3-secret-example"}
+BUCKETS = {"S3_STATIC_BUCKET": "acme-dm-static", "S3_MEDIA_BUCKET": "acme-dm-media"}
+
+
 class TestS3Buckets:
     def test_both_buckets_set_storage_with_the_setup_region(self, project_state):
-        env = _required_env(S3_STATIC_BUCKET="acme-dm-static", S3_MEDIA_BUCKET="acme-dm-media")
+        env = _required_env(**BUCKETS, **S3_KEY)
         config = build_setup_config_from_env(env, state=project_state)
         assert (config.s3_static_bucket, config.s3_media_bucket) == ("acme-dm-static", "acme-dm-media")
         assert config.s3_region == config.aws_default_region
 
     def test_explicit_region_wins(self, project_state):
-        env = _required_env(S3_STATIC_BUCKET="acme-dm-static", S3_MEDIA_BUCKET="acme-dm-media", S3_REGION="eu-west-1")
+        env = _required_env(**BUCKETS, **S3_KEY, S3_REGION="eu-west-1")
         assert build_setup_config_from_env(env, state=project_state).s3_region == "eu-west-1"
+
+    def test_buckets_without_an_s3_key_are_refused(self, project_state):
+        """The ECR key never reaches the platform, so the DM would write to S3
+        with no credentials at all."""
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(_required_env(**BUCKETS), state=project_state)
 
     def test_no_buckets_leaves_storage_alone(self, project_state):
         config = build_setup_config_from_env(_required_env(S3_REGION="eu-west-1"), state=project_state)
@@ -445,6 +455,56 @@ class TestS3Buckets:
         env = _required_env(S3_STATIC_BUCKET="Acme_Static", S3_MEDIA_BUCKET="acme-dm-media")
         with pytest.raises(typer.Exit):
             build_setup_config_from_env(env, state=project_state)
+
+
+
+# ---------------------------------------------------------------------------
+# ECR key vs S3 key
+# ---------------------------------------------------------------------------
+
+
+class TestS3Key:
+    def test_the_two_keys_stay_apart(self, project_state):
+        config = build_setup_config_from_env(_required_env(**S3_KEY), state=project_state)
+        assert (config.aws_access_key_id, config.aws_secret_access_key) == (
+            "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        assert (config.s3_access_key_id, config.s3_secret_access_key) == (
+            "AKIAS3EXAMPLE", "s3-secret-example",
+        )
+
+    def test_the_ecr_key_is_never_the_s3_key_by_default(self, project_state):
+        """Unset, nothing is written: the server keeps the S3 key it has."""
+        config = build_setup_config_from_env(_required_env(), state=project_state)
+        assert (config.s3_access_key_id, config.s3_secret_access_key) == ("", "")
+
+    def test_one_key_may_do_both_jobs(self, project_state):
+        env = _required_env(
+            S3_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE",
+            S3_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        config = build_setup_config_from_env(env, state=project_state)
+        assert config.s3_access_key_id == config.aws_access_key_id
+
+    def test_an_s3_key_without_buckets_is_fine(self, project_state):
+        """SCORM uploads and backup notifications use it too."""
+        config = build_setup_config_from_env(_required_env(**S3_KEY), state=project_state)
+        assert config.s3_static_bucket == "" and config.s3_access_key_id == "AKIAS3EXAMPLE"
+
+    @pytest.mark.parametrize("key", ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"])
+    def test_half_a_key_is_refused(self, project_state, key):
+        with pytest.raises(typer.Exit):
+            build_setup_config_from_env(_required_env(**{key: S3_KEY[key]}), state=project_state)
+
+    def test_whitespace_is_stripped(self, project_state):
+        env = _required_env(S3_ACCESS_KEY_ID="  AKIAS3EXAMPLE ", S3_SECRET_ACCESS_KEY=" s3-secret-example\n")
+        config = build_setup_config_from_env(env, state=project_state)
+        assert (config.s3_access_key_id, config.s3_secret_access_key) == ("AKIAS3EXAMPLE", "s3-secret-example")
+
+    def test_the_s3_secret_is_never_serialized(self, project_state):
+        config = build_setup_config_from_env(_required_env(**S3_KEY), state=project_state)
+        assert "s3_secret_access_key" not in config.model_dump()
+        assert "s3-secret-example" not in config.model_dump_json()
 
 
 class TestLLMKey:

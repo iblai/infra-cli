@@ -1,6 +1,22 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.0] — 2026-10-12
+
+Setup now targets the iblai-cli-ops 7.x config system, and takes separate AWS keys for pulling images and for S3.
+
+### Breaking
+- **Requires iblai-cli-ops 7.0.0 or later.** Every role uses the declarative config model (`ibl init`, `ibl config set`, `ibl secrets set|generate`, then an explicit `ibl render`). The playbook checks the installed CLI and stops on an older one instead of half-configuring the server. Pick a prod-images release whose pin is 7.x; validated on prod-images 1.277.0 / cli-ops 7.24.0.
+
+### Added
+- **`NODE_ID`** (`--node-id`, `.env`, or the wizard), which `ibl render` requires; defaults to the project name.
+- **An OpenRouter key** as the LLM key (`OPENROUTER_API_KEY` or the wizard), stored as the platform's gateway credential. Tenants stay on the deployment's keys.
+- **S3 storage for DM static files and media** (`S3_STATIC_BUCKET` / `S3_MEDIA_BUCKET` / `S3_REGION`).
+
+### Fixed
+- Fresh installs and re-runs on the 7.x runtime: the DM is bootstrapped without `ibl dm launch`, OAuth/OIDC credential rows are updated in place, every mentor gets the settings row chat reads, and the health-check mentors pass the DM readiness gate.
+- Resetup no longer rotates the keys that encrypt stored data.
+- SPA restarts follow the enabled SPAs rather than a fixed list; the AI call service stays off until a call server is connected.
+- `service-update` installs from the configured org and repos; the GitHub token is kept out of install URLs.
 
 ### Changed
 - **Setup takes two AWS keys: one to pull images, one for S3.** The single key used to do both: it became the server's default AWS CLI profile (ECR logins) *and* the platform's own AWS key in `secrets.yml` (DM S3 storage, SCORM uploads, SNS alerts), so a deployment whose ECR access and S3 access live in different accounts or IAM users had no way to say so, and an ECR-only key was handed to the platform as its S3 key.
@@ -8,6 +24,8 @@
   - The **S3 key** (`S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`, or the new "AWS key for S3" prompt: separate, same as ECR, or skip) goes only into the root-level platform keys in `secrets.yml`.
   - The S3 key is optional, both or neither, and required with `S3_STATIC_BUCKET` / `S3_MEDIA_BUCKET`. Unset, nothing is written: a fresh server renders with empty platform keys, and a resetup keeps the key the server already has.
 - **`.env` files that relied on the AWS key reaching S3** must now repeat it as `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`. With buckets set and no S3 key, `setup-env` stops before touching the server and says so.
+
+Test count: 1109 passing.
 
 ## [1.19.1] — 2026-08-14
 

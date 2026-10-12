@@ -1,3 +1,3 @@
 """ibl.ai Infrastructure Provisioning Tool."""
 
-__version__ = "1.19.1"
+__version__ = "2.0.0"

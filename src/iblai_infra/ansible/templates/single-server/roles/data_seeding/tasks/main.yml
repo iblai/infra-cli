@@ -250,6 +250,9 @@
   failed_when: >-
     setup_timescale_result.rc != 0 and
     ('Traceback' in (setup_timescale_result.stdout | default('') ~ setup_timescale_result.stderr | default('')))
+  # A managed Postgres without the TimescaleDB extension (e.g. RDS) runs the
+  # DM's plain-table path instead; multi-node passes enable_timescaledb=false.
+  when: enable_timescaledb | default(true) | bool
 
 - name: Show TimescaleDB views setup result
   ansible.builtin.debug:

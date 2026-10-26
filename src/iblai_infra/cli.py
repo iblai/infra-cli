@@ -108,6 +108,18 @@ infra_app.add_typer(spa_app, name="spa")
 # Discovery entry point for all of the above.
 infra_app.command("configure")(_configure)
 
+# ---------------------------------------------------------------------------
+# Subcommand groups: multi-node deployments on existing hosts
+# (`iblai infra app|stores|sandbox|call`). See iblai_infra/multinode_cli.py.
+# ---------------------------------------------------------------------------
+
+from iblai_infra.multinode_cli import app_node_app, call_app, sandbox_app, stores_app
+
+infra_app.add_typer(app_node_app, name="app")
+infra_app.add_typer(stores_app, name="stores")
+infra_app.add_typer(sandbox_app, name="sandbox")
+infra_app.add_typer(call_app, name="call")
+
 
 @ingress_app.command("list")
 def ingress_list() -> None:
@@ -556,6 +568,9 @@ def setup(
 ) -> None:
     """Set up the IBL platform on a server."""
     if name:
+        existing = load_state(name)
+        if existing is not None:
+            _refuse_multi_node(existing, "setup")
         if not skip_dns_check:
             _warn_if_dns_not_ready(name)
         _run_setup_provisioned(name)
@@ -2229,12 +2244,25 @@ def _interactive_resetup() -> None:
     _run_resetup(selected)
 
 
+def _refuse_multi_node(state, command: str) -> None:
+    """The single-server playbooks assume every store runs on the target, so
+    running them against a multi-node hub would recreate local databases and
+    rotate secrets the other nodes share. Point at the per-role commands."""
+    from iblai_infra.models import DeploymentType
+
+    if getattr(state.config, "deployment_type", None) == DeploymentType.MULTI_NODE:
+        ui.error(f"'{state.name}' is a multi-node deployment; `{command}` would treat its hub as a single server.")
+        ui.muted("  Use the per-role commands: [brand]iblai infra app|stores|sandbox|call ...[/brand]")
+        raise typer.Exit(1)
+
+
 def _run_resetup(name: str) -> None:
     """Re-setup an existing environment with a new domain and fresh secrets."""
     state = load_state(name)
     if state is None:
         ui.error(f"No infrastructure found with name: {name}")
         raise typer.Exit(1)
+    _refuse_multi_node(state, "resetup")
 
     if state.status != "created":
         ui.error(
@@ -2304,6 +2332,7 @@ def _run_setup_provisioned(name: str) -> None:
     if state is None:
         ui.error(f"No infrastructure found with name: {name}")
         raise typer.Exit(1)
+    _refuse_multi_node(state, "setup")
 
     if state.status == "destroyed":
         ui.error(f"Infrastructure '{name}' has been destroyed. Provision it first.")
@@ -2563,10 +2592,11 @@ def destroy(
         ui.warning(f"Infrastructure '{name}' is already destroyed.")
         raise typer.Exit(0)
 
-    # Bootstrap and launch projects — destroy via Terraform if launch, otherwise just mark
-    if state.provider == "bootstrap":
+    # Bootstrap and launch projects — destroy via Terraform if launch, otherwise just mark.
+    # Multi-node projects configure existing hosts, so there is nothing to tear down either.
+    if state.provider in ("bootstrap", "multi-node"):
         confirm_remove = questionary.confirm(
-            f"Remove bootstrap project '{name}' from tracked environments?",
+            f"Remove {state.provider} project '{name}' from tracked environments? (The servers are not touched.)",
             default=False,
             style=ui.PROMPT_STYLE,
             qmark=ui.QMARK,
@@ -2576,7 +2606,7 @@ def destroy(
         state.status = "destroyed"
         state.outputs = None
         save_state(state)
-        ui.success(f"Bootstrap project '{name}' marked as destroyed.")
+        ui.success(f"Project '{name}' marked as destroyed.")
         return
 
     ui.banner()
@@ -3004,6 +3034,9 @@ def list_cmd() -> None:
             ms = getattr(s.config, "multi_server", None)
             count = ms.app_server_count if ms else "?"
             type_display = f"multi ({count})"
+        elif deploy_label and deploy_label.value == "multi-node":
+            nodes = ((s.outputs or {}).get("multi_node") or {})
+            type_display = f"nodes ({1 + len(nodes.get('apps', []))} app)"
         else:
             type_display = "single"
         # Mark GCP rows so AWS/GCP are distinguishable at a glance.

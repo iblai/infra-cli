@@ -106,11 +106,33 @@ def apply_feature(
     """
     from iblai_infra.ansible.runner import AnsibleRunner
 
-    runner = AnsibleRunner(state, config, role_labels=labels)
+    if getattr(state.config, "deployment_type", None) == DeploymentType.MULTI_NODE:
+        runner = _multi_node_feature_runner(state, config, labels)
+    else:
+        runner = AnsibleRunner(state, config, role_labels=labels)
     if not runner.preflight():
         raise typer.Exit(1)
     runner.setup()
     return runner.run_partial(tags, description=description, extra_vars=extra_vars)
+
+
+def _multi_node_feature_runner(state: ProjectState, config: SetupConfig, labels: dict[str, str]):
+    """On a multi-node deployment a feature's role runs on the hub, as on a
+    single server, and the sync that follows takes the hub's root to every
+    other node (`features.yml`)."""
+    from iblai_infra.ansible.multinode import SYNC_LABELS, MultiNodeRunner
+    from iblai_infra.env_multinode import topology_of, topology_vars
+
+    topo = topology_of(state)
+    return MultiNodeRunner(
+        state,
+        config.model_copy(update={"ssh_user": topo.ssh_user}),
+        topo,
+        "features.yml",
+        {**labels, **SYNC_LABELS},
+        run_vars=topology_vars(topo),
+        ssh_groups=("hub", "apps", "stores"),
+    )
 
 
 def run_feature(

@@ -1,0 +1,114 @@
+---
+# Workarounds for cli-ops releases that don't render two settings a split
+# deployment needs. Each one checks the rendered output first and only acts
+# when the setting is missing, so a cli-ops that renders it natively makes
+# this role a no-op. Overrides go in /ibl/static/, which `ibl render` copies
+# verbatim into /ibl/app/ and plain `docker compose` merges.
+- name: Render the platform config
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl render
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  changed_when: false
+
+- name: Check what the render produced
+  become: false
+  shell: |
+    {{ ibl_env }}
+    LMS_SPA=$(ibl config get IBL_SPA.RUN_LMS_SPA) || exit 1
+    TLS=$(ibl config get IBL_DM.ENABLE_REDIS_TLS) || exit 1
+    LMS_ENV={{ ibl_root }}/app/ibl-spa/lms/.env.lms
+    DM_COMPOSE={{ ibl_root }}/app/ibl-dm/ibl-dm-pro/docker-compose.yml
+    CSP=no; [ -f "$LMS_ENV" ] && grep -q '^CSP_PARTNER_HOSTS=' "$LMS_ENV" && CSP=yes
+    LF=no; [ -f "$DM_COMPOSE" ] && grep -q 'REDIS_TLS_ENABLED' "$DM_COMPOSE" && LF=yes
+    printf '{"lms_spa": "%s", "csp": "%s", "dm_redis_tls": "%s", "langfuse_tls": "%s"}\n' "$LMS_SPA" "$CSP" "$TLS" "$LF"
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_rendered
+  changed_when: false
+
+- name: Read the render check
+  set_fact:
+    mn_render_check: "{{ mn_rendered.stdout_lines | last | from_json }}"
+
+- name: Create the override directories
+  become: false
+  file:
+    path: "{{ ibl_root }}/static/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [ibl-spa/lms, ibl-dm/ibl-dm-pro]
+
+# The LMS SPA's Content-Security-Policy connect-src covers only ibl.ai
+# domains and CSP_PARTNER_HOSTS. A cli-ops that doesn't render that variable
+# leaves the browser blocking every call to learn.<domain>: no tenant list,
+# a 403 on the self-link fallback, and a spinner after login that never ends.
+- name: Let the LMS SPA call this deployment's own domains
+  become: false
+  copy:
+    dest: "{{ ibl_root }}/static/ibl-spa/lms/docker-compose.override.yml"
+    force: false
+    mode: "0644"
+    content: |
+      # Written by iblai-infra: this cli-ops doesn't render CSP_PARTNER_HOSTS
+      # into .env.lms, so the LMS SPA's CSP would block calls to this
+      # deployment's own API hosts. Remove once cli-ops renders it.
+      services:
+        lms_spa:
+          environment:
+            CSP_PARTNER_HOSTS: "https://*.{{ base_domain }}"
+  when:
+    - mn_render_check.lms_spa == 'True'
+    - mn_render_check.csp == 'no'
+  register: mn_csp_override
+
+# Langfuse reads REDIS_TLS_ENABLED; some cli-ops releases render only
+# REDIS_TLS, so against a TLS-only Redis every Langfuse call times out.
+- name: Turn on TLS for Langfuse's Redis connection
+  become: false
+  copy:
+    dest: "{{ ibl_root }}/static/ibl-dm/ibl-dm-pro/docker-compose.override.yml"
+    force: false
+    mode: "0644"
+    content: |
+      # Written by iblai-infra: the DM's Redis needs TLS and this cli-ops
+      # renders only REDIS_TLS, which Langfuse ignores. Remove once cli-ops
+      # renders REDIS_TLS_ENABLED for Langfuse.
+      services:
+        langfuse_web:
+          environment:
+            REDIS_TLS_ENABLED: "true"
+        langfuse-worker:
+          environment:
+            REDIS_TLS_ENABLED: "true"
+  when:
+    - redis_dm_location == 'managed'
+    - mn_render_check.dm_redis_tls == 'True'
+    - mn_render_check.langfuse_tls == 'no'
+  register: mn_langfuse_override
+
+- name: Render again with the overrides
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl render
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  when: mn_csp_override is changed or mn_langfuse_override is changed

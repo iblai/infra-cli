@@ -1,0 +1,64 @@
+---
+# `iblai infra app setup`: the hub's one-time jobs and its services - the
+# managed Postgres prepared, DM migrations, edX launch, SPAs, OAuth clients,
+# admins, seeding and the tenant - then celery beat on the stores node.
+# These jobs run here only; other app nodes reach their results through the
+# shared databases.
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Launch the platform on the hub
+  hosts: hub
+  become: true
+  vars:
+    # The DM database is never a container on the hub.
+    dm_db_local: false
+  pre_tasks:
+    - name: Log in to ECR
+      include_role:
+        name: mn_base
+        tasks_from: ecr
+
+    - name: Prepare the managed Postgres
+      include_role:
+        name: mn_managed_pg
+      when: postgres_location == 'managed'
+
+    - name: Apply the cli-ops compatibility overrides
+      include_role:
+        name: mn_compat
+  roles:
+    - { role: smtp_config, tags: [smtp] }
+    - ibl_dm
+    - ibl_edx
+    - ibl_spa
+    - integrations
+    - admin_setup
+    - data_seeding
+    - { role: ibl_tenant_platform, tags: [platform] }
+    - { role: stripe_config, tags: [stripe] }
+    - { role: google_sso_config, tags: [google_sso] }
+    - { role: microsoft_sso_config, tags: [microsoft_sso] }
+  post_tasks:
+    - name: Keep nginx connections open past the load balancer's
+      include_role:
+        name: mn_apply
+        tasks_from: nginx
+
+    - name: Reload the global proxy
+      become: false
+      shell: |
+        {{ ibl_env }}
+        ibl global-proxy reload
+      args:
+        executable: /bin/bash
+        chdir: "{{ repo_dir }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        IBL_ROOT: "{{ ibl_root }}/"
+        NODE_ID: "{{ node_id }}"
+
+- name: Start celery beat on the stores node
+  hosts: stores
+  become: true
+  roles:
+    - mn_beat

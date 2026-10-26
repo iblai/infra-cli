@@ -1,0 +1,49 @@
+---
+# Copy root files (`mn_sync_files`, e.g. [secrets.yml]) from the hub to the
+# hosts this play runs on. The content passes through the controller's
+# memory only - never its disk - and nothing is logged. Each target keeps a
+# copy of what it had under /ibl/backups/.
+- name: Read the hub's root files
+  become: false
+  slurp:
+    src: "{{ ibl_root }}/{{ item }}"
+  loop: "{{ mn_sync_files }}"
+  delegate_to: "{{ groups['hub'][0] }}"
+  run_once: true
+  register: mn_hub_files
+  no_log: true
+
+- name: Read the hub's file modes
+  become: false
+  stat:
+    path: "{{ ibl_root }}/{{ item }}"
+  loop: "{{ mn_sync_files }}"
+  delegate_to: "{{ groups['hub'][0] }}"
+  run_once: true
+  register: mn_hub_modes
+
+- name: Back up this node's copies
+  become: false
+  shell: |
+    B={{ ibl_root }}/backups/mn-sync-{{ mn_sync_stamp | default(ansible_date_time.iso8601_basic_short) }}
+    mkdir -p "$B"
+    for f in {{ mn_sync_files | join(' ') }}; do
+      [ -f "{{ ibl_root }}/$f" ] && cp -a "{{ ibl_root }}/$f" "$B/" || true
+    done
+    chmod 700 "$B"
+  args:
+    executable: /bin/bash
+  when: inventory_hostname != groups['hub'][0]
+  changed_when: false
+
+- name: Write the hub's files on this node
+  become: false
+  copy:
+    dest: "{{ ibl_root }}/{{ item.0.item }}"
+    content: "{{ item.0.content | b64decode }}"
+    mode: "{{ item.1.stat.mode }}"
+  loop: "{{ mn_hub_files.results | zip(mn_hub_modes.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item }}"
+  when: inventory_hostname != groups['hub'][0]
+  no_log: true

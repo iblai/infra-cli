@@ -1,0 +1,126 @@
+---
+# Start an app node from the hub's root (the playbook has copied config,
+# services, secrets and static over). No migrations, seeding, tenant or
+# client registration here: those are the hub's one-time jobs, and they
+# reach this node through the shared databases.
+- name: Render this node's config
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl render
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Fail on secrets this node can't supply
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl secrets check --json
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_clone_secrets
+  changed_when: false
+  failed_when: (mn_clone_secrets.stdout | from_json).user_supplied | length > 0
+
+- name: Ensure the ibl_local_default docker network exists
+  become: false
+  command: docker network create ibl_local_default
+  register: mn_net
+  failed_when: mn_net.rc != 0 and 'already exists' not in (mn_net.stderr | default(''))
+  changed_when: mn_net.rc == 0
+
+- name: Make proxy upstreams resolvable
+  include_role:
+    name: ibl_platform
+    tasks_from: proxy_hosts
+
+- name: Launch the global reverse proxy
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl global-proxy launch-without-security < /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Start edX
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl edx start -d < /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  timeout: 3600
+
+- name: Start the DM
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl dm up -d < /dev/null 2>&1
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  timeout: 3600
+
+- name: Find the enabled SPAs
+  include_role:
+    name: ibl_spa
+    tasks_from: discover
+
+- name: Start the enabled SPAs
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-spa/{{ item.name }} && docker compose up -d < /dev/null 2>&1 | grep -v -i swarm
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  loop: "{{ enabled_spas }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Reload the global proxy
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl global-proxy reload < /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Keep nginx connections open past the load balancer's
+  ansible.builtin.import_role:
+    name: mn_apply
+    tasks_from: nginx
+
+- name: Wait for this node to answer
+  ansible.builtin.import_role:
+    name: mn_apply
+    tasks_from: health

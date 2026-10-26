@@ -1,0 +1,33 @@
+---
+# Turn on VMs for the named mentors (`platform:mentor name`, e.g.
+# `main:agentAI`), with egress "none". Runs in the hub's DM web container.
+- name: Enable VMs for the chosen mentors
+  become: false
+  shell: |
+    docker exec -i -e MENTORS -e EGRESS ibl_dm_pro_web sh -c 'cd /code/dl_manager; python manage.py shell 2>&1' <<'PY' | grep '^OUT'
+    import os
+    from ibl_ai_mentor.models import Mentor, MentorSettings
+    for pair in [p for p in os.environ["MENTORS"].split(",") if p]:
+        platform, _, name = pair.partition(":")
+        found = Mentor.objects.filter(platform_key=platform, name__iexact=name)
+        if not found:
+            print("OUT missing", pair)
+        for m in found:
+            s, _ = MentorSettings.objects.get_or_create(mentor=m)
+            s.enable_virtual_machine = True
+            s.virtual_machine_egress = os.environ["EGRESS"]
+            s.save()
+            print("OUT enabled", m.pk, m.platform_key, m.name)
+    PY
+  args:
+    executable: /bin/bash
+  environment:
+    MENTORS: "{{ sandbox_vm_mentors | join(',') }}"
+    EGRESS: "{{ sandbox_vm_egress }}"
+  register: mn_sb_mentors
+  changed_when: "'OUT enabled' in mn_sb_mentors.stdout"
+  failed_when: mn_sb_mentors.rc != 0 or 'OUT missing' in mn_sb_mentors.stdout
+
+- name: Show the mentors with VMs
+  debug:
+    var: mn_sb_mentors.stdout_lines

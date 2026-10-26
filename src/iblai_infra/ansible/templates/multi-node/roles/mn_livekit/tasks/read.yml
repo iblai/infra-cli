@@ -1,0 +1,20 @@
+---
+# On the call server: its LiveKit key and secret, held in memory for the hub
+# play and never printed.
+- name: Read the call server's LiveKit credentials
+  become: false
+  shell: |
+    {{ ibl_env }}
+    K=$(ibl config get IBL_CALL.LIVEKIT_API_KEY < /dev/null) || exit 1
+    S=$(ibl config get IBL_CALL.LIVEKIT_API_SECRET < /dev/null) || exit 1
+    printf '%s\n%s\n' "$K" "$S"
+  args:
+    executable: /bin/bash
+    chdir: "{{ ibl_root }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+  register: mn_lk
+  changed_when: false
+  failed_when: mn_lk.rc != 0 or mn_lk.stdout_lines | length != 2 or mn_lk.stdout_lines | select | list | length != 2
+  no_log: true

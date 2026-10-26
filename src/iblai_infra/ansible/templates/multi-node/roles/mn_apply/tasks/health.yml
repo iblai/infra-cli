@@ -1,0 +1,24 @@
+---
+- name: Wait for the LMS through this node's nginx
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' -m 10 -H 'Host: learn.{{ base_domain }}' http://127.0.0.1/heartbeat
+  args:
+    executable: /bin/bash
+  register: mn_lms
+  until: mn_lms.stdout == '200'
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Wait for the DM web
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' -m 10 http://localhost:8400/
+  args:
+    executable: /bin/bash
+  register: mn_dm
+  until: mn_dm.stdout in ['200', '301', '302', '404']
+  retries: 60
+  delay: 15
+  changed_when: false

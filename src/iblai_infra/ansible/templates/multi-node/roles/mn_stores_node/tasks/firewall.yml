@@ -1,0 +1,47 @@
+---
+- name: Work out the firewall's interface, ports and allowed sources
+  set_fact:
+    mn_firewall_interface: "{{ ansible_default_ipv4.interface }}"
+    mn_store_ports: >-
+      {{ [7700, 8123, 9000, stores_minio_port | int, 27017]
+         + ([3306] if mysql_location == 'stores' else [])
+         + ([5432] if postgres_location == 'stores' else [])
+         + ([stores_redis_edx_port | int] if redis_edx_location == 'stores' else [])
+         + ([6379] if redis_dm_location == 'stores' else []) }}
+
+- name: Refuse to lock the stores with no app node allowed
+  fail:
+    msg: "No app node addresses to allow through the stores firewall."
+  when: mn_app_ips | length == 0
+
+- name: Install the store firewall script
+  template:
+    src: ibl-store-firewall.sh.j2
+    dest: /usr/local/sbin/ibl-store-firewall.sh
+    mode: "0755"
+  register: mn_fw_script
+
+- name: Install the store firewall unit
+  copy:
+    dest: /etc/systemd/system/ibl-store-firewall.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Restrict the IBL store ports to the app nodes (DOCKER-USER)
+      After=docker.service
+      PartOf=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/sbin/ibl-store-firewall.sh
+
+      [Install]
+      WantedBy=docker.service
+
+- name: Enable and apply the store firewall
+  systemd:
+    name: ibl-store-firewall
+    enabled: true
+    state: restarted
+    daemon_reload: true

@@ -1,0 +1,102 @@
+---
+# The stores node's root: the hub's files (already copied in) plus this
+# node's service set and deltas, rendered. Re-run by `iblai infra app sync`
+# after the hub's config.yml is copied over again.
+- name: Work out this node's stores
+  set_fact:
+    mn_local_stores:
+      mysql: "{{ mysql_location == 'stores' }}"
+      postgres: "{{ postgres_location == 'stores' }}"
+      redis_edx: "{{ redis_edx_location == 'stores' }}"
+      redis_dm: "{{ redis_dm_location == 'stores' }}"
+    mn_cores: "{{ ansible_processor_vcpus | default(ansible_processor_cores) | int }}"
+    mn_ram_gb: "{{ (ansible_memtotal_mb | int / 1024) | int }}"
+
+- name: Set the stores node's service toggles
+  include_role:
+    name: mn_services
+  vars:
+    mn_services_on: >-
+      {{ ['IBL_SERVICES.IBL_EDX', 'IBL_SERVICES.IBL_DM',
+          'IBL_EDX.RUN_MONGODB', 'IBL_EDX.RUN_MEILISEARCH',
+          'IBL_DM.RUN_LANGFUSE_CLICKHOUSE', 'IBL_DM.RUN_LANGFUSE_MINIO', 'IBL_DM.RUN_BEAT']
+         + (['IBL_EDX.RUN_MYSQL'] if mn_local_stores.mysql | bool else [])
+         + (['IBL_EDX.RUN_REDIS'] if mn_local_stores.redis_edx | bool else [])
+         + (['IBL_DM.RUN_DB'] if mn_local_stores.postgres | bool else [])
+         + (['IBL_DM.RUN_REDIS'] if mn_local_stores.redis_dm | bool else []) }}
+
+# Stores publish on this node's private address, and the containers' CPU
+# limits must fit the host: Docker refuses to start a container whose limit
+# exceeds the host's cores (the defaults assume 8).
+- name: Apply the stores node's config deltas
+  become: false
+  vars:
+    cores: "{{ mn_cores | int }}"
+    ram: "{{ mn_ram_gb | int }}"
+    deltas: >-
+      {{
+        {
+          'LOCALHOST_ADDRESS': mn_stores_ip,
+          'IBL_EDX.EXPOSED_MONGODB_PORT': '27017',
+          'IBL_DM.CLICKHOUSE_CPU_LIMIT': '%.1f' % ([1, (cores | int) // 2] | max),
+          'IBL_DM.CLICKHOUSE_MEMORY_LIMIT': ([2, (ram | int) // 4] | max) ~ 'g',
+        }
+        | combine({'IBL_EDX.EXPOSED_MYSQL_PORT': '3306'} if mn_local_stores.mysql | bool else {})
+        | combine({'IBL_EDX.EXPOSED_REDIS_PORT': stores_redis_edx_port | string} if mn_local_stores.redis_edx | bool else {})
+        | combine({
+            'IBL_DM.DB_CPU_LIMIT': '%.1f' % ([1, (cores | int) - 1] | max),
+            'IBL_DM.DB_CPU_RESERVATION': '1.0',
+            'IBL_DM.DB_MEMORY_LIMIT': ([2, (ram | int) // 2] | max) ~ 'g',
+            'IBL_DM.DB_MEMORY_RESERVATION': ([1, (ram | int) // 8] | max) ~ 'g',
+            'IBL_DM.DB_SHM_SIZE': ([1, (ram | int) // 8] | max) ~ 'g',
+          } if mn_local_stores.postgres | bool else {})
+        | combine({'IBL_DM.REDIS_CPU_LIMIT': '%.1f' % ([1, [2, (cores | int) // 2] | min] | max)}
+                  if mn_local_stores.redis_dm | bool else {})
+      }}
+  shell: |
+    {{ ibl_env }}
+    ibl config set {% for k, v in deltas | dictsort %}{{ (k ~ '=' ~ v) | quote }} {% endfor %}
+
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+# cli-ops has no setting for MongoDB authentication; tutor merges this file,
+# and a copy under /ibl/static/ survives `ibl render`.
+- name: Run MongoDB with authentication
+  become: false
+  when: mongodb_auth | bool
+  block:
+    - name: Create the tutor override directory
+      file:
+        path: "{{ ibl_root }}/static/ibl-edx/ibl-edx-pro/env/local"
+        state: directory
+        mode: "0755"
+
+    - name: Write the MongoDB override
+      copy:
+        dest: "{{ ibl_root }}/static/ibl-edx/ibl-edx-pro/env/local/docker-compose.override.yml"
+        mode: "0644"
+        content: |
+          # Written by iblai-infra: MongoDB on the stores node requires
+          # authentication (users are created by the stores setup).
+          services:
+            mongodb:
+              command: mongod --storageEngine wiredTiger --auth
+
+- name: Render the stores node's config
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl render
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"

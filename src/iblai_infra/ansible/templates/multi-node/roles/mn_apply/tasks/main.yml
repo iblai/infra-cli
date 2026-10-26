@@ -1,0 +1,48 @@
+---
+# Apply the root's current config on an app node: render with this node's
+# NODE_ID, recreate the DM containers whose config changed (plain compose
+# merges the static overrides and never removes orphans, unlike `ibl dm
+# up`), restart edX when asked, and wait for both to answer. Plays run it
+# with `serial: 1`, so the load balancer always has a healthy node.
+- name: Render this node's config
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl render
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Recreate the DM containers whose config changed
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro && docker compose up -d < /dev/null 2>&1 | grep -v -i swarm
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: mn_dm_up
+  changed_when: mn_dm_up.stdout is search('Recreated|Created')
+  timeout: 3600
+
+- name: Restart the edX application containers
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl tutor local restart lms cms lms-worker cms-worker < /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  when: mn_restart_edx | default(false) | bool
+  timeout: 1800
+
+- name: Wait for this node to answer
+  ansible.builtin.import_tasks: health.yml

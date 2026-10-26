@@ -1,0 +1,52 @@
+---
+# Create a session, run a command, try to reach the internet (must fail
+# under egress "none"), delete it - with a 1-day key on a `smoke-test`
+# tenant that is suspended again afterwards, its keys revoked.
+- name: Run the sandbox smoke test
+  become: false
+  shell: |
+    {{ ibl_env }}
+    set -uo pipefail
+    C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -m1 controlplane)
+    REF=$(ibl sandbox image-ref < /dev/null | grep -o 'sandbox@sha256:[0-9a-f]*')
+    docker exec -i -w /app/controlplane "$C" python manage.py shell -c "
+    from tenants.models import Tenant, EgressProfile
+    t, _ = Tenant.objects.get_or_create(name='smoke-test')
+    t.allowed_images = ['$REF']; t.status = 'active'; t.suspended_at = None; t.save()
+    t.allowed_egress_profiles.add(EgressProfile.objects.get(name='none'))" < /dev/null > /dev/null
+    KEY=$(ibl sandbox issue-token smoke-test smoke --expires-days 1 < /dev/null 2>&1 | grep -o 'sbk_[^[:space:]"]*' | head -1)
+    H=(-H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -H "Host: {{ sandbox_domain }}")
+    API=http://127.0.0.1:8000
+    SID=$(curl -s -X POST $API/v1/sessions "${H[@]}" -d "{\"image\": \"$REF\"}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')
+    RESULT=fail
+    if [ -n "$SID" ]; then
+      BODY=$(python3 -c 'import json; print(json.dumps({"shell": "python3 -c \"print(2+2)\"; python3 - <<X\nimport urllib.request\ntry:\n    urllib.request.urlopen(\"https://pypi.org\", timeout=5); print(\"EGRESS_OPEN\")\nexcept urllib.error.HTTPError:\n    print(\"EGRESS_OPEN\")\nexcept Exception:\n    print(\"EGRESS_BLOCKED\")\nX", "timeout_s": 60}))')
+      OUT=$(curl -s -X POST $API/v1/sessions/$SID/exec "${H[@]}" -d "$BODY" | python3 -c 'import json,sys,base64; d=json.load(sys.stdin); print(d["exit_code"], base64.b64decode(d["stdout_b64"]).decode().replace("\n"," "))')
+      DEL=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE $API/v1/sessions/$SID "${H[@]}")
+      echo "exec: $OUT; delete: $DEL"
+      case "$OUT" in "0 4 EGRESS_BLOCKED"*) [ "$DEL" = 204 ] && RESULT=ok;; esac
+    else
+      echo "session not created"
+    fi
+    unset KEY
+    docker exec -i -w /app/controlplane "$C" python manage.py shell -c "
+    from django.utils import timezone
+    from tenants.models import Tenant, ApiToken
+    t = Tenant.objects.get(name='smoke-test')
+    ApiToken.objects.filter(tenant=t, revoked_at__isnull=True).update(revoked_at=timezone.now())
+    t.status = 'suspended'; t.suspended_at = timezone.now(); t.save()" < /dev/null > /dev/null
+    echo "SMOKE_$RESULT"
+  args:
+    executable: /bin/bash
+    chdir: "{{ ibl_root }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_sb_smoke
+  changed_when: false
+  failed_when: "'SMOKE_ok' not in mn_sb_smoke.stdout"
+
+- name: Show the smoke test result
+  debug:
+    var: mn_sb_smoke.stdout_lines

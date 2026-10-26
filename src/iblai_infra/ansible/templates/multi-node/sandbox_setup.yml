@@ -1,0 +1,11 @@
+---
+# `iblai infra sandbox setup`: a KVM host running iblai-sandbox (Mode A),
+# behind host nginx on :80 for the load balancer.
+- name: Set up the sandbox server
+  hosts: sandbox
+  become: true
+  vars:
+    mn_min_cli_version: "7.27.0"
+  roles:
+    - mn_base
+    - mn_sandbox

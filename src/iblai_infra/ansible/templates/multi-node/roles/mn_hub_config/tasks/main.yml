@@ -1,0 +1,141 @@
+---
+# The hub's /ibl root: the config every node of the deployment shares. The
+# stores node and every other app node start from a copy of it, so this is
+# the only place secrets are generated.
+- name: Initialize the IBL config root
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl init --from single-server
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Set the app node service toggles
+  include_role:
+    name: mn_services
+  vars:
+    mn_services_on: "{{ app_services }}"
+    mn_services_keep: [IBL_DM.RUN_AI_CALL]
+
+- name: Point the platform at its stores
+  become: false
+  vars:
+    s: "{{ mn_stores_ip }}"
+    store_config: >-
+      {{
+        {
+          'IBL_EDX.MONGODB_HOST': s,
+          'IBL_EDX.MONGODB_PORT': '27017',
+          'IBL_EDX.MEILISEARCH_URL': 'http://' ~ s ~ ':7700',
+          'IBL_DM.CLICKHOUSE_HOST_NAME': s,
+          'IBL_DM.MINIO_HOST_NAME': s,
+          'IBL_DM.MINIO_INTERNAL_PORT': stores_minio_port | string,
+          'IBL_UTILITY.HEALTHCHECK.ENABLED_SERVICES.DM_DATABASE': 'false',
+        }
+        | combine({'IBL_EDX.MONGODB_USERNAME': mongodb_app_username} if mongodb_auth | bool else {})
+        | combine(
+            {'IBL_EDX.MYSQL_HOST': mysql_host, 'IBL_EDX.MYSQL_PORT': mysql_port | string,
+             'IBL_EDX.MYSQL_ROOT_USERNAME': mysql_root_username}
+            if mysql_location == 'managed' else
+            {'IBL_EDX.MYSQL_HOST': s, 'IBL_EDX.MYSQL_PORT': '3306'})
+        | combine(
+            {'IBL_DM.DB_HOST': postgres_host, 'IBL_DM.DB_PORT': postgres_port | string,
+             'IBL_DM.ENABLE_POSTGRES_TLS': postgres_tls | bool | string | lower}
+            if postgres_location == 'managed' else
+            {'IBL_DM.DB_HOST': s, 'IBL_DM.DB_PORT': '5432'})
+        | combine(
+            {'IBL_EDX.REDIS_HOST': redis_edx_host, 'IBL_EDX.REDIS_PORT': redis_edx_port | string,
+             'IBL_EDX.ENABLE_REDIS_TLS': redis_edx_tls | bool | string | lower,
+             'IBL_EDX.ENABLE_REDIS_AUTH': (redis_edx_password | default('') | length > 0) | string | lower}
+            if redis_edx_location == 'managed' else
+            {'IBL_EDX.REDIS_HOST': s, 'IBL_EDX.REDIS_PORT': stores_redis_edx_port | string})
+        | combine(
+            {'IBL_DM.REDIS_HOST': redis_dm_host, 'IBL_DM.REDIS_PORT': redis_dm_port | string,
+             'IBL_DM.ENABLE_REDIS_TLS': redis_dm_tls | bool | string | lower}
+            if redis_dm_location == 'managed' else
+            {'IBL_DM.REDIS_HOST': s, 'IBL_DM.REDIS_PORT': '6379'})
+      }}
+  shell: |
+    {{ ibl_env }}
+    ibl config set {% for k, v in store_config | dictsort %}{{ (k ~ '=' ~ v) | quote }} {% endfor %}
+
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+# Managed-store credentials go in from the environment, never argv.
+- name: Store the managed stores' credentials
+  become: false
+  vars:
+    managed_secrets: >-
+      {{
+        ({'IBL_EDX.MYSQL_ROOT_PASSWORD': 'MN_MYSQL_PW'} if mysql_location == 'managed' else {})
+        | combine({'IBL_EDX.REDIS_PASSWORD': 'MN_REDIS_EDX_PW'}
+                  if redis_edx_location == 'managed' and redis_edx_password | default('') | length > 0 else {})
+        | combine({'IBL_DM.REDIS_PASSWORD': 'MN_REDIS_DM_PW'}
+                  if redis_dm_location == 'managed' and redis_dm_password | default('') | length > 0 else {})
+      }}
+  shell: |
+    {{ ibl_env }}
+    ibl secrets set {% for k, v in managed_secrets | dictsort %}--from-env {{ k }}={{ v }} {% endfor %} > /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+    MN_MYSQL_PW: "{{ mysql_root_password | default('') }}"
+    MN_REDIS_EDX_PW: "{{ redis_edx_password | default('') }}"
+    MN_REDIS_DM_PW: "{{ redis_dm_password | default('') }}"
+  when: managed_secrets | length > 0
+  no_log: true
+
+# The stores node's secrets have generators, but those only run where the
+# store's RUN_* toggle is on - and on the hub it is off. The hub still needs
+# them (its clients authenticate with them), and the stores node receives
+# them from here, so fill each one here while it is empty. Never rotates a
+# value that exists.
+- name: Fill the stores node's secrets
+  become: false
+  vars:
+    store_secrets: >-
+      {{
+        ['IBL_DM.CLICKHOUSE_PASSWORD', 'IBL_DM.MINIO_ROOT_PASSWORD',
+         'IBL_EDX.MONGODB_PASSWORD', 'IBL_EDX.MEILISEARCH_MASTER_KEY']
+        + (['IBL_EDX.MYSQL_ROOT_PASSWORD'] if mysql_location == 'stores' else [])
+        + (['IBL_DM.REDIS_PASSWORD'] if redis_dm_location == 'stores' else [])
+      }}
+  shell: |
+    {{ ibl_env }}
+    for KEY in {{ store_secrets | join(' ') }}; do
+      VAL=$(ibl config get "$KEY") || exit 1
+      if [ -z "$VAL" ]; then
+        ibl secrets rotate -y "$KEY" > /dev/null || exit 1
+        echo "FILLED $KEY"
+      fi
+      unset VAL
+    done
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_store_secrets
+  changed_when: "'FILLED' in mn_store_secrets.stdout"
+  no_log: true
+
+- name: Show which store secrets were filled
+  debug:
+    msg: "{{ mn_store_secrets.stdout_lines | default([]) | select('match', '^FILLED ') | list }}"

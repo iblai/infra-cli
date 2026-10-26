@@ -1,0 +1,32 @@
+---
+# `iblai infra sandbox connect`: a tenant and API key for the DM on the
+# sandbox, the DM's sandbox settings on the hub, then the sync that takes
+# them to every node. Optionally turns VMs on for named mentors.
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Create the DM's tenant and key on the sandbox
+  hosts: sandbox
+  become: true
+  roles:
+    - mn_sandbox_connect
+
+- name: Point the DM at the sandbox
+  hosts: hub
+  become: true
+  tasks:
+    - name: Store the key and settings
+      include_role:
+        name: mn_sandbox_connect
+        tasks_from: dm
+
+- ansible.builtin.import_playbook: sync.yml
+
+- name: Turn on VMs for the chosen mentors
+  hosts: hub
+  become: true
+  tasks:
+    - name: Enable VMs
+      include_role:
+        name: mn_sandbox_connect
+        tasks_from: mentors
+      when: sandbox_vm_mentors | default([]) | length > 0

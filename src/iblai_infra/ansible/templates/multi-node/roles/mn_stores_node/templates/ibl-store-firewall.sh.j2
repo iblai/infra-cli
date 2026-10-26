@@ -1,0 +1,21 @@
+#!/bin/sh
+# Written by iblai-infra. The stores node's published ports accept new
+# connections only from the app nodes; the MinIO console from nobody.
+# Docker publishes ports past the host firewall, so this hooks DOCKER-USER
+# and matches the pre-NAT port (conntrack origdst) of NEW connections that
+# arrive on the external interface - container-to-container traffic and
+# this node's own outbound flows are untouched. Idempotent.
+set -e
+IF={{ mn_firewall_interface }}
+ALLOW="{{ mn_app_ips | join(' ') }}"
+PORTS="{{ mn_store_ports | join(' ') }}"
+for i in $(seq 1 30); do iptables -nL DOCKER-USER >/dev/null 2>&1 && break; sleep 1; done
+iptables -N IBL-STORE-ALLOW 2>/dev/null || iptables -F IBL-STORE-ALLOW
+for s in $ALLOW; do iptables -A IBL-STORE-ALLOW -s "$s" -j RETURN; done
+iptables -A IBL-STORE-ALLOW -j DROP
+for p in $PORTS; do
+  iptables -C DOCKER-USER -i "$IF" -p tcp -m conntrack --ctstate NEW --ctorigdstport "$p" -j IBL-STORE-ALLOW 2>/dev/null \
+    || iptables -I DOCKER-USER -i "$IF" -p tcp -m conntrack --ctstate NEW --ctorigdstport "$p" -j IBL-STORE-ALLOW
+done
+iptables -C DOCKER-USER -i "$IF" -p tcp -m conntrack --ctstate NEW --ctorigdstport 9091 -j DROP 2>/dev/null \
+  || iptables -I DOCKER-USER -i "$IF" -p tcp -m conntrack --ctstate NEW --ctorigdstport 9091 -j DROP

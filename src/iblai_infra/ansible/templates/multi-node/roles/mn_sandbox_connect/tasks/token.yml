@@ -1,0 +1,75 @@
+---
+# On the sandbox: the DM's tenant (the guest image, plus an extra image ref
+# if one is configured, and the egress profiles it may use - at least one is
+# required, even for "none") and a fresh API key for it. The key is held in
+# memory for the hub play and never printed.
+- name: Create the DM's sandbox tenant
+  become: false
+  shell: |
+    {{ ibl_env }}
+    set -uo pipefail
+    C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -m1 controlplane)
+    REF=$(ibl sandbox image-ref < /dev/null | grep -o 'sandbox@sha256:[0-9a-f]*')
+    [ -n "$C" ] && [ -n "$REF" ] || { echo "sandbox control plane or guest image not found"; exit 1; }
+    docker exec -i -e TENANT -e IMAGES -e PROFILES -w /app/controlplane "$C" python manage.py shell -c "
+    import os
+    from tenants.models import Tenant, EgressProfile
+    t, _ = Tenant.objects.get_or_create(name=os.environ['TENANT'])
+    t.allowed_images = [i for i in os.environ['IMAGES'].split(',') if i]
+    t.status = 'active'; t.suspended_at = None; t.save()
+    t.allowed_egress_profiles.set([EgressProfile.objects.get(name=p) for p in os.environ['PROFILES'].split(',')])
+    print('OUT', t.name, t.status, len(t.allowed_images), 'image(s)', sorted(t.allowed_egress_profiles.values_list('name', flat=True)))" < /dev/null | grep '^OUT'
+    echo "REF $REF"
+  args:
+    executable: /bin/bash
+    chdir: "{{ ibl_root }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+    TENANT: "{{ sandbox_tenant }}"
+    PROFILES: "{{ sandbox_egress_profiles | join(',') }}"
+    IMAGES: "{{ ([sandbox_dm_image] if sandbox_dm_image | default('') else []) | join(',') }}"
+  register: mn_sb_tenant
+
+- name: Record the guest image ref
+  set_fact:
+    mn_sb_guest_ref: "{{ mn_sb_tenant.stdout_lines | select('match', '^REF ') | first | regex_replace('^REF ', '') }}"
+
+# The tenant's images are set again with the guest ref now known (the
+# first pass may not have had it in the list).
+- name: Allow the guest image for the tenant
+  become: false
+  shell: |
+    C=$(docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | grep -m1 controlplane)
+    docker exec -i -e TENANT -e IMAGES -w /app/controlplane "$C" python manage.py shell -c "
+    import os
+    from tenants.models import Tenant
+    t = Tenant.objects.get(name=os.environ['TENANT'])
+    t.allowed_images = sorted(set(i for i in os.environ['IMAGES'].split(',') if i)); t.save()
+    print('OUT', t.allowed_images)" < /dev/null | grep '^OUT'
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    TENANT: "{{ sandbox_tenant }}"
+    IMAGES: "{{ ([mn_sb_guest_ref] + ([sandbox_dm_image] if sandbox_dm_image | default('') else [])) | join(',') }}"
+  changed_when: false
+
+# `grep -o 'sbk_[^[:space:]"]*'` exactly: the key holds characters outside
+# [A-Za-z0-9_], and a tighter pattern truncates it into a 401.
+- name: Issue the DM's API key
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl sandbox issue-token {{ sandbox_tenant | quote }} {{ sandbox_key_label | quote }} --expires-days {{ sandbox_key_days }} < /dev/null 2>&1 | grep -o 'sbk_[^[:space:]"]*' | head -1
+  args:
+    executable: /bin/bash
+    chdir: "{{ ibl_root }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_sb_key
+  failed_when: mn_sb_key.stdout | trim | length < 20
+  no_log: true

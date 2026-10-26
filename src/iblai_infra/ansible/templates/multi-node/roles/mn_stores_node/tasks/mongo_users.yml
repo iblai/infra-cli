@@ -1,0 +1,80 @@
+---
+# MongoDB root login: generated once, kept only on this node (root-readable).
+- name: Create the MongoDB root login
+  shell: |
+    set -e
+    mkdir -p "$(dirname {{ mongodb_root_env_file }})"
+    if [ ! -s {{ mongodb_root_env_file }} ]; then
+      umask 077
+      PW=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')
+      printf 'MONGO_ROOT_USER=ibl_mongo_root\nMONGO_ROOT_PW=%s\n' "$PW" > {{ mongodb_root_env_file }}
+      echo CREATED
+    fi
+    chmod 600 {{ mongodb_root_env_file }}
+  args:
+    executable: /bin/bash
+  register: mn_mongo_root
+  changed_when: "'CREATED' in mn_mongo_root.stdout"
+  no_log: true
+
+- name: Wait for MongoDB to answer
+  become: false
+  shell: docker exec ibl_prod_mongodb mongosh --quiet --norc --eval 'db.runCommand({ping:1}).ok'
+  register: mn_mongo_ping
+  until: mn_mongo_ping.stdout | trim is search('1$')
+  retries: 30
+  delay: 2
+  changed_when: false
+
+# The edX login is IBL_EDX.MONGODB_USERNAME / IBL_EDX.MONGODB_PASSWORD (the
+# hub filled it). Creating the first user uses MongoDB's localhost
+# exception; later runs authenticate as root and only update the app user.
+- name: Read the edX MongoDB password
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl config get IBL_EDX.MONGODB_PASSWORD
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_mongo_app_pw
+  changed_when: false
+  no_log: true
+
+- name: Create or update the MongoDB users
+  shell: |
+    set -a; . {{ mongodb_root_env_file }}; set +a
+    docker exec -i -e MONGO_ROOT_USER -e MONGO_ROOT_PW -e M_APP_USER -e M_APP_PW ibl_prod_mongodb mongosh --quiet --norc admin <<'JS'
+    const admin = db.getSiblingDB("admin");
+    let rootOk = false;
+    try { rootOk = admin.auth(process.env.MONGO_ROOT_USER, process.env.MONGO_ROOT_PW).ok === 1; } catch (e) { rootOk = false; }
+    if (!rootOk) {
+      admin.createUser({user: process.env.MONGO_ROOT_USER, pwd: process.env.MONGO_ROOT_PW, roles: [{role: "root", db: "admin"}]});
+      admin.auth(process.env.MONGO_ROOT_USER, process.env.MONGO_ROOT_PW);
+      print("ROOT_CREATED");
+    }
+    const roles = [{role: "readWrite", db: "openedx"}, {role: "readWrite", db: "cs_comments_service"}];
+    if (admin.getUser(process.env.M_APP_USER)) {
+      admin.updateUser(process.env.M_APP_USER, {pwd: process.env.M_APP_PW, roles: roles});
+      print("APP_UPDATED");
+    } else {
+      admin.createUser({user: process.env.M_APP_USER, pwd: process.env.M_APP_PW, roles: roles});
+      print("APP_CREATED");
+    }
+    JS
+  args:
+    executable: /bin/bash
+  environment:
+    M_APP_USER: "{{ mongodb_app_username }}"
+    M_APP_PW: "{{ mn_mongo_app_pw.stdout_lines | last }}"
+  register: mn_mongo_users
+  changed_when: "'CREATED' in mn_mongo_users.stdout"
+  no_log: true
+
+- name: Show the MongoDB user result
+  debug:
+    msg: "{{ mn_mongo_users.stdout_lines | default([]) | select('match', '^(ROOT|APP)_') | list }}"

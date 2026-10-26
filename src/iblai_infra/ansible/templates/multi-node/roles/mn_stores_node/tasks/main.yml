@@ -1,0 +1,60 @@
+---
+# The stores node: the hub's root (copied in by the playbook) plus this
+# node's deltas, running only the data stores and celery beat. Guardrails:
+# never start tutor here without naming services, and never run `ibl dm up`
+# or `ibl dm update` - both would start the whole application on this node.
+- name: Apply the stores node's config
+  ansible.builtin.import_tasks: config.yml
+
+- name: Ensure the ibl_local_default docker network exists
+  become: false
+  command: docker network create ibl_local_default
+  register: mn_net
+  failed_when: mn_net.rc != 0 and 'already exists' not in (mn_net.stderr | default(''))
+  changed_when: mn_net.rc == 0
+
+- name: Start the edX stores
+  become: false
+  vars:
+    edx_stores: >-
+      {{ ['mongodb', 'meilisearch']
+         + (['mysql'] if mn_local_stores.mysql | bool else [])
+         + (['redis'] if mn_local_stores.redis_edx | bool else []) }}
+  shell: |
+    {{ ibl_env }}
+    ibl tutor local start -d {{ edx_stores | join(' ') }} < /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  timeout: 1800
+
+- name: Prepare the local DM database
+  include_role:
+    name: ibl_dm
+    tasks_from: local_db
+  when: mn_local_stores.postgres | bool
+
+- name: Start the DM stores
+  become: false
+  vars:
+    dm_stores: >-
+      {{ ['clickhouse', 'minio']
+         + (['dm-redis'] if mn_local_stores.redis_dm | bool else []) }}
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro && docker compose up -d {{ dm_stores | join(' ') }} < /dev/null
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  timeout: 1800
+
+- name: Create the MongoDB users
+  ansible.builtin.import_tasks: mongo_users.yml
+  when: mongodb_auth | bool
+
+- name: Restrict the store ports to the app nodes
+  ansible.builtin.import_tasks: firewall.yml

@@ -1,0 +1,31 @@
+---
+# `iblai infra stores setup`: the stores node from a copy of the hub's root -
+# MongoDB (with auth), Meilisearch, ClickHouse, MinIO and whichever of
+# MySQL / Postgres / Redis are not managed - behind a firewall that admits
+# only the app nodes. Celery beat starts later, after the hub migrates.
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Set up the stores node
+  hosts: stores
+  become: true
+  pre_tasks:
+    - name: Install the base software
+      include_role:
+        name: mn_base
+
+    - name: Copy the hub's root
+      include_role:
+        name: mn_sync
+        tasks_from: files
+      vars:
+        mn_sync_files: [config.yml, services.yml, secrets.yml]
+  roles:
+    - mn_stores_node
+
+- name: Check the secrets match
+  hosts: hub:stores
+  tasks:
+    - name: Compare secrets.yml
+      include_role:
+        name: mn_sync
+        tasks_from: verify

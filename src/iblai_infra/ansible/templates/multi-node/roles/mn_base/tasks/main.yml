@@ -1,0 +1,113 @@
+---
+# Base software for any multi-node host: Docker, the AWS CLI with the ECR pull
+# key, pyenv + the cli-ops venv, iblai-cli-ops itself, and an ECR login. The
+# same roles single-server runs; nothing here configures the platform.
+- name: Wait for cloud-init to finish
+  command: cloud-init status --wait
+  changed_when: false
+  ignore_errors: true
+
+- name: Create IBL root directory
+  file:
+    path: "{{ ibl_root }}"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+
+- name: Check whether this host already has an IBL root
+  stat:
+    path: "{{ ibl_root }}/config.yml"
+  register: mn_existing_root
+
+- name: Gather service facts
+  service_facts:
+  when: mn_stop_stock_nginx | default(false) | bool
+
+# An image's stock nginx answers the load balancer's health check on :80
+# before the node is set up, so the balancer sends it real traffic and
+# requests (including the DM token exchange of the hub's setup) land on an
+# empty server. Stop it on a fresh app node; `ibl global-proxy` installs and
+# starts the platform's nginx later.
+- name: Stop a stock nginx on a fresh app node
+  systemd:
+    name: nginx
+    state: stopped
+  when:
+    - mn_stop_stock_nginx | default(false) | bool
+    - not mn_existing_root.stat.exists
+    - "'nginx.service' in ansible_facts.services | default({})"
+  failed_when: false
+
+- name: Install Docker, the AWS CLI and Python
+  include_role:
+    name: "{{ item }}"
+  loop: [docker, awscli, python]
+
+# A GitHub token that can only read client forks may not reach the upstream
+# repos a host needs (the sandbox needs cli-ops >= 7.27). Locally built
+# wheels install with no token on the server at all.
+- name: Install iblai-cli-ops from local wheels
+  when: cli_ops_wheel | default('') | length > 0
+  become: false
+  block:
+    - name: Ensure the working directory exists
+      file:
+        path: "{{ repo_dir }}"
+        state: directory
+
+    - name: Create the wheel directory
+      file:
+        path: "/home/{{ ansible_user }}/ibl-wheels"
+        state: directory
+        mode: "0755"
+
+    - name: Copy the wheels
+      copy:
+        src: "{{ item }}"
+        dest: "/home/{{ ansible_user }}/ibl-wheels/{{ item | basename }}"
+        mode: "0644"
+      loop: "{{ [cli_ops_wheel, prod_images_wheel] | select | list }}"
+
+    - name: Install ibl-cli and the image catalog
+      shell: |
+        {{ ibl_env }}
+        pip install --quiet --upgrade pip uv
+        W=/home/{{ ansible_user }}/ibl-wheels
+        uv pip install --reinstall "ibl-cli[sumac] @ file://$W/{{ cli_ops_wheel | basename }}"{% if prod_images_wheel | default('') %} "iblai-images[sumac] @ file://$W/{{ prod_images_wheel | basename }}"{% endif %}
+      args:
+        executable: /bin/bash
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+
+- name: Install iblai-cli-ops from GitHub
+  include_role:
+    name: ibl_cli_ops
+    tasks_from: install
+  when: cli_ops_wheel | default('') | length == 0
+
+- name: Read the installed ibl CLI version
+  become: false
+  shell: |
+    {{ ibl_env }}
+    uv pip list --format json
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: mn_pip_list
+  changed_when: false
+
+- name: Record the installed ibl CLI version
+  set_fact:
+    ibl_cli_version: "{{ mn_pip_list.stdout | from_json | selectattr('name', 'equalto', 'ibl-cli') | map(attribute='version') | first | default('') | regex_search('^[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true) }}"
+
+- name: Enforce the iblai-cli-ops version this host needs
+  fail:
+    msg: >-
+      Installed iblai-cli-ops is '{{ ibl_cli_version | default('not installed', true) }}'
+      but this host needs >= {{ mn_min_cli_version | default('7.0.0') }}.
+  when: ibl_cli_version == '' or ibl_cli_version is version(mn_min_cli_version | default('7.0.0'), '<')
+
+- name: Log in to ECR
+  ansible.builtin.import_tasks: ecr.yml

@@ -1,0 +1,22 @@
+---
+# `iblai infra call connect`: the call server's LiveKit credentials to the
+# DM, AI calls on, then the sync that takes them to every node. The stores
+# node gets the secrets but keeps AI calls off (its service set has none).
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Read the call server's credentials
+  hosts: call
+  become: true
+  tasks:
+    - name: Read them
+      include_role:
+        name: mn_livekit
+        tasks_from: read
+
+- name: Give them to the DM
+  hosts: hub
+  become: true
+  roles:
+    - mn_livekit
+
+- ansible.builtin.import_playbook: sync.yml

@@ -337,7 +337,25 @@ iblai infra service-update --host <ip> --ssh-key ~/.ssh/key.pem --git-token $GIT
 
 Or launch a fresh AMI and swap it into an ALB target group — see `iblai infra service-update --help`.
 
-### 10. Manage environments
+### 10. Multi-node deployment on existing hosts
+
+App nodes behind your load balancer, a stores node, optional managed MySQL / Postgres / Redis, a KVM sandbox and a call server - configured role by role from one `.env` (copy `.env.multinode.example`):
+
+```bash
+iblai infra app init        -f .env   # hub: base software, store endpoints, secrets
+iblai infra stores setup    -f .env   # stores node from the hub's config
+iblai infra app setup       -f .env   # hub: migrations, launch, one-time jobs; celery beat
+iblai infra app add         -f .env --host <ip>   # more app nodes (clones of the hub)
+iblai infra sandbox setup   -f .env   # KVM sandbox server (iblai-sandbox)
+iblai infra sandbox connect -f .env   # DM <-> sandbox on every node
+iblai infra call connect    -f .env --call-project <name>   # DM <-> LiveKit
+iblai infra app sync        -f .env   # push hub config changes, one node at a time
+iblai infra app verify      -f .env   # containers, health, secrets, endpoints
+```
+
+Each command prints what's left for you in the cloud account (security groups, load balancer health checks and idle timeout). The post-setup features (`smtp`, `sso`, `stripe`, `llm`, `platform`) work on a multi-node project too: they run on the hub and sync to the rest.
+
+### 11. Manage environments
 
 ```bash
 iblai infra list                # all environments (cloud, type, status)

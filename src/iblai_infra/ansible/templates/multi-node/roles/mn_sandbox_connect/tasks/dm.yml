@@ -1,0 +1,38 @@
+---
+# On the hub: hand the key to the DM and point it at the sandbox. The other
+# nodes receive both through the sync that follows.
+- name: Store the sandbox API key
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl secrets set --from-env IBL_DM.IBL_SANDBOX_API_TOKEN=MN_SB_KEY > /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+    MN_SB_KEY: "{{ hostvars[groups['sandbox'][0]].mn_sb_key.stdout | trim }}"
+  no_log: true
+
+# ENABLE_GRAPH_LANGCHAIN_AGENTS moves every mentor on this DM to the graph
+# runner (the one that can use a VM), so it is the operator's call.
+- name: Point the DM at the sandbox
+  become: false
+  vars:
+    image: "{{ sandbox_dm_image | default('', true) or hostvars[groups['sandbox'][0]].mn_sb_guest_ref }}"
+  shell: |
+    {{ ibl_env }}
+    ibl config set \
+      {{ ('IBL_DM.IBL_SANDBOX_API_URL=https://' ~ sandbox_domain) | quote }} \
+      {{ ('IBL_DM.IBL_SANDBOX_IMAGE=' ~ image) | quote }}{% if sandbox_graph_agents | bool %} \
+      IBL_DM.ENABLE_GRAPH_LANGCHAIN_AGENTS=true{% endif %}
+
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"

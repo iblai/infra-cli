@@ -1,0 +1,17 @@
+---
+# The load balancer's idle timeout must stay below its targets' keep-alive,
+# or idle connections it reuses get closed under it (sporadic 502s). A
+# sandbox sharing the platform's balancer needs a 660 s idle timeout.
+- name: Keep idle connections longer than the load balancer does
+  lineinfile:
+    path: /etc/nginx/nginx.conf
+    regexp: '^\s*keepalive_timeout\s'
+    line: "    keepalive_timeout {{ nginx_keepalive_timeout }}s;"
+    insertafter: '^\s*http\s*\{'
+  register: mn_keepalive
+
+- name: Reload nginx
+  shell: nginx -t && systemctl reload nginx
+  args:
+    executable: /bin/bash
+  when: mn_keepalive is changed

@@ -180,6 +180,8 @@ def build_setup_config_from_env(
     env: dict[str, str],
     *,
     state: ProjectState,
+    allowed_types: tuple[DeploymentType, ...] = (DeploymentType.SINGLE,),
+    require_git_token: bool = True,
 ) -> SetupConfig:
     """Validate `env` and return a `SetupConfig` ready for `AnsibleRunner`.
 
@@ -188,14 +190,16 @@ def build_setup_config_from_env(
     any of them in `.env` for unusual cases (e.g. a manually-promoted
     bastion). All other fields come from `.env`.
 
-    Single-server only — rejects `MULTI` and `CALL` deployment types so
-    operators don't accidentally apply the single-server playbook to a
-    multi-server stack.
+    Single-server only by default — rejects `MULTI` and `CALL` deployment
+    types so operators don't accidentally apply the single-server playbook
+    to a multi-server stack. The multi-node commands pass ``allowed_types``
+    for the hub's config, and ``require_git_token=False`` when they install
+    from local wheels.
     """
     # Reject multi/call upfront. Existing call-server users still have
     # the wizard; we don't want a foot-gun here.
     deployment = getattr(state.config, "deployment_type", DeploymentType.SINGLE)
-    if deployment != DeploymentType.SINGLE:
+    if deployment not in allowed_types:
         raise _fail(
             f"setup-env only supports single-server. State '{state.name}' is "
             f"{deployment.value}.",
@@ -204,7 +208,7 @@ def build_setup_config_from_env(
 
     missing = [k for k in ALWAYS_REQUIRED if not env.get(k)]
     git_token = _get_git_token(env)
-    if not git_token:
+    if not git_token and require_git_token:
         missing.append("GIT_TOKEN")
     if missing:
         ui.error("Missing required variables in .env:")

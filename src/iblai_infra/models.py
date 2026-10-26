@@ -95,6 +95,10 @@ class DeploymentType(str, Enum):
     SINGLE = "single-server"
     MULTI = "multi-server"
     CALL = "call-server"
+    # Existing hosts configured role by role (`iblai infra app|stores|sandbox`):
+    # app nodes behind a load balancer, one stores node, optional managed
+    # stores and a sandbox. No Terraform - see MultiNodeTopology.
+    MULTI_NODE = "multi-node"
 
 
 class CloudProvider(str, Enum):
@@ -797,6 +801,90 @@ class SetupConfig(BaseModel):
         )
         base.update(overrides)
         return cls(**base)
+
+
+# ---------------------------------------------------------------------------
+# Multi-node topology — existing hosts, configured role by role
+# ---------------------------------------------------------------------------
+
+class StoreLocation(str, Enum):
+    """Where one of the platform's stores runs."""
+    STORES = "stores"     # on the stores node
+    MANAGED = "managed"   # an endpoint the operator supplies (RDS, ElastiCache, ...)
+
+
+class ManagedEndpoint(BaseModel):
+    """A managed store's address. Its credentials are never stored here."""
+    host: str = ""
+    port: int
+    tls: bool = True
+    username: str = ""
+
+
+class MultiNodeTopology(BaseModel):
+    """The hosts of a multi-node deployment and where its stores live.
+
+    Persisted in ``ProjectState.outputs["multi_node"]`` so each per-role
+    command can find the others. Holds addresses and choices only - every
+    credential is read from the operator's .env at run time.
+    """
+    hub: str
+    apps: list[str] = Field(default_factory=list)
+    stores: str
+    sandbox: str = ""
+    ssh_user: str = "ubuntu"
+    # Bastion for hosts without a public address, reached with the same key.
+    ssh_jump_host: str = ""
+    # Address the app nodes use for the stores node. Empty = its default IPv4.
+    stores_private_ip: str = ""
+    # host -> NODE_ID. Assigned once and kept: NODE_ID names log groups and
+    # appears in proxy headers, so it must not change between runs.
+    node_ids: dict[str, str] = Field(default_factory=dict)
+    node_id_prefix: str
+    mysql: StoreLocation = StoreLocation.STORES
+    postgres: StoreLocation = StoreLocation.STORES
+    redis_edx: StoreLocation = StoreLocation.STORES
+    redis_dm: StoreLocation = StoreLocation.STORES
+    mysql_endpoint: ManagedEndpoint | None = None
+    postgres_endpoint: ManagedEndpoint | None = None
+    redis_edx_endpoint: ManagedEndpoint | None = None
+    redis_dm_endpoint: ManagedEndpoint | None = None
+    sandbox_domain: str = ""
+
+    @model_validator(mode="after")
+    def _managed_stores_have_endpoints(self) -> "MultiNodeTopology":
+        for store in ("mysql", "postgres", "redis_edx", "redis_dm"):
+            if getattr(self, store) == StoreLocation.MANAGED:
+                endpoint = getattr(self, f"{store}_endpoint")
+                if endpoint is None or not endpoint.host:
+                    raise ValueError(f"{store} is managed but has no endpoint host")
+        hosts = [self.hub, *self.apps, self.stores] + ([self.sandbox] if self.sandbox else [])
+        if len(hosts) != len(set(hosts)):
+            raise ValueError("each host may hold only one role")
+        return self
+
+    @property
+    def app_nodes(self) -> list[str]:
+        return [self.hub, *self.apps]
+
+    def assign_node_ids(self) -> None:
+        """Give every host without one a NODE_ID; existing ones never change."""
+        ids = self.node_ids
+        used = set(ids.values())
+
+        def take(host: str, name: str) -> None:
+            if host and host not in ids:
+                ids[host] = name
+                used.add(name)
+
+        take(self.hub, f"{self.node_id_prefix}-app-1")
+        n = 2
+        for host in self.apps:
+            while f"{self.node_id_prefix}-app-{n}" in used:
+                n += 1
+            take(host, f"{self.node_id_prefix}-app-{n}")
+        take(self.stores, f"{self.node_id_prefix}-stores")
+        take(self.sandbox, f"{self.node_id_prefix}-sandbox")
 
 
 # ---------------------------------------------------------------------------

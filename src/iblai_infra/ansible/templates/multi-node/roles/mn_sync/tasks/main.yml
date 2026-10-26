@@ -1,0 +1,3 @@
+---
+- name: Copy the hub's root files
+  ansible.builtin.import_tasks: files.yml

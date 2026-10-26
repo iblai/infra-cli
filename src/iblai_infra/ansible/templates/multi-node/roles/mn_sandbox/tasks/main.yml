@@ -1,0 +1,175 @@
+---
+# A KVM sandbox server (iblai-sandbox, Mode A: one host runs the control
+# plane and the microVMs). Needs cli-ops >= 7.27 (`ibl sandbox`); the
+# playbook sets mn_min_cli_version so mn_base enforces it.
+- name: Check for KVM
+  shell: |
+    [ -c /dev/kvm ] && echo kvm=yes || echo kvm=no
+    grep -qE '\b(vmx|svm)\b' /proc/cpuinfo && echo virt=yes || echo virt=no
+  args:
+    executable: /bin/bash
+  register: mn_kvm
+  changed_when: false
+
+- name: Fail without KVM
+  fail:
+    msg: >-
+      {{ inventory_hostname }} has no usable KVM ({{ mn_kvm.stdout_lines | join(', ') }}).
+      The sandbox runs microVMs: use a bare-metal instance or one with nested
+      virtualization (AWS: an 8th-gen Intel type such as m8i launched with
+      --cpu-options NestedVirtualization=enabled; GCP: an Intel n2 VM with
+      nested virtualization enabled).
+  when: "'kvm=no' in mn_kvm.stdout or 'virt=no' in mn_kvm.stdout"
+
+- name: Configure the sandbox root
+  become: false
+  shell: |
+    {{ ibl_env }}
+    [ -f {{ ibl_root }}/config.yml ] || ibl init --from sandbox-only < /dev/null
+    ibl config set \
+      {{ ('IBL_SANDBOX.ALLOWED_HOSTS=' ~ ([sandbox_domain, ansible_default_ipv4.address] | select | join(','))) | quote }} \
+      IBL_SANDBOX.HOST_MAX_SESSIONS={{ sandbox_max_sessions }} \
+      IBL_SANDBOX.GLOBAL_MAX_SESSIONS={{ sandbox_max_sessions }} < /dev/null
+    ibl secrets generate < /dev/null > /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+# `ibl render` always runs `tutor config save`, which crashes with "RSA key
+# format is not supported" on an edX-less root: `secrets generate` skips the
+# edX JWT key there. The key is inert on this host; fill it once.
+- name: Fill the edX JWT key so render works without edX
+  become: false
+  shell: |
+    {{ ibl_env }}
+    JWT=$(ibl config get IBL_EDX.JWT_RSA_PRIVATE_KEY < /dev/null) || exit 1
+    if [ -z "$JWT" ]; then
+      ibl secrets rotate -y IBL_EDX.JWT_RSA_PRIVATE_KEY < /dev/null > /dev/null || exit 1
+      echo FILLED
+    fi
+    unset JWT
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_jwt
+  changed_when: "'FILLED' in mn_jwt.stdout"
+  no_log: true
+
+- name: Render and check the sandbox
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl render < /dev/null > /dev/null && ibl sandbox check < /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  changed_when: false
+
+# Pulls ~1.6 GB and loads the guest image; stdin closed so nothing waits on it.
+- name: Start the sandbox
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl sandbox up -d < /dev/null > /home/{{ ansible_user }}/sandbox-up.log 2>&1
+  args:
+    executable: /bin/bash
+    chdir: "{{ ibl_root }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  async: 3600
+  poll: 30
+
+- name: Wait for the control plane
+  become: false
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' -m 5 -H 'Host: {{ sandbox_domain }}' http://127.0.0.1:8000/readyz
+  args:
+    executable: /bin/bash
+  register: mn_readyz
+  until: mn_readyz.stdout == '200'
+  retries: 60
+  delay: 10
+  changed_when: false
+
+- name: Create the sandbox admin user
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl sandbox createsuperuser < /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ ibl_root }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_sb_admin
+  failed_when: mn_sb_admin.rc != 0 and 'exist' not in (mn_sb_admin.stdout ~ mn_sb_admin.stderr)
+  changed_when: mn_sb_admin.rc == 0
+
+# The unit only runs at boot (`up` loaded the table directly), so check the
+# nft table, not `systemctl is-active`.
+- name: Check the guest egress firewall
+  shell: |
+    systemctl is-enabled ibl-sandbox-egress && nft list tables | grep -q sandbox_egress
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: true
+
+- name: Install the sandbox site for the load balancer
+  template:
+    src: nginx-ibl-sandbox.conf.j2
+    dest: /etc/nginx/sites-available/ibl-sandbox
+    mode: "0644"
+  register: mn_sb_site
+
+- name: Enable the sandbox site
+  file:
+    src: /etc/nginx/sites-available/ibl-sandbox
+    dest: /etc/nginx/sites-enabled/ibl-sandbox
+    state: link
+
+- name: Remove the default site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Reload nginx
+  shell: nginx -t && systemctl reload nginx
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Check the health check the load balancer will probe
+  shell: |
+    curl -s -o /dev/null -w '%{http_code}' -m 10 http://127.0.0.1/healthcheck
+  args:
+    executable: /bin/bash
+  register: mn_sb_health
+  until: mn_sb_health.stdout == '200'
+  retries: 12
+  delay: 5
+  changed_when: false
+
+- name: Smoke-test a session
+  ansible.builtin.import_tasks: smoke.yml

@@ -204,7 +204,7 @@
       'IBL_DM.ENABLE_RBAC=true' \
       'IBL_DM.ENABLE_RBAC_SEEDING=true' \
       'IBL_DM.ENABLE_RBAC_GROUP_MANAGEMENT=true' \
-      'IBL_DM.ENABLE_TIMESCALEDB=true' \
+      'IBL_DM.ENABLE_TIMESCALEDB={{ 'true' if (enable_timescaledb | default(true) | bool) else 'false' }}' \
       'IBL_DM.ENABLE_TIME_SPENT_UPDATE_API=true' \
       'IBL_DM.ENABLE_CREDITS=true' \
       'IBL_DM.ENABLE_NOTIFICATIONS=true' \

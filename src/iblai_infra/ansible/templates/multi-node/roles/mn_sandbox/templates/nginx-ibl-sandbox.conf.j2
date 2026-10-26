@@ -1,0 +1,50 @@
+# Written by iblai-infra. Port 80 for the cloud load balancer (TLS ends there).
+#
+#   /healthcheck -> control plane /readyz (503 when its database or Redis is
+#     down). Not the control plane's own /healthcheck: that also fails at
+#     session capacity, which with one backend takes the whole API offline.
+#     Host is rewritten because load balancer probes send the backend IP,
+#     and Django answers 400 to any host outside IBL_SANDBOX.ALLOWED_HOSTS.
+#   everything else -> control plane API on 127.0.0.1:8000, including the
+#     exec WebSocket at /v1/sessions/<id>/exec/stream and /admin/.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    # archive uploads: SANDBOX_MAX_ARCHIVE_BYTES (100 MiB) + headroom
+    client_max_body_size 120m;
+
+    # Above the load balancer's idle timeout (660 s), or it can reuse a
+    # connection nginx just closed (sporadic 502s).
+    keepalive_timeout {{ nginx_keepalive_timeout }}s;
+
+    location = /healthcheck {
+        access_log off;
+        proxy_pass http://127.0.0.1:8000/readyz;
+        proxy_set_header Host {{ sandbox_domain }};
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 4s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        # exec timeout_s is capped at 600 s (+30 s host grace)
+        proxy_read_timeout 660s;
+        proxy_send_timeout 660s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+}

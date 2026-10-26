@@ -1,0 +1,25 @@
+---
+# Celery beat runs on the stores node only - one scheduler per deployment.
+# Start it after the hub has migrated the DM database. --no-deps: on this
+# node, never `ibl dm up`, which would start the whole DM here.
+- name: Start celery beat
+  become: false
+  shell: |
+    cd {{ ibl_root }}/app/ibl-dm/ibl-dm-pro && docker compose up -d --no-deps celery_beat < /dev/null 2>&1 | grep -v -i swarm
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  register: mn_beat_up
+  changed_when: mn_beat_up.stdout is search('Recreated|Created|Started')
+
+- name: Check celery beat stays up
+  become: false
+  shell: |
+    sleep 20
+    docker compose -f {{ ibl_root }}/app/ibl-dm/ibl-dm-pro/docker-compose.yml ps --format '{{ '{{' }}.Service{{ '}}' }} {{ '{{' }}.State{{ '}}' }}' celery_beat
+  args:
+    executable: /bin/bash
+  register: mn_beat_state
+  changed_when: false
+  failed_when: "'running' not in mn_beat_state.stdout"

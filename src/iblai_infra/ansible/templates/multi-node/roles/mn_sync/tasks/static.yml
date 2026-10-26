@@ -1,0 +1,26 @@
+---
+# Copy the hub's /ibl/static/ (deployment overrides `ibl render` copies into
+# /ibl/app/) to the hosts this play runs on, through the controller's memory.
+- name: Pack the hub's static directory
+  become: false
+  shell: |
+    if [ -d {{ ibl_root }}/static ]; then tar czf - -C {{ ibl_root }} static | base64 -w0; fi
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ groups['hub'][0] }}"
+  run_once: true
+  register: mn_hub_static
+  changed_when: false
+  no_log: true
+
+- name: Unpack it on this node
+  become: false
+  shell: |
+    base64 -d | tar xzf - -C {{ ibl_root }}
+  args:
+    executable: /bin/bash
+    stdin: "{{ mn_hub_static.stdout }}"
+  when:
+    - inventory_hostname != groups['hub'][0]
+    - mn_hub_static.stdout | length > 0
+  no_log: true

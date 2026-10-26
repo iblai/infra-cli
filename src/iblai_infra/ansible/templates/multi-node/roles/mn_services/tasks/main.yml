@@ -1,0 +1,30 @@
+---
+# Set this root's service toggles to exactly `mn_services_on`, leaving
+# `mn_services_keep` untouched. Callers pass both.
+- name: Copy the service-toggle helper
+  become: false
+  copy:
+    src: ibl_services_exact.py
+    dest: "/home/{{ ansible_user }}/ibl_services_exact.py"
+    mode: "0644"
+
+- name: Set the node's service toggles
+  become: false
+  shell: |
+    {{ ibl_env }}
+    python3 /home/{{ ansible_user }}/ibl_services_exact.py '{{ mn_services_on | join(",") }}' '{{ mn_services_keep | default([]) | join(",") }}'
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_services_result
+  changed_when: >-
+    (mn_services_result.stdout_lines | last | from_json).enabled | length > 0 or
+    (mn_services_result.stdout_lines | last | from_json).disabled | length > 0
+
+- name: Show the node's enabled services
+  debug:
+    msg: "{{ (mn_services_result.stdout_lines | last | from_json).on }}"

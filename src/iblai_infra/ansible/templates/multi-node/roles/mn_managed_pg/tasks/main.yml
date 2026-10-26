@@ -1,0 +1,69 @@
+---
+# A managed Postgres (e.g. RDS) arrives empty with only a master login. The
+# DM needs its own role, its two databases and the vector/pg_trgm
+# extensions. Run on the hub after its secrets exist and the config is
+# rendered, so IBL_DM.DB_PASSWORD is generated and the DM image is known.
+- name: Read the DM's database settings
+  become: false
+  shell: |
+    {{ ibl_env }}
+    for K in IBL_DM.DB_USER IBL_DM.DB_DATABASE IBL_DM.DB_DATABASE_LANGFUSE IBL_DM.IBL_DM_IMAGE IBL_DM.DB_PASSWORD; do
+      V=$(ibl config get "$K") || exit 1
+      printf '%s\n' "$V"
+    done
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_pg_settings
+  changed_when: false
+  no_log: true
+
+- name: Fail without a generated DM database password
+  fail:
+    msg: "IBL_DM.DB_PASSWORD is empty - run `ibl secrets generate` on the hub first."
+  when: (mn_pg_settings.stdout_lines[4] | default('')) | length == 0
+
+- name: Copy the Postgres preparation script
+  become: false
+  copy:
+    src: pg_prepare.py
+    dest: "/home/{{ ansible_user }}/ibl_pg_prepare.py"
+    mode: "0644"
+
+- name: Pull the DM image
+  become: false
+  command: docker pull {{ mn_pg_settings.stdout_lines[3] }}
+  changed_when: false
+
+- name: Prepare the managed Postgres
+  become: false
+  shell: |
+    docker run --rm -i --network host \
+      -e PG_HOST -e PG_PORT -e PG_SSLMODE -e PG_ADMIN_USER -e PG_ADMIN_PW \
+      -e DM_USER -e DM_PW -e DM_DB -e LF_DB -e WANT_TIMESCALEDB \
+      --entrypoint python {{ mn_pg_settings.stdout_lines[3] }} - < /home/{{ ansible_user }}/ibl_pg_prepare.py
+  args:
+    executable: /bin/bash
+  environment:
+    PG_HOST: "{{ postgres_host }}"
+    PG_PORT: "{{ postgres_port }}"
+    PG_SSLMODE: "{{ 'require' if postgres_tls | bool else 'prefer' }}"
+    PG_ADMIN_USER: "{{ postgres_admin_username }}"
+    PG_ADMIN_PW: "{{ postgres_admin_password }}"
+    DM_USER: "{{ mn_pg_settings.stdout_lines[0] }}"
+    DM_PW: "{{ mn_pg_settings.stdout_lines[4] }}"
+    DM_DB: "{{ mn_pg_settings.stdout_lines[1] }}"
+    LF_DB: "{{ mn_pg_settings.stdout_lines[2] }}"
+    WANT_TIMESCALEDB: "{{ 'true' if enable_timescaledb | bool else 'false' }}"
+  register: mn_pg_prepare
+  # Not no_log: the credentials reach the container through the task
+  # environment, which Ansible doesn't print, and the script prints none -
+  # so a failure shows its real error.
+
+- name: Show the Postgres preparation result
+  debug:
+    var: mn_pg_prepare.stdout_lines

@@ -1,0 +1,3 @@
+---
+- name: Create the tenant and the DM's key
+  ansible.builtin.import_tasks: token.yml

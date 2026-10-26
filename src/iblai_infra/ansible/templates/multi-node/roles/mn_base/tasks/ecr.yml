@@ -1,0 +1,11 @@
+---
+# Registry tokens last 12 hours, so every step that pulls images logs in again.
+- name: Log in to ECR
+  become: false
+  shell: |
+    aws ecr get-login-password --region {{ ecr_region }} | docker login --username AWS --password-stdin {{ ecr_registry }}
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+  changed_when: false

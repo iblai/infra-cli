@@ -1,0 +1,58 @@
+---
+# `iblai infra app sync` (and the tail of the connect commands): the hub's
+# root to every node, then a rolling apply. Config changes are made on the
+# hub only; this is how they reach the rest.
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Copy the hub's root to the other app nodes
+  hosts: apps
+  become: true
+  tasks:
+    - name: Copy config, services and secrets
+      include_role:
+        name: mn_sync
+        tasks_from: files
+      vars:
+        mn_sync_files: [config.yml, services.yml, secrets.yml]
+
+    - name: Copy the static overrides
+      include_role:
+        name: mn_sync
+        tasks_from: static
+
+- name: Bring the stores node in line
+  hosts: stores
+  become: true
+  tasks:
+    - name: Copy config and secrets
+      include_role:
+        name: mn_sync
+        tasks_from: files
+      vars:
+        mn_sync_files: [config.yml, secrets.yml]
+
+    - name: Re-apply the stores node's deltas
+      include_role:
+        name: mn_stores_node
+        tasks_from: config
+
+    - name: Recreate celery beat if its config changed
+      include_role:
+        name: mn_beat
+
+- name: Apply on the app nodes, one at a time
+  hosts: app_nodes
+  become: true
+  serial: 1
+  vars:
+    mn_restart_edx: "{{ restart_services | default(false) }}"
+  roles:
+    - mn_apply
+
+- name: Check the secrets match
+  hosts: app_nodes:stores
+  tasks:
+    - name: Compare secrets.yml
+      include_role:
+        name: mn_sync
+        tasks_from: verify

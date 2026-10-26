@@ -1,0 +1,23 @@
+---
+# Every node must hold byte-identical secrets: they authenticate to the same
+# stores and decrypt the same rows.
+- name: Hash this node's secrets
+  become: false
+  shell: sha256sum {{ ibl_root }}/secrets.yml | cut -c1-16
+  args:
+    executable: /bin/bash
+  register: mn_secrets_sha
+  changed_when: false
+
+- name: Fail unless every node holds the same secrets
+  fail:
+    msg: >-
+      secrets.yml differs between nodes:
+      {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, ['mn_secrets_sha', 'stdout']))) }}
+  when: ansible_play_hosts | map('extract', hostvars, ['mn_secrets_sha', 'stdout']) | unique | length > 1
+  run_once: true
+
+- name: Secrets match on every node
+  debug:
+    msg: "secrets.yml sha256 {{ mn_secrets_sha.stdout }} on {{ ansible_play_hosts | length }} node(s)"
+  run_once: true

@@ -1,0 +1,44 @@
+---
+# `iblai infra app verify`: every node's containers, the app nodes' local
+# health, identical secrets everywhere, and the public endpoints through
+# the load balancer (checked from the hub, which can always reach them).
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Check every node
+  hosts: app_nodes:stores
+  become: true
+  roles:
+    - mn_verify
+
+- name: Check the app nodes answer
+  hosts: app_nodes
+  tasks:
+    - name: Wait for the LMS and DM
+      include_role:
+        name: mn_apply
+        tasks_from: health
+
+- name: Check the secrets match
+  hosts: app_nodes:stores
+  tasks:
+    - name: Compare secrets.yml
+      include_role:
+        name: mn_sync
+        tasks_from: verify
+
+- name: Check the public endpoints
+  hosts: hub
+  tasks:
+    - name: Probe each endpoint through the load balancer
+      uri:
+        url: "https://{{ item }}"
+        status_code: [200, 301, 302]
+        follow_redirects: none
+        timeout: 20
+      loop:
+        - "learn.{{ base_domain }}/heartbeat"
+        - "studio.{{ base_domain }}/heartbeat"
+        - "lms.{{ base_domain }}/"
+        - "auth.{{ base_domain }}/"
+        - "os.{{ base_domain }}/"
+        - "base.manager.{{ base_domain }}/admin/login/"

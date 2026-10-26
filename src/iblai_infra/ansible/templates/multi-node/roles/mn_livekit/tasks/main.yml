@@ -1,0 +1,52 @@
+---
+# On the hub: the DM's copy of the call server's credentials, and its AI
+# call service on. LIVEKIT_WS_URL defaults to wss://call.<BASE_DOMAIN>,
+# which is where the call server's Caddy listens.
+- name: Store the LiveKit credentials for the DM
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl secrets set --from-env IBL_DM.LIVEKIT_API_KEY=MN_LK_KEY --from-env IBL_DM.LIVEKIT_API_SECRET=MN_LK_SECRET > /dev/null
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+    MN_LK_KEY: "{{ hostvars[groups['call'][0]].mn_lk.stdout_lines[0] }}"
+    MN_LK_SECRET: "{{ hostvars[groups['call'][0]].mn_lk.stdout_lines[1] }}"
+  no_log: true
+
+- name: Turn on the DM's AI call service
+  become: false
+  shell: |
+    {{ ibl_env }}
+    ibl services enable IBL_DM.RUN_AI_CALL
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+
+- name: Compare the stored credentials with the call server's
+  become: false
+  shell: |
+    {{ ibl_env }}
+    for K in IBL_DM.LIVEKIT_API_KEY IBL_DM.LIVEKIT_API_SECRET; do
+      ibl config get "$K" < /dev/null | tr -d '\n' | sha256sum | cut -c1-16
+    done
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: mn_lk_dm_sha
+  changed_when: false
+  failed_when: >-
+    mn_lk_dm_sha.stdout_lines !=
+    (hostvars[groups['call'][0]].mn_lk.stdout_lines | map('hash', 'sha256') | map('regex_replace', '^(.{16}).*$', '\\1') | list)

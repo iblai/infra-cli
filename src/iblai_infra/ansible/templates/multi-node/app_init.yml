@@ -1,0 +1,29 @@
+---
+# `iblai infra app init`: the hub's base software and its /ibl root - store
+# endpoints, service set, platform config and every secret. Starts nothing
+# but the global proxy; the stores node copies this root next.
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Configure the hub
+  hosts: hub
+  become: true
+  roles:
+    - { role: mn_base, mn_stop_stock_nginx: true }
+    - mn_hub_config
+    - ibl_platform
+  post_tasks:
+    - name: Fail on secrets nothing will supply
+      become: false
+      shell: |
+        {{ ibl_env }}
+        ibl secrets check --json
+      args:
+        executable: /bin/bash
+        chdir: "{{ repo_dir }}"
+      environment:
+        HOME: "/home/{{ ansible_user }}"
+        IBL_ROOT: "{{ ibl_root }}/"
+        NODE_ID: "{{ node_id }}"
+      register: mn_secrets_check
+      changed_when: false
+      failed_when: (mn_secrets_check.stdout | from_json).user_supplied | length > 0

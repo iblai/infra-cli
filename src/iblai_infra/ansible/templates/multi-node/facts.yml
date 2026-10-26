@@ -1,0 +1,12 @@
+---
+# Imported first by every multi-node playbook: the derived variables read
+# other hosts' facts (the stores node's address, the app nodes' addresses).
+# Only the hosts this command uses (mn_fact_hosts, set by the runner); an
+# app node that doesn't answer yet is skipped here, and later plays that
+# need it fail on their own.
+- name: Gather facts on the nodes this command uses
+  hosts: "{{ mn_fact_hosts | default('all') }}"
+  gather_facts: true
+  ignore_unreachable: true
+  tags: always
+  tasks: []

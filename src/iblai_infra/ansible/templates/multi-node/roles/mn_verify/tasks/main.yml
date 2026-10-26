@@ -1,0 +1,27 @@
+---
+- name: List this node's containers
+  become: false
+  shell: |
+    docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}' | sort | while read -r c; do
+      echo "$c $(docker inspect -f '{{ '{{' }}.State.Status{{ '}}' }} exit={{ '{{' }}.State.ExitCode{{ '}}' }} restarts={{ '{{' }}.RestartCount{{ '}}' }}' "$c")"
+    done
+  args:
+    executable: /bin/bash
+  register: mn_containers
+  changed_when: false
+
+- name: Show this node's containers
+  debug:
+    var: mn_containers.stdout_lines
+
+# One-shot jobs (TLS init, permissions) exit 0 by design; anything that
+# restarts in a loop, died, or exited with an error is a failure.
+- name: Fail on a crashed container
+  vars:
+    crashed: >-
+      {{ mn_containers.stdout_lines
+         | select('search', ' (restarting|dead) | exited exit=[1-9]')
+         | list }}
+  fail:
+    msg: "Crashed: {{ crashed }}"
+  when: crashed | length > 0

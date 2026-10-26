@@ -1,0 +1,20 @@
+---
+# Post-setup features on a multi-node deployment (`iblai infra smtp enable`,
+# `sso microsoft`, ...): the feature's tagged role runs on the hub, as on a
+# single server, then the hub's root reaches every other node. Always run
+# with --tags <feature>.
+- ansible.builtin.import_playbook: facts.yml
+
+- name: Apply the feature on the hub
+  hosts: hub
+  become: true
+  roles:
+    - { role: smtp_config, tags: [smtp] }
+    - admin_setup
+    - { role: ibl_tenant_platform, tags: [platform] }
+    - { role: stripe_config, tags: [stripe] }
+    - { role: google_sso_config, tags: [google_sso] }
+    - { role: microsoft_sso_config, tags: [microsoft_sso] }
+
+- ansible.builtin.import_playbook: sync.yml
+  tags: [smtp, llm, platform, stripe, google_sso, microsoft_sso]

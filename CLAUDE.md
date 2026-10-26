@@ -19,6 +19,8 @@ iblai-infra/
 │   ├── models.py                           # Pydantic models — contract between wizard & Terraform, ingress registry
 │   ├── ui.py                               # Rich console, ibl.ai branding, progress helpers
 │   ├── dns_check.py                        # DNS + certificate verification (public resolvers via dnspython)
+│   ├── env_multinode.py                    # .env -> MultiNodeTopology / per-command run vars (multi-node)
+│   ├── multinode_cli.py                    # `iblai infra app|stores|sandbox|call` command groups
 │   ├── features/                           # Post-provision / post-setup feature subgroups
 │   │   ├── __init__.py                     # The pattern + how to add a feature
 │   │   ├── _common.py                      # Shared: target guards, restart confirm, apply, remote config read
@@ -50,7 +52,9 @@ iblai-infra/
 │   └── ansible/
 │       ├── __init__.py
 │       ├── runner.py                       # AnsibleRunner: preflight, SSH test, inventory, playbook execution
-│       └── templates/single-server/        # Ansible playbook + roles (docker, awscli, python, ibl_cli_ops, ibl_platform, ibl_dm, ibl_edx, ibl_spa, integrations, admin_setup, data_seeding)
+│       ├── templates/single-server/        # Ansible playbook + roles (docker, awscli, python, ibl_cli_ops, ibl_platform, ibl_dm, ibl_edx, ibl_spa, integrations, admin_setup, data_seeding)
+│       ├── multinode.py                     # MultiNodeRunner (AnsibleRunner subclass): multi-group inventory, shared_roles workspace
+│       └── templates/multi-node/            # Per-role playbooks + mn_* roles; reuses single-server roles via roles_path
 ├── tests/
 │   ├── conftest.py                         # Shared fixtures (aws_credentials, infra_config, project_state, workspace_root)
 │   ├── test_models.py                      # Pydantic model validation, all enum combos, edge cases
@@ -228,6 +232,42 @@ Sets `state.provider = "launch"` to distinguish from interactive provisioning.
 **Schema** (`.env.setup.example` is the source of truth). Always required: the ECR key (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), `GIT_TOKEN` (or `GIT_ACCESS_TOKEN`), `ADMIN_USERNAME`/`ADMIN_EMAIL`/`ADMIN_PASSWORD`. Free-standing additionally needs the four "where to deploy" fields. The S3 key (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`) is optional, both or neither, and required with the S3 buckets. Optional integrations follow the same trigger pattern as `iblai infra launch` — SMTP enabled when `SMTP_HOST` set, Stripe when `STRIPE_SECRET_KEY` set, Google SSO when `GOOGLE_SSO_CLIENT_ID` set, Microsoft SSO when `MICROSOFT_SSO_CLIENT_ID` set.
 
 **Implementation:** `src/iblai_infra/env_setup.py` — `build_setup_config_from_env(env, *, state)` returns a `SetupConfig`; `build_bootstrap_state_from_env(env)` synthesises the ProjectState for free-standing mode. CLI wrapper at `cli.py::setup_env` shows `ui.private_access_notice()` as an informational banner (no confirmation), then runs `AnsibleRunner.preflight()` → `setup()` → `run()` with the default single-server playbook + `ROLE_LABELS`. Reuses `validate_key_permissions` (promoted from `_validate_key_permissions` in `prompts/setup.py`) to auto-fix SSH-key permissions to `0o600`.
+
+### Multi-Node Deployments (existing hosts)
+
+Per-role commands that configure **existing** hosts as a split topology - no Terraform. App nodes behind the operator's load balancer, one **stores node**, optional managed MySQL / Postgres / Redis, an optional KVM **sandbox** server, and the DM wired to the sandbox and to a LiveKit call server. Code: `multinode_cli.py` (commands), `env_multinode.py` (.env -> state/vars), `ansible/multinode.py` (runner), `ansible/templates/multi-node/` (playbooks + `mn_*` roles). Schema: `.env.multinode.example` - one file serves every command.
+
+| Order | Command | Hosts | What |
+|---|---|---|---|
+| 1 | `app init -f .env` | hub | base software, `ibl init`, the exact app-node service set, store endpoints, managed-store secrets, store-node secrets filled, `ibl_platform` |
+| 2 | `stores setup -f .env` | stores | copy of the hub's config/services/secrets + deltas, stores started by name, Mongo `--auth` + users, `DOCKER-USER` firewall |
+| 3 | `app setup -f .env` | hub, stores | managed Postgres prepared, compat overrides, `ibl_dm` (`dm_db_local: false`) -> edX -> SPAs -> integrations -> admin -> seeding -> tenant; beat on the stores node; marks setup completed |
+| 4 | `app add -f .env --host <ip>` | new app node | clone of the hub (`mn_clone`); never runs one-time jobs; stores firewall rewritten |
+| 5 | `sandbox setup -f .env` | sandbox | KVM preflight, cli-ops >= 7.27 (`SANDBOX_*` tags/key/wheels), `sandbox-only` Mode A, JWT render workaround, nginx :80 `/healthcheck`, smoke test |
+| 6 | `sandbox connect -f .env` | sandbox, all | tenant + key -> `IBL_DM.IBL_SANDBOX_*` on the hub, sync, optional per-mentor VMs |
+| 7 | `call connect -f .env --call-project <n>` | call, all | LiveKit key/secret -> `IBL_DM.LIVEKIT_*`, `RUN_AI_CALL` on, sync |
+| - | `app sync -f .env [--restart-edx]` | all | hub's root -> every node (stores keep their deltas), rolling `mn_apply` (`serial: 1`) |
+| - | `app verify -f .env` | all | containers, local health, secrets hash identical, public endpoints |
+
+**State.** `ProjectState` with `deployment_type=MULTI_NODE`, `provider="multi-node"`; `outputs["multi_node"]` is a `MultiNodeTopology` (hosts, NODE_IDs, store layout, managed endpoints - never credentials) and `outputs["instance_public_ip"]` is the hub, so the post-setup feature commands target it. NODE_IDs are assigned once per host (`<prefix>-app-N`, `-stores`, `-sandbox`) and never change. The hub and stores node can't be moved by editing the .env.
+
+**Store layout.** `MYSQL` / `POSTGRES` / `REDIS_EDX` / `REDIS_DM` = `stores` | `managed` (+ `*_HOST`, `*_PORT`, `*_TLS`, credentials). MongoDB, Meilisearch, ClickHouse and MinIO always run on the stores node. On the stores node edX Redis publishes on 6380 and MinIO's API on 9090; CPU/memory limits are sized to the node (Docker refuses a CPU limit above the host's cores). `TIMESCALEDB=auto` turns it off for a managed Postgres.
+
+**Shared roles.** `MultiNodeRunner._copy_templates` copies `single-server/roles` into the workspace as `shared_roles/`; the multi-node `ansible.cfg` has `roles_path = ./roles:./shared_roles`. The single-server roles gained only default-preserving switches: `ibl_dm` imports `local_db.yml` under `dm_db_local | default(true)`; TimescaleDB (extension, config value, views) under `enable_timescaledb | default(true)`; `ibl_cli_ops` install tasks split into `install.yml` (imported first by `main.yml`, unchanged). The single-server task lists are identical to before.
+
+**Rules baked in:**
+- Secrets live only on the hub and are copied (slurp -> copy, `no_log`, controller memory only) - `secrets.yml` must be byte-identical on every node; every sync ends with a hash check.
+- Config changes are made on the hub and reach the rest via `app sync`. The stores node gets config/secrets but keeps its own service set and deltas.
+- Never on the stores node: `ibl dm up`/`update`, tutor without naming services, `ibl edx start/launch`. Beat starts with `--no-deps celery_beat`.
+- Never on a clone: migrations, seeding, tenant creation, OAuth client registration.
+- `setup` / `resetup` refuse a multi-node project; `destroy` only untracks it (servers untouched). `setup-env` still rejects it (`allowed_types`).
+- A fresh app node's stock nginx is stopped, so the load balancer can't send it traffic before setup.
+- `mn_compat` writes the LMS SPA `CSP_PARTNER_HOSTS` and Langfuse `REDIS_TLS_ENABLED` overrides into `/ibl/static/` only when the rendered output lacks them.
+- Every playbook first gathers facts on the command's hosts (`mn_fact_hosts`, `ignore_unreachable`), so a node not built yet doesn't fail an unrelated step.
+
+**Post-setup features** on a multi-node project run `features.yml`: the tagged role on the hub, then `sync.yml` (tagged with every feature tag).
+
+**Out of scope (follow-ups):** Terraform for multi-node and sandbox; a multi-node `service-update`; store password rotation; shared edX media.
 
 ### Service Update Command
 
@@ -498,7 +538,7 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 
 ## Testing
 
-- **1,084 tests**, all via pytest: `uv run pytest tests/ -v`
+- **1,246 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

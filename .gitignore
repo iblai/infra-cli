@@ -16,6 +16,7 @@ wheels/
 !.env.provision.example
 !.env.provision.gcp.example
 !.env.setup.example
+!.env.multinode.example
 
 # Terraform
 .terraform/

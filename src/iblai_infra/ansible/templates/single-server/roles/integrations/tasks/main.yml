@@ -50,3 +50,8 @@
     HOME: "/home/{{ ansible_user }}"
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
+
+# After edX and the DM are both up, and before admin_setup grants the
+# super admin rights on the default platform (which syncs to edX).
+- name: Create the edX organization for the DM default platform
+  ansible.builtin.import_tasks: default_org.yml

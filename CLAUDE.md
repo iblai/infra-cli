@@ -391,6 +391,7 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - The DM's `seed_flows` gives every platform without one a "use main LLM key" setting (`UseMainLLMKey`) that defaults to off, which cuts a tenant off from the deployment's keys. The `Seed DM flows` task switches on exactly the settings that run created (an admin's own setting is kept), and `ibl_tenant_platform` turns it on for each tenant it creates
 - On a fresh install with only a gateway (OpenRouter) key: `data_seeding` turns moderation off for the health-check mentors (provider `fake-llm`), whose moderation step otherwise builds a real model that needs an OpenAI key and fails the mentor health check and `ibl dm update`'s readiness gate
 - DM 4.412+ seeds the health-check mentors with the registry's `fake` provider, gives them settings rows and skips their moderation, and creates new `UseMainLLMKey` rows from `ALLOW_TENANTS_TO_USE_MAIN_LLM_CREDENTIALS` (which `ibl_platform` sets to true). The workarounds above are no-ops there and stay for older DMs
+- The DM's default platform (`main`) is created by `initialize_manager` in the DM only, and only tenant launches create an edX organization, so admin/staff changes on `main` failed in edX (`Organization.DoesNotExist`, a 400 from `/api/ibl/users/manage/roles/`). `integrations/tasks/default_org.yml` (shared with service-update) creates the edX organization named after the DM platform's org when missing, before `admin_setup` grants rights on `main`, and re-runs the DM's `sync_role_to_edx` for that platform's admin/staff links when it had to create it
 - `admin_setup` makes the super admin an admin of main through its `UserPlatformLink` (`is_admin`), which is what the platform reads for admin rights. The link points at the DM's copy of the LMS user, so it runs after the LMS admin is created and `ibl edx sync-with-manager --users` has copied it across
 - service-update installs from `--github-org` / `--prod-images-repo` / `--cli-ops-repo` (cli tag from the given prod-images pin unless `--cli-tag`), reads the server's `BASE_DOMAIN` for the spa-sso redirects, and creates the fixed-password Playwright users only with `--test-users`
 
@@ -498,7 +499,7 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 
 ## Testing
 
-- **1,084 tests**, all via pytest: `uv run pytest tests/ -v`
+- **1,115 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

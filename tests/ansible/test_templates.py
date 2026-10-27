@@ -564,3 +564,38 @@ class TestFreshInstallAccess:
         assert lms_admin < _first(tasks, r"ibl edx sync-with-manager --users") < i
         script = _shell(tasks[i])
         assert "'is_admin': True" in script and "key='main'" in script and "{{ admin_username }}" in script
+
+
+class TestDefaultPlatformOrg:
+    """The DM's default platform needs an edX organization of the same org.
+
+    `initialize_manager` creates the platform in the DM only, and only tenant
+    launches create an edX org, so admin/staff changes on it failed in edX
+    with `Organization.DoesNotExist`.
+    """
+
+    def test_setup_creates_it_after_edx_and_before_admin_rights(self):
+        playbook = yaml.safe_load((TEMPLATES / "single-server/playbook.yml").read_text())[0]
+        roles = [r if isinstance(r, str) else r["role"] for r in playbook["roles"]]
+        assert roles.index("ibl_edx") < roles.index("integrations") < roles.index("admin_setup")
+        tasks = _tasks("single-server", "integrations")
+        assert _imports(tasks, "default_org") == len(tasks) - 1
+
+    def test_service_update_creates_it_after_the_edx_sync(self):
+        tasks = _tasks("single-server", "ibl_service_update")
+        assert _first(tasks, r"ibl edx sync-with-manager --users") < _imports(tasks, "default_org")
+
+    def test_the_org_comes_from_the_dm_not_a_literal(self):
+        tasks = _tasks("single-server", "integrations", "default_org.yml")
+        read, create = tasks[0], next(t for t in tasks if "Organization.objects" in _shell(t))
+        assert "DEFAULT_PLATFORM_KEY" in _shell(read)
+        assert "get_or_create" in _shell(create)
+        assert "os.environ[\"ORG\"]" in _shell(create)
+        assert create["environment"]["ORG"] == "{{ edx_default_org }}"
+        assert "'main'" not in _shell(create) and '"main"' not in _shell(create)
+
+    def test_roles_are_resynced_only_when_the_org_was_created(self):
+        tasks = _tasks("single-server", "integrations", "default_org.yml")
+        sync = next(t for t in tasks if "sync_role_to_edx" in _shell(t))
+        assert sync["when"] == "edx_default_org_result is changed"
+        assert "ImportError" in _shell(sync)

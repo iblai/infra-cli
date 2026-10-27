@@ -367,6 +367,11 @@
   timeout: 600
   ignore_errors: true
 
+- name: Create the edX organization for the DM default platform
+  ansible.builtin.import_role:
+    name: integrations
+    tasks_from: default_org
+
 # Enforce spa-sso client_type=public + authorization_grant_type=authorization-code
 # + redirect_uris on existing servers. Older provisioning runs created spa-sso
 # as `confidential` + `password` with redirect_uris=https://web.<domain>, which

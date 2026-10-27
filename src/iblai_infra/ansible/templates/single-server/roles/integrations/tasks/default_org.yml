@@ -1,0 +1,89 @@
+---
+# The DM's default platform (`main`) is created by `initialize_manager`
+# in the DM database only. Nothing creates its edX organization: only
+# tenant launches send an org to edX. edX's role API looks the org up, so
+# without it every admin/staff change on the default platform fails with
+# `Organization.DoesNotExist` (a 400 from /api/ibl/users/manage/roles/),
+# and the DM's role sync for it fails the same way.
+#
+# Creates the organization when it's missing, named after the DM
+# platform's own org (never hard-coded), and then re-runs the DM's role
+# sync for that platform's admin/staff links, so a server that already
+# granted admins (e.g. through service-update) catches up. Shared with
+# service-update.
+
+- name: Read the DM default platform's org
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i ibl_dm_pro_web python manage.py shell <<'PY'
+      from core.config import DEFAULT_PLATFORM_KEY, DEFAULT_PLATFORM_ORG
+      from core.models import Platform
+
+      p = Platform.objects.filter(key=DEFAULT_PLATFORM_KEY).first()
+      print("DEFAULT_ORG=" + ((p.org if p else "") or DEFAULT_PLATFORM_ORG or ""))
+      PY
+    executable: /bin/bash
+  register: dm_default_org
+  changed_when: false
+
+- name: Set the default org fact
+  ansible.builtin.set_fact:
+    edx_default_org: "{{ dm_default_org.stdout_lines | select('match', '^DEFAULT_ORG=') | map('regex_replace', '^DEFAULT_ORG=', '') | first | default('') | trim }}"
+
+- name: Fail when the DM has no default org
+  ansible.builtin.fail:
+    msg: "Could not read the DM default platform's org: {{ dm_default_org.stdout | default('') }}"
+  when: edx_default_org | length == 0
+
+- name: Create the edX organization for the DM default platform
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i -e ORG ibl_prod_lms python manage.py lms shell <<'PY'
+      import os
+      from organizations.models import Organization
+
+      org = os.environ["ORG"]
+      _, created = Organization.objects.get_or_create(
+          short_name=org, defaults={"name": org, "active": True}
+      )
+      print("EDX_ORG_CREATED" if created else "EDX_ORG_PRESENT")
+      PY
+    executable: /bin/bash
+  environment:
+    ORG: "{{ edx_default_org }}"
+  register: edx_default_org_result
+  changed_when: "'EDX_ORG_CREATED' in edx_default_org_result.stdout"
+  failed_when: >-
+    edx_default_org_result.rc != 0 or
+    ('EDX_ORG_CREATED' not in edx_default_org_result.stdout and
+     'EDX_ORG_PRESENT' not in edx_default_org_result.stdout)
+
+# Role grants made while the org was missing never reached edX. DMs
+# without `sync_role_to_edx` skip this.
+- name: Re-sync the default platform's admin and staff roles to edX
+  become: false
+  ansible.builtin.shell:
+    cmd: |
+      docker exec -i ibl_dm_pro_web python manage.py shell <<'PY'
+      from django.db.models import Q
+      from core.config import DEFAULT_PLATFORM_KEY
+      from core.models import UserPlatformLink
+
+      try:
+          from core.utils.roles import sync_role_to_edx
+      except ImportError:
+          print("ROLE_SYNC:UNSUPPORTED")
+      else:
+          links = UserPlatformLink.objects.filter(
+              platform__key=DEFAULT_PLATFORM_KEY
+          ).filter(Q(is_admin=True) | Q(is_staff=True)).select_related("user", "platform")
+          failed = [l.user.username for l in links if not sync_role_to_edx(l)]
+          print("ROLE_SYNC:FAILED " + ",".join(failed) if failed else "ROLE_SYNC:OK %d" % len(links))
+      PY
+    executable: /bin/bash
+  register: edx_default_org_sync
+  when: edx_default_org_result is changed
+  changed_when: "'ROLE_SYNC:OK' in edx_default_org_sync.stdout and 'ROLE_SYNC:OK 0' not in edx_default_org_sync.stdout"
+  failed_when: edx_default_org_sync.rc != 0 or 'ROLE_SYNC:FAILED' in edx_default_org_sync.stdout

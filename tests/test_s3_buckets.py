@@ -240,7 +240,8 @@ class TestEnsure:
         changes, after = self._fix(s3, ("https://tenant.example.org",))
         assert after.ok
         rules = buckets[MEDIA]["cors"]
-        assert rules[1] == other and "https://tenant.example.org" in rules[0]["AllowedOrigins"]
+        assert rules[1] == other
+        assert rules[0]["AllowedOrigins"] == ["https://example.com", "https://*.example.com", "https://tenant.example.org"]
         assert changes == [f"{MEDIA}: added the media CORS rule, kept 1 existing"]
 
     def test_repairs_the_production_shape(self):

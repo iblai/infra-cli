@@ -96,6 +96,7 @@ from iblai_infra.features.smtp import smtp_app
 from iblai_infra.features.sso import sso_app
 from iblai_infra.features.stripe import stripe_app
 from iblai_infra.features.waf import waf_app
+from iblai_infra.s3_cli import s3_app
 
 infra_app.add_typer(waf_app, name="waf")
 infra_app.add_typer(smtp_app, name="smtp")
@@ -104,6 +105,7 @@ infra_app.add_typer(stripe_app, name="stripe")
 infra_app.add_typer(llm_app, name="llm")
 infra_app.add_typer(platform_app, name="platform")
 infra_app.add_typer(spa_app, name="spa")
+infra_app.add_typer(s3_app, name="s3")
 
 # Discovery entry point for all of the above.
 infra_app.command("configure")(_configure)
@@ -1189,6 +1191,14 @@ def setup_env(
         Path(".env"), "--env-file", "-f",
         help="Path to .env file (default: .env in current directory)",
     ),
+    fix_buckets: bool = typer.Option(
+        False, "--fix-buckets",
+        help="Repair the DM S3 buckets (CORS, public/private access) with the S3 key when they need it.",
+    ),
+    skip_bucket_check: bool = typer.Option(
+        False, "--skip-bucket-check",
+        help="Don't check the DM S3 buckets before setup.",
+    ),
 ) -> None:
     """Bootstrap an IBL platform on a server from a .env file.
 
@@ -1255,6 +1265,13 @@ def setup_env(
         state = build_bootstrap_state_from_env(env)
 
     setup_config = build_setup_config_from_env(env, state=state)
+
+    # A media bucket without a CORS rule breaks every chat attachment while
+    # the DM's own logs show only 200s, so check before touching the server.
+    if setup_config.s3_static_bucket and not skip_bucket_check:
+        from iblai_infra.s3_cli import verify_for_setup
+
+        verify_for_setup(setup_config, env_file, fix=fix_buckets)
 
     rows = [
         ("Mode", "Provisioned" if name else "Free-standing"),

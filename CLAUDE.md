@@ -19,6 +19,8 @@ iblai-infra/
 │   ├── models.py                           # Pydantic models — contract between wizard & Terraform, ingress registry
 │   ├── ui.py                               # Rich console, ibl.ai branding, progress helpers
 │   ├── dns_check.py                        # DNS + certificate verification (public resolvers via dnspython)
+│   ├── s3_buckets.py                       # DM bucket spec: check (browser CORS preflight, public/private) + additive repair
+│   ├── s3_cli.py                           # `iblai infra s3 check|fix`; the bucket gate setup-env runs
 │   ├── features/                           # Post-provision / post-setup feature subgroups
 │   │   ├── __init__.py                     # The pattern + how to add a feature
 │   │   ├── _common.py                      # Shared: target guards, restart confirm, apply, remote config read
@@ -83,6 +85,7 @@ iblai-infra/
   - `iblai infra platform`: `create`
   - `iblai infra spa`: `clone`, `list`, `remove`
   - `iblai infra waf`: `enable`, `enable-env`, `disable`, `status`
+  - `iblai infra s3`: `check`, `fix` — see DM S3 Buckets
 - Running `iblai infra` with no arguments shows branded landing screen with interactive arrow-key menu
 - The landing screen menu uses `questionary.select()` to dispatch to commands directly
 - When launching provision from the menu, calls `run_provision_wizard(show_banner=False)` to avoid double banner
@@ -228,6 +231,21 @@ Sets `state.provider = "launch"` to distinguish from interactive provisioning.
 **Schema** (`.env.setup.example` is the source of truth). Always required: the ECR key (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`), `GIT_TOKEN` (or `GIT_ACCESS_TOKEN`), `ADMIN_USERNAME`/`ADMIN_EMAIL`/`ADMIN_PASSWORD`. Free-standing additionally needs the four "where to deploy" fields. The S3 key (`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`) is optional, both or neither, and required with the S3 buckets. Optional integrations follow the same trigger pattern as `iblai infra launch` — SMTP enabled when `SMTP_HOST` set, Stripe when `STRIPE_SECRET_KEY` set, Google SSO when `GOOGLE_SSO_CLIENT_ID` set, Microsoft SSO when `MICROSOFT_SSO_CLIENT_ID` set.
 
 **Implementation:** `src/iblai_infra/env_setup.py` — `build_setup_config_from_env(env, *, state)` returns a `SetupConfig`; `build_bootstrap_state_from_env(env)` synthesises the ProjectState for free-standing mode. CLI wrapper at `cli.py::setup_env` shows `ui.private_access_notice()` as an informational banner (no confirmation), then runs `AnsibleRunner.preflight()` → `setup()` → `run()` with the default single-server playbook + `ROLE_LABELS`. Reuses `validate_key_permissions` (promoted from `_validate_key_permissions` in `prompts/setup.py`) to auto-fix SSH-key permissions to `0o600`.
+
+### DM S3 Buckets
+
+The DM keeps static files and uploaded media in two buckets with opposite rules, and a wrong setting breaks the platform quietly: with no CORS rule on the media bucket every chat attachment fails in the browser while the DM logs only `200` for `chat/files/upload-url/` (it hands out a presigned PUT; S3 then refuses the browser's preflight with 403 "CORS is not enabled for this bucket").
+
+| Bucket | Access | CORS |
+|---|---|---|
+| dm-static | public-read (bucket policy `s3:GetObject` for `*`; public access block's two policy flags off) | GET/HEAD from `*` |
+| dm-media | private (all four public access block flags on; presigned URLs only) | GET/HEAD/PUT/POST from `https://<domain>` and `https://*.<domain>` (+ `--extra-origin` for tenant custom domains), `ExposeHeaders: ETag` |
+
+- `s3_buckets.check_dm_buckets(session, ...)` is read-only. Its CORS verdict is the browser's own preflight (`OPTIONS` from `https://os.<domain>`, PUT + `content-type` for media), so it needs no S3 permission; public/private comes from `GetBucketPolicyStatus`, falling back to an anonymous HEAD of one object. A check it cannot decide is `?` and never fails on its own.
+- `ensure_dm_buckets` only adds: our CORS rule goes **first** (S3 applies the first matching rule, so an existing rule could shadow it) and existing rules stay; the public-read statement is appended to the existing policy; for static only `BlockPublicPolicy`/`RestrictPublicBuckets` are turned off (ACL flags stay the operator's); a public media bucket gets its public access fully blocked (statements neutralised, not deleted). A refused write raises `BucketFixError` naming the permissions.
+- `iblai infra s3 check|fix` take a provisioned project (Terraform outputs `s3_bucket_static`/`s3_bucket_media`), a setup `.env` (`S3_*` buckets, `BASE_DOMAIN`, and the **S3** key — never the ECR key), or `--static/--media/--domain`; `--profile` uses other credentials (the platform's S3 key usually may read but not change bucket settings).
+- **`setup-env` gates on it:** with `S3_STATIC_BUCKET`/`S3_MEDIA_BUCKET` set it checks before touching the server and stops with the fix command; `--fix-buckets` repairs with the S3 key and continues, `--skip-bucket-check` skips.
+- **Terraform** (single- and multi-server): `aws_s3_bucket_cors_configuration` for both buckets and an explicit all-true `aws_s3_bucket_public_access_block.dm_media`, so provisioned stacks start right.
 
 ### Service Update Command
 
@@ -499,7 +517,7 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 
 ## Testing
 
-- **1,115 tests**, all via pytest: `uv run pytest tests/ -v`
+- **1,162 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

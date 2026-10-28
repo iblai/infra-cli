@@ -535,6 +535,41 @@ resource "aws_s3_bucket_policy" "dm_static" {
   depends_on = [aws_s3_bucket_public_access_block.dm_static]
 }
 
+resource "aws_s3_bucket_public_access_block" "dm_media" {
+  bucket = aws_s3_bucket.dm_media.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Chat attachments are a presigned PUT sent straight from the browser. Without
+# this rule S3 refuses the browser's preflight and every upload fails.
+resource "aws_s3_bucket_cors_configuration" "dm_media" {
+  bucket = aws_s3_bucket.dm_media.id
+
+  cors_rule {
+    allowed_origins = ["https://${var.base_domain}", "https://*.${var.base_domain}"]
+    allowed_methods = ["GET", "HEAD", "PUT", "POST"]
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
+# Browsers load the DM's CSS, JS and fonts from this bucket cross-origin.
+resource "aws_s3_bucket_cors_configuration" "dm_static" {
+  bucket = aws_s3_bucket.dm_static.id
+
+  cors_rule {
+    allowed_origins = ["*"]
+    allowed_methods = ["GET", "HEAD"]
+    allowed_headers = ["*"]
+    max_age_seconds = 3000
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Application Load Balancer
 # ---------------------------------------------------------------------------

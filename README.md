@@ -185,6 +185,16 @@ iblai infra setup-env <project-name> -f .env.setup
 
 Populated `.env` files are gitignored; secrets are never persisted to `state.json` — they ride `--extra-vars` into Ansible at run time only.
 
+**DM S3 buckets.** With `S3_STATIC_BUCKET` / `S3_MEDIA_BUCKET` set, `setup-env` first checks that static is public-read, media is private, and both have the CORS rules the browser needs (chat attachments upload straight from the browser to media). It stops if not; check or repair any time:
+
+```bash
+iblai infra s3 check -f .env.setup              # read-only; the CORS verdict is the browser's own preflight
+iblai infra s3 fix -f .env.setup --yes          # adds what is missing, keeps existing rules and statements
+iblai infra s3 fix <project-name> --profile admin --extra-origin https://tenant.example.org
+```
+
+`setup-env --fix-buckets` repairs and continues; `--skip-bucket-check` skips the check. Repairs need `s3:PutBucketCORS`, `s3:PutBucketPolicy` and `s3:PutBucketPublicAccessBlock`.
+
 ### 5. Re-setup an existing environment
 
 ```bash

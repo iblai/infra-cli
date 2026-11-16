@@ -7,6 +7,7 @@ usually as the first `ibl render` failing mid-bootstrap.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -599,3 +600,67 @@ class TestDefaultPlatformOrg:
         sync = next(t for t in tasks if "sync_role_to_edx" in _shell(t))
         assert sync["when"] == "edx_default_org_result is changed"
         assert "ImportError" in _shell(sync)
+
+
+class TestNetworkdRestartKeepsNat:
+    """Package upgrades restart systemd-networkd. Dropping the DHCP address on that
+    restart makes the kernel flush Docker's NAT state, and idle container
+    connections (Redis, database pools) die without the containers hearing of it."""
+
+    @pytest.mark.parametrize("kind", ["single-server", "call-server"])
+    def test_the_docker_role_imports_it(self, kind):
+        assert any(t.get("ansible.builtin.import_tasks") == "networkd.yml" for t in _tasks(kind, "docker"))
+
+    def test_both_kinds_ship_the_same_tasks(self):
+        single, call = (
+            (TEMPLATES / kind / "roles/docker/tasks/networkd.yml").read_text() for kind in ("single-server", "call-server")
+        )
+        assert single == call
+
+    def test_keeps_the_address_and_stops_needrestart_restarting_networkd(self):
+        copies = {
+            t["ansible.builtin.copy"]["dest"]: t["ansible.builtin.copy"]["content"]
+            for t in _flat(_tasks("single-server", "docker", "networkd.yml"))
+            if "ansible.builtin.copy" in t
+        }
+        keep = copies["/etc/systemd/network/{{ networkd_network_file }}.d/50-ibl-keep-configuration.conf"]
+        assert "[Network]\nKeepConfiguration=yes" in keep
+        assert "$nrconf{override_rc}{qr(^systemd-networkd)} = 0;" in copies["/etc/needrestart/conf.d/50-ibl-networkd.conf"]
+
+    def test_no_role_restarts_networkd(self):
+        """On a running server the restart itself is the flush."""
+        for tasks_file, task in _all_tasks():
+            for t in _flat([task]):
+                assert not re.search(r"networkctl reload|netplan apply|restart systemd-networkd", json.dumps(t)), tasks_file
+                for module in ("service", "systemd", "systemd_service"):
+                    args = t.get(f"ansible.builtin.{module}") or t.get(module)
+                    if isinstance(args, dict) and "networkd" in str(args.get("name")):
+                        assert args.get("state") not in ("restarted", "reloaded"), tasks_file
+
+    @pytest.mark.parametrize(
+        "status, expected",
+        [
+            ({"stdout": "Network File: /run/systemd/network/10-netplan-ens5.network\n State: routable"}, "10-netplan-ens5.network"),
+            ({"stdout": "Network File: n/a\n State: off (unmanaged)"}, ""),
+            ({"skipped": True}, ""),
+        ],
+        ids=["managed", "unmanaged", "no-default-interface"],
+    )
+    def test_the_network_file_comes_from_networkctl(self, tmp_path, status, expected):
+        """Run through Ansible itself: Jinja's backslash handling breaks a regex quietly."""
+        block = next(t for t in _tasks("single-server", "docker", "networkd.yml") if "block" in t)
+        play = [{
+            "hosts": "localhost",
+            "gather_facts": False,
+            "connection": "local",
+            "vars": {"networkd_network_file": block["vars"]["networkd_network_file"]},
+            "tasks": [{"ansible.builtin.debug": {"msg": "FILE=[{{ networkd_network_file }}]"}}],
+        }]
+        (tmp_path / "play.yml").write_text(yaml.safe_dump(play))
+        (tmp_path / "vars.json").write_text(json.dumps({"networkd_status": status}))
+        run = subprocess.run(
+            [str(Path(sys.executable).parent / "ansible-playbook"), "-i", "localhost,", str(tmp_path / "play.yml"),
+             "-e", f"@{tmp_path / 'vars.json'}"],
+            capture_output=True, text=True, env={**os.environ, "ANSIBLE_LOCAL_TEMP": str(tmp_path), "ANSIBLE_NOCOLOR": "1"},
+        )
+        assert f"FILE=[{expected}]" in run.stdout, run.stdout[-2000:]

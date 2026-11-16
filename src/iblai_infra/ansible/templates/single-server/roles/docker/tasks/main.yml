@@ -64,3 +64,5 @@
     group: docker
     mode: "0660"
   ignore_errors: true
+
+- ansible.builtin.import_tasks: networkd.yml

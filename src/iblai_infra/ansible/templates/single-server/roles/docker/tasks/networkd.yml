@@ -1,0 +1,55 @@
+---
+# Package upgrades restart systemd-networkd: the systemd package's postinst does,
+# and so does needrestart after a library update. By default networkd drops the
+# DHCP address when it stops, and removing an address, even briefly, makes the
+# kernel flush every masqueraded connection. Idle container connections (Redis,
+# database pools) then die without the containers hearing of it.
+#
+# Nothing here restarts networkd: on a running server that restart is the flush.
+# KeepConfiguration applies from networkd's next start; the needrestart override
+# applies at once.
+
+- name: Find the network file systemd-networkd uses for the default interface
+  ansible.builtin.command: networkctl status --no-pager {{ ansible_default_ipv4.interface }}
+  register: networkd_status
+  changed_when: false
+  failed_when: false
+  when: ansible_default_ipv4.interface is defined
+
+- name: Keep the DHCP address across systemd-networkd restarts
+  vars:
+    networkd_network_file: >-
+      {{ (networkd_status.stdout | default(''))
+         | regex_findall('Network File: \S*/([^/\s]+\.network)')
+         | first | default('') }}
+  when: networkd_network_file | length > 0
+  block:
+    - name: Create the network file's drop-in directory
+      ansible.builtin.file:
+        path: "/etc/systemd/network/{{ networkd_network_file }}.d"
+        state: directory
+        mode: "0755"
+
+    - name: Set KeepConfiguration for the default interface
+      ansible.builtin.copy:
+        dest: "/etc/systemd/network/{{ networkd_network_file }}.d/50-ibl-keep-configuration.conf"
+        mode: "0644"
+        content: |
+          # Keep the DHCP address when systemd-networkd restarts (as netplan's
+          # `critical: true` does), so a restart doesn't flush Docker's NAT state.
+          [Network]
+          KeepConfiguration=yes
+
+- name: Check for needrestart
+  ansible.builtin.stat:
+    path: /etc/needrestart/conf.d
+  register: needrestart_conf_d
+
+- name: Keep needrestart from restarting systemd-networkd
+  ansible.builtin.copy:
+    dest: /etc/needrestart/conf.d/50-ibl-networkd.conf
+    mode: "0644"
+    content: |
+      # Restarting systemd-networkd after a library update flushes Docker's NAT state.
+      $nrconf{override_rc}{qr(^systemd-networkd)} = 0;
+  when: needrestart_conf_d.stat.isdir | default(false)

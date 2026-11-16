@@ -388,6 +388,7 @@ Backward-compatible: if the file contains a bare list `[{...}]`, it auto-migrate
 - `ROLE_LABELS` maps role names to human-friendly labels (16 roles)
 - DM postgres tasks read `$POSTGRES_USER` and `$POSTGRES_DB` from container env (not hardcoded)
 - DM and edX roles verify containers via web endpoint readiness (not just `docker ps`) and check `RestartCount` to catch crash-looping containers
+- The `docker` role (`tasks/networkd.yml`, single- and call-server) keeps the DHCP address across `systemd-networkd` restarts: a `KeepConfiguration=yes` drop-in for the default interface's network file, plus a needrestart override. Package upgrades restart networkd (systemd's postinst, and needrestart after a library update). By default networkd drops the address on stop, and the kernel then flushes every masqueraded connection, so idle container connections (Redis, DB pools) die without the containers hearing of it. No task restarts networkd to apply this, because that restart is the flush. KeepConfiguration takes effect at networkd's next start
 - The finalization work is split across three roles (it used to live in one `final_steps` role, since removed):
   - `integrations`: render, proxy reload, `ibl dm sso`, the OAuth/OIDC clients and edX's credentials for the DM (`clients.yml`), edx sync-with-manager
   - `admin_setup`: configure the LLM credential (if provided; an OpenRouter key becomes the `iblai` gateway credential and triggers `sync_llm_catalog`), create super admin (DM + LMS), sync users to the DM, make the super admin an admin of main, seed CSRF exempt domains, enable UseMainLLMKey for main platform
@@ -517,7 +518,7 @@ Cross-cloud support via a `cloud` axis on `InfraConfig` (`CloudProvider.AWS` | `
 
 ## Testing
 
-- **1,162 tests**, all via pytest: `uv run pytest tests/ -v`
+- **1,174 tests**, all via pytest: `uv run pytest tests/ -v`
 - Coverage report: `uv run pytest tests/ --cov=iblai_infra --cov-report=term-missing`
 - Dev dependencies: `uv sync --extra dev`
 - Test patterns:

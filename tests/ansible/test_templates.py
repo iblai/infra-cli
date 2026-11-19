@@ -355,8 +355,11 @@ args = sys.argv[1:]
 if args[:3] == ["services", "list", "--json"]:
     print(json.dumps({k: {"value": True} for k in state["enabled"]}))
 elif args[:2] == ["config", "get"]:
+    if args[2] not in state["config"]:
+        print(json.dumps({"key": args[2], "found": False}))
+        sys.exit(1)
     value, source = state["config"][args[2]]
-    print(json.dumps({"key": args[2], "value": value, "source": source}))
+    print(json.dumps({"key": args[2], "found": True, "value": value, "source": source}))
 elif args[:2] == ["config", "set"]:
     key, value = args[2].split("=", 1)
     state["config"][key] = [value, "config"]
@@ -413,6 +416,96 @@ class TestLmsRootRedirect:
     )
     def test_leaves_the_root_alone(self, tmp_path, enabled, value, source):
         assert self._run(tmp_path, enabled, value, source) == []
+
+
+_CSP_KEY = "IBL_SPA.MENTOR.CSP_PARTNER_HOSTS"
+_CSP_MANAGED = ".iblai-infra-csp-origins.json"
+
+
+class TestCallServerCsp:
+    """The SPAs' CSP default allows only the ASGI websocket, so on a domain
+    outside their built-in allowances the browser refused the call server and
+    voice calls and screen sharing failed."""
+
+    NEW = ["wss://asgi.data.new.example.com", "wss://call.new.example.com", "https://call.new.example.com"]
+
+    def _script(self) -> str:
+        task = _tasks("single-server", "ibl_spa", "csp.yml")[0]
+        return re.search(r"<<'PY'\n(.*?)\nPY\n", _shell(task), re.S).group(1)
+
+    def _run(self, tmp_path, config, managed=None):
+        (tmp_path / "ibl").write_text(_FAKE_IBL)
+        (tmp_path / "ibl").chmod(0o755)
+        root = tmp_path / "root"
+        root.mkdir()
+        if managed is not None:
+            (root / _CSP_MANAGED).write_text(json.dumps(managed))
+        state = tmp_path / "state.json"
+        state.write_text(json.dumps({"enabled": [], "config": config, "sets": []}))
+        env = {
+            "PATH": f"{tmp_path}:{Path(sys.executable).parent}:/usr/bin:/bin",
+            "FAKE_IBL_STATE": str(state),
+            "IBL_ROOT": f"{root}/",
+        }
+        subprocess.run([sys.executable, "-"], input=self._script(), text=True, env=env, check=True)
+        marker = root / _CSP_MANAGED
+        return json.loads(state.read_text())["sets"], json.loads(marker.read_text()) if marker.exists() else None
+
+    @staticmethod
+    def _config(hosts="wss://asgi.data.new.example.com", source="default", call="wss://call.new.example.com"):
+        return {
+            _CSP_KEY: [hosts, source],
+            "IBL_SPA.MENTOR.BASE_WS_URL": ["wss://asgi.data.new.example.com", "default"],
+            "IBL_DM.LIVEKIT_WS_URL": [call, "default"],
+        }
+
+    @pytest.mark.parametrize("role", ["ibl_spa", "ibl_launch_services"])
+    def test_runs_before_the_spas_are_rendered_and_started(self, role):
+        """The SPAs read the hosts from the env file rendered before they start."""
+        tasks = _tasks("single-server", role)
+        csp = _imports(tasks, "csp")
+        render = next(i for i, t in enumerate(tasks) if i > csp and re.search(r"\bibl render\b", _shell(t)))
+        start = next(i for i, t in enumerate(tasks) if re.search(r"app/ibl-spa/.*docker compose up", _shell(t)))
+        assert csp < render < start
+
+    def test_a_new_server_allows_its_call_server(self, tmp_path):
+        sets, managed = self._run(tmp_path, self._config())
+        assert sets == [f"{_CSP_KEY}={','.join(self.NEW)}"]
+        assert managed == self.NEW
+
+    def test_a_rerun_changes_nothing(self, tmp_path):
+        sets, _ = self._run(tmp_path, self._config(",".join(self.NEW), "config"), managed=self.NEW)
+        assert sets == []
+
+    def test_a_new_domain_replaces_the_old_origins_and_keeps_the_operators(self, tmp_path):
+        """Launch and resetup move a server whose config already lists the old domain's hosts."""
+        old = ["wss://asgi.data.old.example.com", "wss://call.old.example.com", "https://call.old.example.com"]
+        partner = "https://sso.partner.example.org"
+        sets, managed = self._run(tmp_path, self._config(",".join([*old, partner]), "config"), managed=old)
+        assert sets == [f"{_CSP_KEY}={','.join([partner, *self.NEW])}"]
+        assert managed == self.NEW
+
+    def test_a_call_server_on_another_host_keeps_its_port(self, tmp_path):
+        sets, _ = self._run(tmp_path, self._config(call="wss://Media.Example.net:7880/rtc"))
+        assert sets == [
+            f"{_CSP_KEY}=wss://asgi.data.new.example.com,wss://media.example.net:7880,https://media.example.net:7880"
+        ]
+
+    @pytest.mark.parametrize(
+        "call",
+        ["", "call.example.com", "wss://user:pw@call.example.com", "wss://call.example.com;script-src *"],
+        ids=["unset", "no-scheme", "credentials", "header-injection"],
+    )
+    def test_only_a_plain_host_and_port_is_allowed(self, tmp_path, call):
+        """The value ends up in a response header, so nothing else may reach it."""
+        sets, _ = self._run(tmp_path, self._config(call=call))
+        assert sets == []
+
+    def test_a_cli_without_the_setting_is_left_alone(self, tmp_path):
+        """iblai-cli-ops releases before the setting existed reject the key."""
+        config = self._config()
+        del config[_CSP_KEY]
+        assert self._run(tmp_path, config) == ([], None)
 
 
 class TestTenantDisplayName:

@@ -146,6 +146,12 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
+# The AMI's config carries the CSP origins of the domain it was built on.
+- name: Allow the call server in the SPA CSP
+  ansible.builtin.import_role:
+    name: ibl_spa
+    tasks_from: csp
+
 - name: Render templates with SPA config defaults
   become: false
   shell: |

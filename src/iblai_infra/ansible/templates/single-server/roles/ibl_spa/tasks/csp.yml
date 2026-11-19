@@ -1,0 +1,88 @@
+---
+# The os and mentor SPAs build their Content-Security-Policy from
+# IBL_SPA.MENTOR.CSP_PARTNER_HOSTS, whose default allows only the ASGI
+# websocket. On a domain outside the SPAs' built-in allowances the browser
+# refuses the call server, so voice calls and screen sharing fail. The origins
+# added last time are replaced, so a new domain doesn't leave the old one's
+# hosts allowed; hosts an operator added are kept.
+- name: Allow the call server in the SPA Content-Security-Policy
+  become: false
+  shell: |
+    export PYENV_ROOT="{{ pyenv_root }}"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"; eval "$(pyenv virtualenv-init -)"
+    pyenv activate "{{ venv_name }}"
+    python3 - <<'PY'
+    import json
+    import os
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+    from urllib.parse import urlsplit
+
+    KEY = "IBL_SPA.MENTOR.CSP_PARTNER_HOSTS"
+    MANAGED = Path(os.environ["IBL_ROOT"]) / ".iblai-infra-csp-origins.json"
+    HOST = re.compile(r"[a-z0-9.-]+(:[0-9]{1,5})?")
+    # The ASGI websocket; for the call server, the signalling websocket and the
+    # HTTPS request its client makes to diagnose a failed connection.
+    ASGI = {"wss": ["wss"], "https": ["wss"], "ws": ["ws"], "http": ["ws"]}
+    CALL = {"wss": ["wss", "https"], "https": ["wss", "https"], "ws": ["ws", "http"], "http": ["ws", "http"]}
+
+
+    def get(key):
+        """`ibl config get --json`, or None for a key this iblai-cli-ops lacks."""
+        p = subprocess.run(["ibl", "config", "get", key, "--json"], capture_output=True, text=True)
+        try:
+            info = json.JSONDecoder().raw_decode(p.stdout[p.stdout.index("{"):])[0]
+        except ValueError:
+            info = {}
+        if p.returncode == 0 and "value" in info:
+            return info
+        if info.get("found") is False:
+            return None
+        sys.exit(f"ibl config get {key} failed: {(p.stderr or p.stdout).strip()}")
+
+
+    def origins(url, schemes):
+        """The CSP sources for `url`; none unless it is a plain host[:port] URL."""
+        try:
+            parts = urlsplit(str(url or "").strip())
+        except ValueError:
+            return []
+        netloc = parts.netloc.lower()
+        if parts.scheme not in schemes or not HOST.fullmatch(netloc):
+            return []
+        return [f"{scheme}://{netloc}" for scheme in schemes[parts.scheme]]
+
+
+    current = get(KEY)
+    if current is None:
+        print(f"{KEY} is not in this iblai-cli-ops version; left as is")
+        sys.exit(0)
+    wanted = list(dict.fromkeys(
+        origins((get("IBL_SPA.MENTOR.BASE_WS_URL") or {}).get("value"), ASGI)
+        + origins((get("IBL_DM.LIVEKIT_WS_URL") or {}).get("value"), CALL)
+    ))
+    previous = set(json.loads(MANAGED.read_text())) if MANAGED.is_file() else set()
+    hosts = [h for h in re.split(r"[\s,]+", str(current.get("value") or "")) if h]
+    value = list(dict.fromkeys([h for h in hosts if h not in previous] + wanted))
+    if not value:
+        print(f"{KEY}: no usable origins; left as is")
+        sys.exit(0)
+    if value != hosts:
+        p = subprocess.run(["ibl", "config", "set", f"{KEY}={','.join(value)}"], capture_output=True, text=True)
+        if p.returncode != 0:
+            sys.exit(f"ibl config set {KEY} failed: {p.stderr.strip()}")
+        print("CSP_PARTNER_HOSTS_SET " + ",".join(value))
+    MANAGED.write_text(json.dumps(wanted) + "\n")
+    PY
+  args:
+    executable: /bin/bash
+    chdir: "{{ repo_dir }}"
+  environment:
+    HOME: "/home/{{ ansible_user }}"
+    IBL_ROOT: "{{ ibl_root }}/"
+    NODE_ID: "{{ node_id }}"
+  register: spa_csp_call_server
+  changed_when: "'CSP_PARTNER_HOSTS_SET' in spa_csp_call_server.stdout"

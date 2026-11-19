@@ -150,6 +150,9 @@
     IBL_ROOT: "{{ ibl_root }}/"
     NODE_ID: "{{ node_id }}"
 
+- name: Allow the call server in the SPA CSP
+  ansible.builtin.import_tasks: csp.yml
+
 - name: Render templates with SPA configuration
   become: false
   shell: |
